@@ -1,7 +1,7 @@
 import { ROLE } from "@utils/model/role.model"
 
 export interface JWTPayload {
-    userId: string
+    userId: number
     role: ROLE
     company: string
 }

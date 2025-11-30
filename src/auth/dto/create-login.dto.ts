@@ -4,9 +4,9 @@ export class SignInDto {
 
     @IsString()
     @IsNotEmpty()
-    login: string
+    login!: string
 
     @IsString()
     @IsNotEmpty()
-    password: string
+    password!: string
 }

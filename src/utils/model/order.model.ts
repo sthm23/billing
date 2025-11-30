@@ -1,10 +1,8 @@
-import { ClientSession } from "mongoose";
 import { PaymentDetails } from "./payment.model";
-import { OrderItemDTO } from "src/order/dto/order-item.dto";
 
 
 export interface OrderType {
-    _id: string;
+    id: string;
     status: ORDER_STATUS;
     userId: string | null;
     creatorId: string;
@@ -18,7 +16,7 @@ export interface OrderType {
 }
 
 export interface OrderItem {
-    _id: string
+    id: string
     productId: string
     name: string
     photo: string | null
@@ -34,11 +32,4 @@ export enum ORDER_STATUS {
     INPROGRESS = 'INPROGRESS',
     CANCEL = 'CANCEL',
     COMPLETE = 'COMPLETE',
-}
-
-export interface UpdateOrderStatusOption { status: ORDER_STATUS, userId: string, paymentId?: string, session?: ClientSession }
-export interface CreateOrderItemType {
-    orders: OrderItemDTO[]
-    userId: string,
-    session: ClientSession
 }

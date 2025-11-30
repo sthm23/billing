@@ -1,4 +1,3 @@
-import { Types } from "mongoose"
 
 
 export interface ProductType {
@@ -30,9 +29,9 @@ export interface ProductColor {
     stock: number,
     sold: number
 
-    userId: Types.ObjectId,
-    productId: Types.ObjectId,
-    sizeId: Types.ObjectId
+    userId: number,
+    productId: number,
+    sizeId: number
 }
 
 export type SizeShoes = 35 | 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 45 | 46;

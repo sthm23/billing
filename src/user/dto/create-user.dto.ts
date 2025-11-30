@@ -4,15 +4,15 @@ import { ROLE } from "@utils/model/role.model"
 export class CreateUserDto {
     @IsNotEmpty()
     @IsString()
-    login: string
+    login!: string
 
     @IsNotEmpty()
     @IsString()
-    password: string
+    password!: string
 
     @IsNotEmpty()
     @IsString()
-    name: string
+    name!: string
 
     @IsOptional()
     @IsString()
@@ -20,7 +20,7 @@ export class CreateUserDto {
 
     @IsNotEmpty()
     @IsString()
-    phoneNumber: string
+    phoneNumber!: string
 
     @IsNotEmpty()
     @IsEnum(ROLE)

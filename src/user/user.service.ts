@@ -3,31 +3,38 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ConfigService } from '@nestjs/config';
 import { HashingHelper } from '@utils/helper/hash.helper';
-import { User } from './schemas/user.schema'
+
 import { type JWTPayload } from '@auth/models/auth.model';
 import { ROLE } from '@utils/model/role.model';
+import { PrismaService } from 'src/db/prisma.service';
+import { Prisma, User } from '@generated/client';
+import { UserEntity } from './entity/user.entity';
 
 @Injectable()
 export class UserService {
 
   constructor(
     private configService: ConfigService,
-
+    private prismaService: PrismaService,
   ) { }
 
-  async create(createUserDto: CreateUserDto) {
+  async create(createUserDto: Prisma.UserCreateInput): Promise<User> {
     try {
-      const user = await this.userModel.findOne({ login: createUserDto.login }).exec();
+      const user = await this.prismaService.user.findUnique({
+        where: { login: createUserDto.login }
+      })
       if (user) throw new ForbiddenException('login already existing');
-      const newUser = new this.userModel(createUserDto);
+      const userEntity = new UserEntity(createUserDto);
 
-      newUser.password = await HashingHelper.hash(
-        newUser.password,
+      userEntity.password = await HashingHelper.hash(
+        userEntity.password,
         +this.configService.get('SALT')
       );
-      const result = await newUser.save();
-      return result
-    } catch (error) {
+      const newUser = this.prismaService.user.create({
+        data: userEntity
+      });
+      return newUser
+    } catch (error: any) {
       throw new BadRequestException(error.message);
     }
   }
@@ -35,15 +42,15 @@ export class UserService {
   findAll(payload: JWTPayload) {
     try {
       if (payload.role === ROLE.ADMIN) {
-        return this.userModel.find().select(['-__v', '-password']).exec();
+        return this.prismaService.user.findMany();
       }
-      return this.userModel.find({ company: payload.company }).select(['-__v', '-password']).exec()
-    } catch (error) {
+      return this.prismaService.user.findMany({ where: { company: payload.company } });
+    } catch (error: any) {
       throw new BadRequestException(error.message);
     }
   }
 
-  async validateUser(login: string, pass: string): Promise<User> | null {
+  async validateUser(login: string, pass: string): Promise<User | null> {
     try {
       const user = await this.findOneByLogin(login);
       if (!user) throw new NotFoundException('User not found');
@@ -52,68 +59,65 @@ export class UserService {
         return user;
       }
       return null;
-    } catch (error) {
+    } catch (error: any) {
       throw new BadRequestException(error.message);
     }
 
   }
 
-  async findOneByLogin(login: string) {
+  async findOneByLogin(login: string): Promise<User> {
     try {
-      const user = await this.userModel.findOne({ login }).exec();
+      const user = await this.prismaService.user.findUnique({
+        where: { login }
+      });
       if (!user) throw new NotFoundException('User not found')
       return user;
-    } catch (error) {
+    } catch (error: any) {
       throw new BadRequestException(error?.message);
     }
 
   }
 
-  async findOneByPhoneNumber(phoneNumber: string) {
-    try {
-      const user = await this.userModel.findOne({
-        phoneNumber: phoneNumber
-      }).exec();
-      return user;
-    } catch (error) {
-      throw new BadRequestException(error?.message);
-    }
-  }
 
-  async findOneById(id: string) {
+  async findOneById(id: number): Promise<User> {
     try {
-      const user = await this.userModel.findById(id).select(['-__v', '-password']).exec();
+      const user = await this.prismaService.user.findUnique({
+        where: { id }
+      });
       if (!user) throw new NotFoundException('User not found');
       return user
-    } catch (error) {
+    } catch (error: any) {
       throw new BadRequestException(error.message);
     }
 
   }
 
-  async update(id: string, { password, ...updateUserDto }: UpdateUserDto) {
+  async update(id: number, { password, ...updateUserDto }: UpdateUserDto) {
     try {
-      const updatedUser = await this.userModel
-        .findByIdAndUpdate(id, updateUserDto, { new: true })
-        .select(['-__v', '-password'])
-        .exec();
+      const updatedUser = await this.prismaService.user.findUnique({
+        where: { id: id }
+      });
       if (!updatedUser) {
         throw new NotFoundException(`User with ID ${id} not found`);
       }
-    } catch (error) {
+      return this.prismaService.user.update({
+        where: { id: id },
+        data: updateUserDto
+      });
+    } catch (error: any) {
       throw new BadRequestException(error.message);
     }
 
   }
 
-  async remove(id: string) {
+  async remove(id: number) {
     try {
-      const result = await this.userModel.findByIdAndDelete(id).exec();
+      const result = await this.prismaService.user.delete({ where: { id } });
       if (!result) {
         throw new NotFoundException(`User with ID ${id} not found`);
       }
       return true
-    } catch (error) {
+    } catch (error: any) {
       throw new BadRequestException(error.message);
     }
   }

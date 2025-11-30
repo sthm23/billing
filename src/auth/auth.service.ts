@@ -1,11 +1,11 @@
 import { BadRequestException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
+import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import { UserService } from '@user/user.service';
-import { AuthTokenType, JWTPayload } from './models/auth.model';
+import { AuthTokenType, type JWTPayload } from './models/auth.model';
 import { ConfigService } from '@nestjs/config';
 import { CreateUserDto } from '@user/dto/create-user.dto';
-import { User } from '@user/schemas/user.schema';
 import { ROLE } from '@utils/model/role.model';
+import { User } from '@generated/client';
 
 @Injectable()
 export class AuthService {
@@ -15,7 +15,7 @@ export class AuthService {
     private configService: ConfigService
   ) { }
 
-  async getProfile(id: string) {
+  async getProfile(id: number) {
     return this.usersService.findOneById(id);
   }
 
@@ -35,7 +35,7 @@ export class AuthService {
       const newUser = await this.usersService.create(createUserDto);
       const tokens = await this.getTokens(newUser);
       return { tokens, user: newUser };
-    } catch (error) {
+    } catch (error: any) {
       throw new BadRequestException(error.message);
     }
   }
@@ -73,7 +73,7 @@ export class AuthService {
       userId: user.id,
       role: user.role,
       company: user.company
-    }
+    } as JWTPayload;
     try {
       const secret = this.configService.get('JWT_ACCESS');
       const expiresIn = this.configService.get('JWT_ACCESS_EXPIRE');
@@ -96,17 +96,18 @@ export class AuthService {
         accessToken,
         refreshToken,
       };
-    } catch (error) {
+    } catch (error: any) {
       throw new ForbiddenException(error?.message);
     }
 
   }
 
-  private async getToken(payload: JWTPayload, option: { secret: string, expiresIn?: string }) {
+  private async getToken(payload: JWTPayload, option: JwtSignOptions): Promise<string> {
+
     return this.jwtService.signAsync(payload, option);
   }
 
-  async validateUser(login: string, pass: string): Promise<User> | null {
+  async validateUser(login: string, pass: string): Promise<User | null> {
     return await this.usersService.validateUser(login, pass)
   }
 }

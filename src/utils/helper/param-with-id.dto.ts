@@ -1,9 +1,9 @@
 
-import { IsMongoId } from 'class-validator';
+import { IsNumber } from 'class-validator';
 
 class ParamsWithId {
-    @IsMongoId()
-    id: string;
+    @IsNumber()
+    id!: number;
 }
 
 export default ParamsWithId;
