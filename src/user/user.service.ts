@@ -37,12 +37,16 @@ export class UserService {
     }
   }
 
-  findAll(payload: JWTPayload) {
+  findAll(payload: JWTPayload): Promise<Omit<User, 'password'>[]> {
     try {
       if (payload.role === ROLE.ADMIN) {
-        return this.prismaService.user.findMany();
+        return this.prismaService.user.findMany({
+          omit: {
+            password: true,
+          },
+        });
       }
-      return this.prismaService.user.findMany({ where: { company: payload.company } });
+      return this.prismaService.user.findMany({ where: { company: payload.company }, omit: { password: true } });
     } catch (error: any) {
       console.log(error);
 
@@ -53,7 +57,7 @@ export class UserService {
   async findOneByLogin(login: string): Promise<User | null> {
     try {
       return this.prismaService.user.findUnique({
-        where: { login }
+        where: { login },
       });
     } catch (error: any) {
       throw new BadRequestException(error?.message);
@@ -62,10 +66,13 @@ export class UserService {
   }
 
 
-  async findOneById(id: number): Promise<User | null> {
+  async findOneById(id: number): Promise<Omit<User, 'password'> | null> {
     try {
       return await this.prismaService.user.findUnique({
-        where: { id: +id }
+        where: { id: +id },
+        omit: {
+          password: true,
+        },
       });
     } catch (error: any) {
       throw new BadRequestException(error.message);
@@ -83,6 +90,7 @@ export class UserService {
       }
       return this.prismaService.user.update({
         where: { id: id },
+        omit: { password: true },
         data: updateUserDto
       });
     } catch (error: any) {
@@ -98,7 +106,7 @@ export class UserService {
         throw new NotFoundException(`User with ID ${id} not found`);
       }
       await this.prismaService.user.update({ where: { id }, data: { isActive: false } });
-      return true
+      return { login: result.login, message: 'User deactivated successfully' };
     } catch (error: any) {
       throw new BadRequestException(error.message);
     }

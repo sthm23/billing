@@ -15,20 +15,18 @@ export class AuthService {
     private configService: ConfigService
   ) { }
 
-  async getProfile(id: number) {
-    return this.usersService.findOneById(id);
-  }
-
-  async signIn(login: string, password: string): Promise<AuthTokenType> {
+  async signIn(login: string, password: string): Promise<{ tokens: AuthTokenType, user: Omit<User, 'password'> }> {
     const user = await this.validateUser(login, password);
     if (!user) throw new UnauthorizedException();
-    return this.getTokens(user);
+    const tokens = await this.getTokens(user);
+    const { password: _, ...userWithoutPassword } = user;
+    return { tokens, user: userWithoutPassword };
   }
 
   async signUp(createUserDto: CreateUserDto): Promise<{ tokens: AuthTokenType, user: User }> {
 
     if (createUserDto.role === ROLE.ADMIN) {
-      throw new BadRequestException('Admin role can create by Admins');
+      throw new ForbiddenException('Admin role can create by Admins');
     }
 
     try {
@@ -39,8 +37,6 @@ export class AuthService {
       throw new BadRequestException(error.message);
     }
   }
-
-
 
   async refreshTokens({ role, userId }: JWTPayload) {
     const user = await this.usersService.findOneById(userId);
