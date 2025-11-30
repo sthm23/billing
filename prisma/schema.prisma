@@ -15,11 +15,21 @@ datasource db {
 }
 
 model User {
-  id          Int     @id @default(autoincrement())
-  login       String  @unique
+  id          Int      @id @default(autoincrement())
+  login       String   @unique
   password    String
   name        String
-  role        String
-  company     String  @default("")
-  phoneNumber String?
+  role        ROLE     @default(USER)
+  company     String   @default("")
+  phoneNumber String?  @map("phone_number")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+}
+
+enum ROLE {
+  ADMIN
+  MANAGER
+  WORKER
+  CASHIER
+  USER
 }

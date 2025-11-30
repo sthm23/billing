@@ -1,4 +1,5 @@
-import { ROLE } from "./role.model"
+import { ROLE } from "@generated/enums"
+
 
 
 export interface UserType {

@@ -1,5 +1,5 @@
+import { ROLE } from "@generated/enums"
 import { IsEnum, IsString, IsNotEmpty, IsOptional } from "class-validator"
-import { ROLE } from "@utils/model/role.model"
 
 export class CreateUserDto {
     @IsNotEmpty()

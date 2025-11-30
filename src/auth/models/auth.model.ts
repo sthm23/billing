@@ -1,4 +1,5 @@
-import { ROLE } from "@utils/model/role.model"
+import { ROLE } from "@generated/enums"
+
 
 export interface JWTPayload {
     userId: number

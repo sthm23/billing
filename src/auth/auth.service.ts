@@ -1,11 +1,11 @@
-import { BadRequestException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import { UserService } from '@user/user.service';
 import { AuthTokenType, type JWTPayload } from './models/auth.model';
 import { ConfigService } from '@nestjs/config';
 import { CreateUserDto } from '@user/dto/create-user.dto';
-import { ROLE } from '@utils/model/role.model';
-import { User } from '@generated/client';
+import { ROLE, User } from '@generated/client';
+import { HashingHelper } from '@utils/helper/hash.helper';
 
 @Injectable()
 export class AuthService {
@@ -20,7 +20,7 @@ export class AuthService {
   }
 
   async signIn(login: string, password: string): Promise<AuthTokenType> {
-    const user = await this.usersService.validateUser(login, password);
+    const user = await this.validateUser(login, password);
     if (!user) throw new UnauthorizedException();
     return this.getTokens(user);
   }
@@ -108,6 +108,18 @@ export class AuthService {
   }
 
   async validateUser(login: string, pass: string): Promise<User | null> {
-    return await this.usersService.validateUser(login, pass)
+    try {
+      const user = await this.usersService.findOneByLogin(login);
+      if (!user) throw new NotFoundException('User not found');
+      if (!user.isActive) throw new ForbiddenException('User is deactivated');
+      const isMatch = await HashingHelper.isMatch(pass, user.password);
+      if (user && isMatch) {
+        return user;
+      }
+      return null;
+    } catch (error: any) {
+      throw new BadRequestException(error.message);
+    }
+
   }
 }

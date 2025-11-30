@@ -1,6 +1,5 @@
 
-import { Prisma } from '@generated/client';
-import { ROLE } from '@utils/model/role.model';
+import { Prisma, ROLE } from '@generated/client';
 
 
 export class UserEntity {

@@ -1,13 +1,11 @@
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
-import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ConfigService } from '@nestjs/config';
 import { HashingHelper } from '@utils/helper/hash.helper';
 
 import { type JWTPayload } from '@auth/models/auth.model';
-import { ROLE } from '@utils/model/role.model';
 import { PrismaService } from 'src/db/prisma.service';
-import { Prisma, User } from '@generated/client';
+import { Prisma, ROLE, User } from '@generated/client';
 import { UserEntity } from './entity/user.entity';
 
 @Injectable()
@@ -46,32 +44,17 @@ export class UserService {
       }
       return this.prismaService.user.findMany({ where: { company: payload.company } });
     } catch (error: any) {
+      console.log(error);
+
       throw new BadRequestException(error.message);
     }
   }
 
-  async validateUser(login: string, pass: string): Promise<User | null> {
+  async findOneByLogin(login: string): Promise<User | null> {
     try {
-      const user = await this.findOneByLogin(login);
-      if (!user) throw new NotFoundException('User not found');
-      const isMatch = await HashingHelper.isMatch(pass, user.password);
-      if (user && isMatch) {
-        return user;
-      }
-      return null;
-    } catch (error: any) {
-      throw new BadRequestException(error.message);
-    }
-
-  }
-
-  async findOneByLogin(login: string): Promise<User> {
-    try {
-      const user = await this.prismaService.user.findUnique({
+      return this.prismaService.user.findUnique({
         where: { login }
       });
-      if (!user) throw new NotFoundException('User not found')
-      return user;
     } catch (error: any) {
       throw new BadRequestException(error?.message);
     }
@@ -79,13 +62,11 @@ export class UserService {
   }
 
 
-  async findOneById(id: number): Promise<User> {
+  async findOneById(id: number): Promise<User | null> {
     try {
-      const user = await this.prismaService.user.findUnique({
-        where: { id }
+      return await this.prismaService.user.findUnique({
+        where: { id: +id }
       });
-      if (!user) throw new NotFoundException('User not found');
-      return user
     } catch (error: any) {
       throw new BadRequestException(error.message);
     }
@@ -112,10 +93,11 @@ export class UserService {
 
   async remove(id: number) {
     try {
-      const result = await this.prismaService.user.delete({ where: { id } });
+      const result = await this.prismaService.user.findUnique({ where: { id } });
       if (!result) {
         throw new NotFoundException(`User with ID ${id} not found`);
       }
+      await this.prismaService.user.update({ where: { id }, data: { isActive: false } });
       return true
     } catch (error: any) {
       throw new BadRequestException(error.message);

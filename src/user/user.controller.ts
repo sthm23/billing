@@ -1,14 +1,15 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, ParseIntPipe, ValidationPipe, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, ParseIntPipe, ValidationPipe, UseGuards, NotFoundException } from '@nestjs/common';
 import { UserService } from './user.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { RolesGuard } from '@utils/guards/role.guard';
 import { Roles } from '@utils/decorators/role.decorator';
-import { ROLE } from '@utils/model/role.model';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { User } from '@utils/decorators/user.decorator';
 import { type JWTPayload } from '@auth/models/auth.model';
 import ParamsWithId from '@utils/helper/param-with-id.dto';
+import { ROLE } from '@generated/enums';
+
 
 @UseGuards(RolesGuard)
 @UseGuards(AuthJWTGuard)
@@ -29,8 +30,12 @@ export class UserController {
   }
 
   @Get(':id')
-  findOne(@Param() { id }: ParamsWithId) {
-    return this.userService.findOneById(id);
+  async findOne(@Param() { id }: ParamsWithId) {
+    const user = await this.userService.findOneById(id);
+    if (!user) {
+      return new NotFoundException('User not found');
+    }
+    return user;
   }
 
   @Patch(':id')
