@@ -26,6 +26,14 @@ model User {
   createdAt   DateTime @default(now()) @map("created_at")
 }
 
+model Product {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  price       Float
+  createdAt   DateTime @default(now()) @map("created_at")
+}
+
 enum ROLE {
   ADMIN
   MANAGER

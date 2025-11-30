@@ -1,16 +1,31 @@
-version: "3.8"
+version: "3.9"
 
 services:
   postgres:
     image: postgres:18-alpine
+    container_name: dev_postgres
     restart: always
     environment:
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
-      - ${POSTGRES_OUTPUT_PORT}:${POSTGRES_PORT}
+      - "${POSTGRES_OUTPUT_PORT}:${POSTGRES_PORT}"
     volumes:
-      - datapg:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
+
+  localstack:
+    container_name: "${LOCALSTACK_DOCKER_NAME:-localstack-main}"
+    image: localstack/localstack
+    ports:
+      - "127.0.0.1:4566:4566" # LocalStack Gateway
+      - "127.0.0.1:4510-4559:4510-4559" # external services port range
+    environment:
+      # LocalStack configuration: https://docs.localstack.cloud/references/configuration/
+      - DEBUG=${DEBUG:-0}
+    volumes:
+      - "${LOCALSTACK_VOLUME_DIR:-./volume}:/var/lib/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+
 volumes:
-  datapg:
+  postgres_data:
