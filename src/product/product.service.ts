@@ -1,12 +1,10 @@
 import { ForbiddenException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { CreateProductDto } from './dto/create-product.dto';
-import { ProductSizeDTO } from './dto/product-size.dto';
 import { FileHelper } from '@utils/helper/file.helper';
-import { JWTPayload } from '@utils/model/auth.model';
 import { ProductSold } from '@utils/model/product.model';
-import QueryWithSizeAndColor from '@utils/helper/product-size-color.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { S3Service } from 'src/prisma/s3.service';
+import { AccessTokenPayload } from '@auth/models/auth.model';
 
 @Injectable()
 export class ProductService {
@@ -17,7 +15,7 @@ export class ProductService {
   ) { }
 
 
-  async createProduct({ sizes, ...createProductDto }: CreateProductDto, payload: JWTPayload) {
+  async createProduct({ sizes, ...createProductDto }: any, payload: AccessTokenPayload) {
     // const session = await this.connection.startSession();
     // session.startTransaction();
     // try {
@@ -63,7 +61,7 @@ export class ProductService {
     }
   }
 
-  async findOne(id: string, dto?: QueryWithSizeAndColor) {
+  async findOne(id: string, dto?: any) {
     // const populateOptions = this.makePopulateOptions(dto);
     // try {
     //   const product = await this.productModel.findById(id)
@@ -95,7 +93,7 @@ export class ProductService {
     // return product;
   }
 
-  async updateProduct(id: string, { sizes, ...dto }: CreateProductDto) {
+  async updateProduct(id: string, { sizes, ...dto }: any) {
 
     // const session = await this.connection.startSession();
 

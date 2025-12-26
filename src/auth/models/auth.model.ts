@@ -1,15 +1,19 @@
 import { Admin, User, AuthAccount } from "@generated/client"
 
+export interface AccessTokenPayload {
+    sub: string // userId
+    sid: string, // authAccountId
+    type: 'access'
+}
 
-
-export interface JWTPayload {
-    sub: string
-    login: string
+export interface RefreshTokenPayload {
+    sub: string, // userId
+    type: 'refresh'
 }
 
 export interface LoginResponse {
-    refreshToken?: string
     accessToken: string
+    refreshToken?: string
 }
 
 export type UserAuth = User & { auth: AuthAccount }

@@ -7,11 +7,10 @@ import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { UserModule } from '@user/user.module';
 import { LocalStrategy } from './strategy/local.strategy';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { RefreshTokenGuard } from './guard/refresh-token.guard';
 import { JwtStrategy } from './strategy/jwt-access.strategy';
-import { RefreshTokenStrategy } from './strategy/jwt-refresh.strategy';
 import { AdminModule } from '@admin/admin.module';
 import { AdminGuard } from './guard/admin.guard';
+import { TokenService } from './token.service';
 
 @Module({
   imports: [
@@ -36,10 +35,9 @@ import { AdminGuard } from './guard/admin.guard';
     AuthService,
     LocalStrategy,
     JwtStrategy,
-    RefreshTokenStrategy,
     AuthJWTGuard,
     AdminGuard,
-    RefreshTokenGuard,
+    TokenService
   ],
   controllers: [AuthController],
   exports: [AuthService],

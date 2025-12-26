@@ -6,5 +6,6 @@ import { AdminBootstrap } from './admin.bootstrap';
 @Module({
   controllers: [AdminController],
   providers: [AdminService, AdminBootstrap],
+  exports: [AdminService],
 })
 export class AdminModule { }

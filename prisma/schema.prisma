@@ -94,11 +94,12 @@ model User {
   type      UserType
   createdAt DateTime @default(now())
 
-  auth    AuthAccount?
-  staff   Staff?
-  orders  Order[]      @relation("CustomerOrders")
-  sellers Seller[]
-  admin   Admin?
+  auth            AuthAccount?
+  staff           Staff?
+  orders          Order[]          @relation("CustomerOrders")
+  sellers         Seller[]
+  admin           Admin?
+  refreshSessions RefreshSession[]
 }
 
 model AuthAccount {
@@ -121,6 +122,21 @@ model Admin {
 
   user    User     @relation(fields: [userId], references: [id])
   sellers Seller[]
+}
+
+model RefreshSession {
+  id          String   @id @default(uuid())
+  userId      String
+  refreshHash String
+  userAgent   String? // браузер / устройство
+  ip          String?
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  isRevoked   Boolean  @default(false) // когда сессия была отозвана
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
 }
 
 /**

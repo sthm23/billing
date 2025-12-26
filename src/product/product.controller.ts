@@ -19,18 +19,14 @@ import {
 } from '@nestjs/common';
 import { ProductService } from './product.service';
 import { CreateProductDto } from './dto/create-product.dto';
-import { UpdateProductSizeDTO } from './dto/update-product.dto';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { Roles } from '@utils/decorators/role.decorator';
 import { RolesGuard } from '@utils/guards/role.guard';
 import { fileUploadInterceptor } from './interceptor/file-upload.interceptor';
-import { ValidateSizePipe } from './pipe/validate-variants.pipe';
-import { type JWTPayload } from '@utils/model/auth.model';
-import { User } from '@utils/decorators/user.decorator';
-import ParamsWithId from '@utils/helper/param-with-id.dto';
+import { CurrentUser } from '@utils/decorators/user.decorator';
 import { PaginationParams } from '@utils/helper/pagination-params.dto';
-import QueryWithSizeAndColor from '@utils/helper/product-size-color.dto';
 import { StaffRole } from '@generated/enums';
+import type { AccessTokenPayload } from '@auth/models/auth.model';
 
 @Controller('product')
 export class ProductController {
@@ -42,12 +38,11 @@ export class ProductController {
   @Post()
   create(
     @Body(
-      new ValidateSizePipe(),
       new ValidationPipe({
         transform: true,
       }),
     ) createProductDto: CreateProductDto,
-    @User() payload: JWTPayload
+    @CurrentUser() payload: AccessTokenPayload
   ) {
     return this.productService.createProduct(createProductDto, payload);
   }

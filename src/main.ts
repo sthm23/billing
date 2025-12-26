@@ -1,9 +1,8 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ConfigService } from '@nestjs/config';
-import * as express from 'express';
-import { join } from 'path';
 import { ValidationPipe } from '@nestjs/common';
+import cookieParser from 'cookie-parser';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -13,12 +12,12 @@ async function bootstrap() {
     new ValidationPipe(),
   );
 
-  app.use('/static', express.static(join(__dirname, '..', 'uploads')));
   app.enableCors({
-    origin: true
+    origin: true,
+    credentials: true,
   });
+  app.use(cookieParser());
   app.setGlobalPrefix('api')
-
   await app.listen(configService.get('PORT') ?? 3000);
 }
 bootstrap();

@@ -1,13 +1,10 @@
-import { Controller, Get, Post, Body, Param, Delete, ValidationPipe, UseGuards, NotFoundException, Put } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Delete, ValidationPipe, UseGuards, NotFoundException, Put, ParseUUIDPipe } from '@nestjs/common';
 import { UserService } from './user.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { RolesGuard } from '@utils/guards/role.guard';
 import { Roles } from '@utils/decorators/role.decorator';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
-import { User } from '@utils/decorators/user.decorator';
-import type { UserAuth, JWTPayload } from '@auth/models/auth.model';
-import ParamsWithId from '@utils/helper/param-with-id.dto';
 import { StaffRole } from '@generated/enums';
 
 
@@ -21,7 +18,7 @@ export class UserController {
   }
 
   @Get(':id')
-  async findOne(@Param() { id }: ParamsWithId) {
+  async findOne(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
     const user = await this.userService.findOneById(id);
     if (!user) {
       return new NotFoundException('User not found');
@@ -39,14 +36,17 @@ export class UserController {
   @UseGuards(AuthJWTGuard, RolesGuard)
   @Put(':id')
   @Roles(StaffRole.OWNER)
-  update(@Param() { id }: ParamsWithId, @Body(new ValidationPipe()) updateUserDto: UpdateUserDto) {
+  update(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body(new ValidationPipe()) updateUserDto: UpdateUserDto
+  ) {
     return this.userService.update(id, updateUserDto);
   }
 
   @UseGuards(AuthJWTGuard, RolesGuard)
   @Delete(':id')
   @Roles(StaffRole.OWNER)
-  remove(@Param() { id }: ParamsWithId) {
+  remove(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
     return this.userService.remove(id);
   }
 }

@@ -1,7 +1,6 @@
 import { Type } from "class-transformer";
 import { IsArray, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, Min, ValidateNested } from "class-validator";
 import { ProductTag } from "@utils/model/product.model";
-import { ProductSizeDTO } from "./product-size.dto";
 
 export class CreateProductDto {
     @IsString()
@@ -46,9 +45,4 @@ export class CreateProductDto {
     @IsOptional()
     @IsArray()
     photo!: string[];
-
-    @IsArray()
-    @Type(() => ProductSizeDTO)
-    @ValidateNested({ each: true })
-    sizes!: ProductSizeDTO[]
 }

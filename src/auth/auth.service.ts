@@ -1,20 +1,18 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { JwtService, JwtSignOptions } from '@nestjs/jwt';
-import { UserService } from '@user/user.service';
-import { LoginResponse, UserAuth, type JWTPayload } from './models/auth.model';
-import { ConfigService } from '@nestjs/config';
-import { CreateUserDto } from '@user/dto/create-user.dto';
-import { StaffRole, User } from '@generated/client';
+
+import { LoginResponse, RefreshTokenPayload, type AccessTokenPayload } from './models/auth.model';
+import { UserType } from '@generated/client';
 import { HashingHelper } from '@utils/helper/hash.helper';
 import { PrismaService } from '@prisma/prisma.service';
+import { addDays } from '@utils/helper/date.helper';
+import { SignInDto } from './dto/create-login.dto';
+import { TokenService } from './token.service';
 
 @Injectable()
 export class AuthService {
   constructor(
     private prisma: PrismaService,
-    private usersService: UserService,
-    private jwtService: JwtService,
-    private configService: ConfigService
+    private tokenService: TokenService
   ) { }
 
   async validateUser(email: string, password: string) {
@@ -30,118 +28,91 @@ export class AuthService {
     return user;
   }
 
-  async login(user: UserAuth): Promise<LoginResponse> {
-    const payload = {
-      sub: user.id,
-      login: user.auth.login,
-    } as JWTPayload;
+  async login(userId: string, meta: { ip?: string; ua?: string }): Promise<LoginResponse> {
+    const session = await this.prisma.refreshSession.create({
+      data: {
+        userId: userId,
+        refreshHash: '', // временно
+        ip: meta.ip,
+        userAgent: meta.ua,
+        expiresAt: addDays(new Date(), 7),
+      },
+    });
+    const accessTokenPayload: AccessTokenPayload = {
+      sub: userId,
+      sid: session.id,
+      type: 'access'
+    }
+    const refreshTokenPayload: RefreshTokenPayload = {
+      sub: userId,
+      type: 'refresh'
+    }
+    const [accessToken, refreshToken] = await Promise.all([
+      this.tokenService.generateToken(accessTokenPayload, {
+        secret: this.tokenService.accessTokenSecret,
+        expiresIn: this.tokenService.accessTokenExpire
+      }),
+      this.tokenService.generateToken(refreshTokenPayload, {
+        secret: this.tokenService.refreshTokenSecret,
+        expiresIn: this.tokenService.refreshTokenExpire
+      })
+    ]);
 
-    return {
-      accessToken: this.jwtService.sign(payload),
-    };
+    const refreshHash = await HashingHelper.hash(refreshToken, 10);
+
+    await this.prisma.refreshSession.update({
+      where: { id: session.id },
+      data: { refreshHash },
+    });
+
+    return { accessToken, refreshToken };
   }
 
-  // async signIn(login: string, password: string): Promise<{ tokens: AuthTokenType, user: Omit<User, 'password'> }> {
-  //   const user = await this.validateUser(login, password);
-  //   if (!user) throw new UnauthorizedException();
-  //   const tokens = await this.getTokens(user);
-  //   const { password: _, ...userWithoutPassword } = user;
-  //   return { tokens, user: userWithoutPassword };
-  // }
+  async refreshToken(token: string) {
+    return this.tokenService.refreshTokens(token)
+  }
 
-  // async signUp(createUserDto: CreateUserDto): Promise<{ tokens: AuthTokenType, user: User }> {
+  async signUp(dto: SignInDto): Promise<LoginResponse> {
 
-  //   if (createUserDto.role === ROLE.ADMIN) {
-  //     throw new ForbiddenException('Admin role can create by Admins');
-  //   }
+    try {
+      const passwordHash = await HashingHelper.hash(dto.password, 10);
+      const newUser = await this.prisma.user.create({
+        data: {
+          fullName: dto.fullName,
+          phone: dto.phone,
+          type: UserType.CUSTOMER,
+          auth: {
+            create: {
+              login: dto.login,
+              passwordHash,
+            }
+          }
+        }
+      });
 
-  //   try {
-  //     const newUser = await this.usersService.create(createUserDto);
-  //     const tokens = await this.getTokens(newUser);
-  //     return { tokens, user: newUser };
-  //   } catch (error: any) {
-  //     throw new BadRequestException(error.message);
-  //   }
-  // }
+      return this.login(newUser.id, {});
+    } catch (error: any) {
+      throw new BadRequestException(error.message);
+    }
+  }
 
-  // async refreshTokens({ role, userId }: JWTPayload) {
-  //   const user = await this.usersService.findOneById(userId);
-  //   if (!user) throw new ForbiddenException('Access Denied');
-  //   const secret = this.configService.get('JWT_ACCESS');
-  //   const expiresIn = this.configService.get('JWT_ACCESS_EXPIRE');
-  //   try {
-  //     const token = await this.getToken({
-  //       role: role,
-  //       userId: userId,
-  //       company: user.company
-  //     }, {
-  //       secret,
-  //       expiresIn
-  //     });
-  //     return {
-  //       accessToken: token
-  //     };
-  //   } catch (error) {
-  //     console.log(error);
+  async logout(sessionId: string) {
+    await this.prisma.refreshSession.update({
+      where: { id: sessionId },
+      data: { isRevoked: true },
+    });
+  }
 
-  //     throw new ForbiddenException('Access Denied');
+  async logoutAll(userId: string) {
+    await this.prisma.refreshSession.updateMany({
+      where: {
+        userId,
+        isRevoked: false,
+      },
+      data: {
+        isRevoked: true,
+      },
+    });
+  }
 
-  //   }
-  // }
-
-
-  // private async getTokens(user: User): Promise<AuthTokenType> {
-  //   const payload = {
-  //     userId: user.id,
-  //     role: user.role,
-  //     company: user.company
-  //   } as JWTPayload;
-  //   try {
-  //     const secret = this.configService.get('JWT_ACCESS');
-  //     const expiresIn = this.configService.get('JWT_ACCESS_EXPIRE');
-  //     const secretRefresh = this.configService.get('JWT_REFRESH');
-  //     const expiresInRefresh = this.configService.get('JWT_REFRESH_EXPIRE');
-
-  //     const [accessToken, refreshToken] = await Promise.all([
-  //       this.getToken(payload, {
-  //         secret,
-  //         expiresIn,
-  //       }),
-  //       this.getToken(payload, {
-  //         secret: secretRefresh,
-  //         expiresIn: expiresInRefresh,
-  //       }),
-
-  //     ]);
-
-  //     return {
-  //       accessToken,
-  //       refreshToken,
-  //     };
-  //   } catch (error: any) {
-  //     throw new ForbiddenException(error?.message);
-  //   }
-
-  // }
-
-  // private async getToken(payload: JWTPayload, option: JwtSignOptions): Promise<string> {
-
-  //   return this.jwtService.signAsync(payload, option);
-  // }
-
-  // async validateUser(login: string, pass: string): Promise<User | null> {
-  //   try {
-  //     const user = await this.usersService.findOneByLogin(login);
-  //     if (!user) throw new NotFoundException('User not found');
-  //     if (!user.isActive) throw new ForbiddenException('User is deactivated');
-  //     const isMatch = await HashingHelper.isMatch(pass, user.password);
-  //     if (user && isMatch) {
-  //       return user;
-  //     }
-  //     return null;
-  //   } catch (error: any) {
-  //     throw new BadRequestException(error.message);
-  //   }
-
-  // }
 }
