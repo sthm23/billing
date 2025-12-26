@@ -50,7 +50,7 @@ export class ProductService implements OnModuleInit {
     // }
   }
 
-  async workWithProductSizes({ sizes, productId, userId }: { sizes: ProductSizeDTO[], productId: number, userId: number }) {
+  async workWithProductSizes({ sizes, productId, userId }: { sizes: ProductSizeDTO[], productid: string, userid: string }) {
     // try {
     //   let quantity = 0;
     //   const productSizeIds: ProductSizeDocument[] = [];
@@ -109,7 +109,7 @@ export class ProductService implements OnModuleInit {
     }
   }
 
-  async findOne(id: number, dto?: QueryWithSizeAndColor) {
+  async findOne(id: string, dto?: QueryWithSizeAndColor) {
     // const populateOptions = this.makePopulateOptions(dto);
     // try {
     //   const product = await this.productModel.findById(id)
@@ -141,7 +141,7 @@ export class ProductService implements OnModuleInit {
     // return product;
   }
 
-  async updateProduct(id: number, { sizes, ...dto }: CreateProductDto) {
+  async updateProduct(id: string, { sizes, ...dto }: CreateProductDto) {
 
     // const session = await this.connection.startSession();
 
@@ -177,7 +177,7 @@ export class ProductService implements OnModuleInit {
     // }
   }
 
-  // async updateProductSize(id: number, sizes: UpdateProductSizeDTO) {
+  // async updateProductSize(id: string, sizes: UpdateProductSizeDTO) {
   //   try {
   //     const productId = new Types.ObjectId(id);
   //     const productsizes = await this.productSizeModel.find({
@@ -189,7 +189,7 @@ export class ProductService implements OnModuleInit {
   //   }
   // }
 
-  async remove(id: number) {
+  async remove(id: string) {
     // const session = await this.connection.startSession();
     // try {
     //   session.startTransaction();

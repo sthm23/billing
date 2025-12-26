@@ -66,10 +66,10 @@ export class UserService {
   // }
 
 
-  // async findOneById(id: number): Promise<Omit<User, 'password'> | null> {
+  // async findOneById(id: string): Promise<Omit<User, 'password'> | null> {
   //   try {
   //     return await this.prismaService.user.findUnique({
-  //       where: { id: +id },
+  //       where: { id: id },
   //       omit: {
   //         password: true,
   //       },
@@ -80,7 +80,7 @@ export class UserService {
 
   // }
 
-  // async update(id: number, { password, ...updateUserDto }: UpdateUserDto) {
+  // async update(id: string, { password, ...updateUserDto }: UpdateUserDto) {
   //   try {
   //     const updatedUser = await this.prismaService.user.findUnique({
   //       where: { id: id }
@@ -99,7 +99,7 @@ export class UserService {
 
   // }
 
-  // async remove(id: number) {
+  // async remove(id: string) {
   //   try {
   //     const result = await this.prismaService.user.findUnique({ where: { id } });
   //     if (!result) {

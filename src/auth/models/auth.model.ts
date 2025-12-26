@@ -2,7 +2,7 @@
 
 
 export interface JWTPayload {
-    userId: number
+    userid: string
     company: string
 }
 

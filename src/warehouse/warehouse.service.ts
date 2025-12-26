@@ -12,15 +12,15 @@ export class WarehouseService {
     return `This action returns all warehouse`;
   }
 
-  findOne(id: number) {
+  findOne(id: string) {
     return `This action returns a #${id} warehouse`;
   }
 
-  update(id: number, updateWarehouseDto: UpdateWarehouseDto) {
+  update(id: string, updateWarehouseDto: UpdateWarehouseDto) {
     return `This action updates a #${id} warehouse`;
   }
 
-  remove(id: number) {
+  remove(id: string) {
     return `This action removes a #${id} warehouse`;
   }
 }

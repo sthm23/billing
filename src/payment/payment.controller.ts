@@ -1,11 +1,11 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, ParseUUIDPipe } from '@nestjs/common';
 import { PaymentService } from './payment.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
 
 @Controller('payment')
 export class PaymentController {
-  constructor(private readonly paymentService: PaymentService) {}
+  constructor(private readonly paymentService: PaymentService) { }
 
   @Post()
   create(@Body() createPaymentDto: CreatePaymentDto) {
@@ -18,17 +18,17 @@ export class PaymentController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.paymentService.findOne(+id);
+  findOne(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
+    return this.paymentService.findOne(id);
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updatePaymentDto: UpdatePaymentDto) {
-    return this.paymentService.update(+id, updatePaymentDto);
+  update(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string, @Body() updatePaymentDto: UpdatePaymentDto) {
+    return this.paymentService.update(id, updatePaymentDto);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.paymentService.remove(+id);
+  remove(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
+    return this.paymentService.remove(id);
   }
 }

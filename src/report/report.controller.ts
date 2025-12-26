@@ -1,11 +1,11 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, ParseUUIDPipe } from '@nestjs/common';
 import { ReportService } from './report.service';
 import { CreateReportDto } from './dto/create-report.dto';
 import { UpdateReportDto } from './dto/update-report.dto';
 
 @Controller('report')
 export class ReportController {
-  constructor(private readonly reportService: ReportService) {}
+  constructor(private readonly reportService: ReportService) { }
 
   @Post()
   create(@Body() createReportDto: CreateReportDto) {
@@ -18,17 +18,17 @@ export class ReportController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.reportService.findOne(+id);
+  findOne(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
+    return this.reportService.findOne(id);
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateReportDto: UpdateReportDto) {
-    return this.reportService.update(+id, updateReportDto);
+  update(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string, @Body() updateReportDto: UpdateReportDto) {
+    return this.reportService.update(id, updateReportDto);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.reportService.remove(+id);
+  remove(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
+    return this.reportService.remove(id);
   }
 }
