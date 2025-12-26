@@ -14,18 +14,18 @@ import { SignInDto } from './dto/create-login.dto';
 import { LocalAuthGuard } from '@auth/guard/local_passport.guard';
 import { RefreshTokenGuard } from './guard/refresh-token.guard';
 import { CreateUserDto } from '@user/dto/create-user.dto';
-import { type JWTPayload } from './models/auth.model';
+import { type UserAuth, type JWTPayload } from './models/auth.model';
 
 @Controller('auth')
 export class AuthController {
   constructor(private authService: AuthService) { }
 
-  // @UseGuards(LocalAuthGuard)
-  // @HttpCode(HttpStatus.OK)
-  // @Post('login')
-  // login(@Body(new ValidationPipe()) signInDto: SignInDto) {
-  //   return this.authService.signIn(signInDto.login, signInDto.password);
-  // }
+  @UseGuards(LocalAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @Post('login')
+  login(@User() user: UserAuth) {
+    return this.authService.login(user);
+  }
 
   // @Post('signup')
   // signup(@Body(new ValidationPipe()) createUserDto: CreateUserDto) {

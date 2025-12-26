@@ -1,19 +1,45 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { JwtService, JwtSignOptions } from '@nestjs/jwt';
 import { UserService } from '@user/user.service';
-import { AuthTokenType, type JWTPayload } from './models/auth.model';
+import { LoginResponse, UserAuth, type JWTPayload } from './models/auth.model';
 import { ConfigService } from '@nestjs/config';
 import { CreateUserDto } from '@user/dto/create-user.dto';
 import { StaffRole, User } from '@generated/client';
 import { HashingHelper } from '@utils/helper/hash.helper';
+import { PrismaService } from '@prisma/prisma.service';
 
 @Injectable()
 export class AuthService {
   constructor(
+    private prisma: PrismaService,
     private usersService: UserService,
     private jwtService: JwtService,
     private configService: ConfigService
   ) { }
+
+  async validateUser(email: string, password: string) {
+    const user = await this.prisma.user.findFirst({
+      where: { auth: { login: email } },
+      include: { auth: true },
+    });
+    const userAuth = user?.auth;
+    if (!user || !userAuth) return null;
+    const isValid = await HashingHelper.isMatch(password, userAuth.passwordHash);
+    if (!isValid) return null;
+
+    return user;
+  }
+
+  async login(user: UserAuth): Promise<LoginResponse> {
+    const payload = {
+      sub: user.id,
+      email: user.auth.login,
+    };
+
+    return {
+      accessToken: this.jwtService.sign(payload),
+    };
+  }
 
   // async signIn(login: string, password: string): Promise<{ tokens: AuthTokenType, user: Omit<User, 'password'> }> {
   //   const user = await this.validateUser(login, password);
