@@ -4,6 +4,7 @@ import { Admin, User, AuthAccount } from "@generated/client"
 
 export interface JWTPayload {
     sub: string
+    login: string
 }
 
 export interface LoginResponse {
@@ -12,4 +13,5 @@ export interface LoginResponse {
 }
 
 export type UserAuth = User & { auth: AuthAccount }
-export type UserAdmin = User & Admin
+export type UserAdmin = User & { admin: Admin }
+export type UserWithAuthAndAdmin = User & { auth: AuthAccount, admin: Admin }

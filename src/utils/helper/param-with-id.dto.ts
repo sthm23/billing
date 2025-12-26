@@ -1,11 +1,11 @@
 
 import { Transform } from 'class-transformer';
-import { IsNumber } from 'class-validator';
+import { IsUUID } from 'class-validator';
 
 class ParamsWithId {
     @Transform(({ value }) => parseInt(value, 10))
-    @IsNumber()
-    id!: number;
+    @IsUUID()
+    id!: string;
 }
 
 export default ParamsWithId;

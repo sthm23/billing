@@ -13,8 +13,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt-access') {
         super({
             jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
             ignoreExpiration: false,
-            secretOrKey,
-
+            secretOrKey
         });
     }
 
@@ -24,6 +23,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt-access') {
             include: {
                 admin: true,
                 staff: true,
+                auth: true,
             },
         });
         return user;

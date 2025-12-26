@@ -22,9 +22,9 @@ import { AdminGuard } from './guard/admin.guard';
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => {
         return {
-          secret: configService.get<string>('JWT_SECRET'),
+          secret: configService.get<string>('JWT_ACCESS'),
           signOptions: {
-            expiresIn: configService.get<any>('JWT_EXPIRES_IN'),
+            expiresIn: configService.get<any>('JWT_ACCESS_EXPIRE'),
           },
         };
       },

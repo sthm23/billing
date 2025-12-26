@@ -9,16 +9,13 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { S3Service } from 'src/prisma/s3.service';
 
 @Injectable()
-export class ProductService implements OnModuleInit {
+export class ProductService {
 
   constructor(
     private prismaClient: PrismaService,
     private s3Service: S3Service,
   ) { }
 
-  async onModuleInit() {
-    await this.updateOldDocuments();
-  }
 
   async createProduct({ sizes, ...createProductDto }: CreateProductDto, payload: JWTPayload) {
     // const session = await this.connection.startSession();
@@ -50,49 +47,6 @@ export class ProductService implements OnModuleInit {
     // }
   }
 
-  async workWithProductSizes({ sizes, productId, userId }: { sizes: ProductSizeDTO[], productid: string, userid: string }) {
-    // try {
-    //   let quantity = 0;
-    //   const productSizeIds: ProductSizeDocument[] = [];
-    //   const productColorIds: ProductColorDocument[] = [];
-
-    //   for (let i = 0; i < sizes.length; i++) {
-    //     const size = sizes[i];
-    //     quantity += size.quantity;
-    //     const productDTO = new ProductSizeDTO({ ...size, colors: [] });
-
-    //     const newSize = new this.productSizeModel(productDTO)
-
-    //     productSizeIds.push(newSize);
-
-    //     for (let j = 0; j < size.colors.length; j++) {
-    //       const color = size.colors[j];
-    //       const colorDTO = new ProductColorDTO({
-    //         color: color.color,
-    //         stock: color.stock,
-    //         userId: userId,
-    //         productId: productId,
-    //         sizeId: newSize._id,
-    //         sold: 0,
-    //       });
-    //       const newColor = new this.productColorModel(colorDTO);
-    //       newSize.colors.push(newColor._id);
-    //       productColorIds.push(newColor);
-    //     }
-    //   }
-    //   // Сохраняем размеры и цвета в базе данных
-    //   await this.productColorModel.insertMany(productColorIds, { session });
-    //   await this.productSizeModel.insertMany(productSizeIds, { session });
-
-    //   // Обновляем массив размеров в каждом новом размере
-    //   return {
-    //     quantity,
-    //     productSizeIds: productSizeIds.map(size => size._id)
-    //   }
-    // } catch (error:any) {
-    //   throw new ForbiddenException('Product sizes creating error: ' + error?.message);
-    // }
-  }
 
   async findAll(documentsToSkip = 0, limitOfDocuments?: number) {
     try {
@@ -261,21 +215,5 @@ export class ProductService implements OnModuleInit {
     } catch (error: any) {
       throw new ForbiddenException(error?.message);
     }
-  }
-
-  private async updateOldDocuments() {
-    // try {
-    //   console.log('Updating old documents...');
-
-    //   // Update all documents to include the new property if they don't have it already.
-    //   await this.productModel.updateMany(
-    //     { isActive: { $exists: false } }, // Only update documents missing `newProp`.
-    //     { $set: { isActive: true } } // Set a default value for the new property.
-    //   );
-
-    //   console.log('Old documents updated successfully.');
-    // } catch (error:any) {
-    //   console.error('Error updating old data:', error);
-    // }
   }
 }

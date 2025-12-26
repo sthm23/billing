@@ -1,34 +1,18 @@
-import { StaffRole } from "@generated/enums"
-import { IsEnum, IsString, IsNotEmpty, IsOptional } from "class-validator"
+import { UserType } from "@generated/enums"
+import { UserCreateInput } from "@generated/models";
+import { IsEnum, IsNotEmpty, IsOptional } from "class-validator"
 
 export class CreateUserDto {
     @IsNotEmpty()
-    @IsString()
-    login!: string
+    fullName!: string;
 
     @IsNotEmpty()
-    @IsString()
-    password!: string
+    phone!: string;
 
-    @IsNotEmpty()
-    @IsString()
-    name!: string
+    @IsEnum(UserType)
+    type: UserType = UserType.CUSTOMER;
 
-    @IsOptional()
-    @IsString()
-    company!: string
-
-    @IsNotEmpty()
-    @IsString()
-    phoneNumber!: string
-
-    // @IsNotEmpty()
-    // @IsEnum(StaffRole)
-    // role: StaffRole
-
-    constructor(obj: Partial<CreateUserDto>) {
-        // this.role = StaffRole.
-        // this.company = ''
+    constructor(obj: Partial<UserCreateInput>) {
         Object.assign(this, obj);
     }
 }

@@ -90,7 +90,7 @@ enum AttributeType {
 model User {
   id        String   @id @default(uuid())
   fullName  String
-  phone     String?  @unique
+  phone     String   @unique
   type      UserType
   createdAt DateTime @default(now())
 
@@ -104,7 +104,7 @@ model User {
 model AuthAccount {
   id           String    @id @default(uuid())
   userId       String    @unique
-  login        String?   @unique // e.g. email or username or phone
+  login        String    @unique // e.g. email or username or phone
   passwordHash String
   isActive     Boolean   @default(true)
   lastLoginAt  DateTime?

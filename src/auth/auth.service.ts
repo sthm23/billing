@@ -19,8 +19,8 @@ export class AuthService {
 
   async validateUser(email: string, password: string) {
     const user = await this.prisma.user.findFirst({
+      include: { auth: true, staff: true, admin: true },
       where: { auth: { login: email } },
-      include: { auth: true },
     });
     const userAuth = user?.auth;
     if (!user || !userAuth) return null;
@@ -33,8 +33,8 @@ export class AuthService {
   async login(user: UserAuth): Promise<LoginResponse> {
     const payload = {
       sub: user.id,
-      email: user.auth.login,
-    };
+      login: user.auth.login,
+    } as JWTPayload;
 
     return {
       accessToken: this.jwtService.sign(payload),

@@ -1,12 +1,9 @@
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ConfigService } from '@nestjs/config';
-import { HashingHelper } from '@utils/helper/hash.helper';
-
-import { type JWTPayload } from '@auth/models/auth.model';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { Prisma, StaffRole, User } from '@generated/client';
-import { UserEntity } from './entity/user.entity';
+import { Prisma, User } from '@generated/client';
+import { CreateUserDto } from './dto/create-user.dto';
 
 @Injectable()
 export class UserService {
@@ -16,99 +13,104 @@ export class UserService {
     private prismaService: PrismaService,
   ) { }
 
-  // async create(createUserDto: Prisma.UserCreateInput): Promise<User> {
-  //   try {
-  //     const user = await this.prismaService.user.findUnique({
-  //       where: { login: createUserDto.login }
-  //     })
-  //     if (user) throw new ForbiddenException('login already existing');
-  //     const userEntity = new UserEntity(createUserDto);
+  async create(createUserDto: Prisma.UserCreateInput): Promise<User> {
+    try {
+      const user = await this.prismaService.user.findUnique({
+        where: { phone: createUserDto.phone }
+      })
+      if (user) throw new ForbiddenException('login already existing');
+      const userEntity = new CreateUserDto(createUserDto);
 
-  //     userEntity.password = await HashingHelper.hash(
-  //       userEntity.password,
-  //       +this.configService.get('SALT')
-  //     );
-  //     const newUser = this.prismaService.user.create({
-  //       data: userEntity
-  //     });
-  //     return newUser
-  //   } catch (error: any) {
-  //     throw new BadRequestException(error.message);
-  //   }
-  // }
+      return this.prismaService.user.create({
+        data: userEntity
+      });
+    } catch (error: any) {
+      throw new BadRequestException(error.message);
+    }
+  }
 
-  // findAll(payload: JWTPayload): Promise<Omit<User, 'password'>[]> {
-  //   try {
-  //     if (payload.role === ROLE.ADMIN) {
-  //       return this.prismaService.user.findMany({
-  //         omit: {
-  //           password: true,
-  //         },
-  //       });
-  //     }
-  //     return this.prismaService.user.findMany({ where: { company: payload.company }, omit: { password: true } });
-  //   } catch (error: any) {
-  //     console.log(error);
-
-  //     throw new BadRequestException(error.message);
-  //   }
-  // }
-
-  // async findOneByLogin(login: string): Promise<User | null> {
-  //   try {
-  //     return this.prismaService.user.findUnique({
-  //       where: { login },
-  //     });
-  //   } catch (error: any) {
-  //     throw new BadRequestException(error?.message);
-  //   }
-
-  // }
+  findAll(): Promise<User[]> {
+    try {
+      return this.prismaService.user.findMany();
+    } catch (error: any) {
+      console.log(error);
+      throw new BadRequestException(error.message);
+    }
+  }
 
 
-  // async findOneById(id: string): Promise<Omit<User, 'password'> | null> {
-  //   try {
-  //     return await this.prismaService.user.findUnique({
-  //       where: { id: id },
-  //       omit: {
-  //         password: true,
-  //       },
-  //     });
-  //   } catch (error: any) {
-  //     throw new BadRequestException(error.message);
-  //   }
+  async findOneById(id: string): Promise<Omit<User, 'password'> | null> {
+    try {
+      return await this.prismaService.user.findUnique({
+        where: { id }, include: {
+          auth: true,
+          admin: true,
+          staff: true,
+        }
+      });
+    } catch (error: any) {
+      throw new BadRequestException(error.message);
+    }
 
-  // }
+  }
 
-  // async update(id: string, { password, ...updateUserDto }: UpdateUserDto) {
-  //   try {
-  //     const updatedUser = await this.prismaService.user.findUnique({
-  //       where: { id: id }
-  //     });
-  //     if (!updatedUser) {
-  //       throw new NotFoundException(`User with ID ${id} not found`);
-  //     }
-  //     return this.prismaService.user.update({
-  //       where: { id: id },
-  //       omit: { password: true },
-  //       data: updateUserDto
-  //     });
-  //   } catch (error: any) {
-  //     throw new BadRequestException(error.message);
-  //   }
+  async findByLogin(email: string) {
+    try {
+      return this.prismaService.user.findFirst({
+        where: {
+          auth: {
+            login: email,
+          },
+        },
+        include: {
+          auth: true,
+          admin: true,
+          staff: true,
+        },
+      });
+    } catch (error: any) {
+      throw new BadRequestException(error.message);
+    }
 
-  // }
+  }
 
-  // async remove(id: string) {
-  //   try {
-  //     const result = await this.prismaService.user.findUnique({ where: { id } });
-  //     if (!result) {
-  //       throw new NotFoundException(`User with ID ${id} not found`);
-  //     }
-  //     await this.prismaService.user.update({ where: { id }, data: { isActive: false } });
-  //     return { login: result.login, message: 'User deactivated successfully' };
-  //   } catch (error: any) {
-  //     throw new BadRequestException(error.message);
-  //   }
-  // }
+  async update(id: string, dto: UpdateUserDto) {
+    try {
+      return this.prismaService.user.update({
+        where: { id },
+        data: dto,
+      });
+    } catch (error: any) {
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  async remove(id: string) {
+    try {
+      const result = await this.prismaService.user.findUnique({
+        where: { id }, include: {
+          auth: true,
+          admin: true,
+          staff: true,
+        }
+      });
+      if (!result) {
+        throw new NotFoundException(`User with ID ${id} not found`);
+      }
+      let data = {};
+      if (result.staff && result.staff.isActive) {
+        data = { ...data, staff: { update: { isActive: false } } };
+      };
+      if (result.auth && result.auth.isActive) {
+        data = { ...data, auth: { update: { isActive: false } } };
+      }
+      if (result.admin && result.admin.isActive) {
+        data = { ...data, admin: { update: { isActive: false } } };
+      }
+      await this.prismaService.user.update({ where: { id }, include: { auth: true, admin: true, staff: true }, data: data });
+      return { login: result.auth!.login, message: 'User deactivated successfully' };
+    } catch (error: any) {
+      throw new BadRequestException(error.message);
+    }
+  }
 }
