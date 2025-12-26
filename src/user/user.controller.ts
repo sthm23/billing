@@ -8,7 +8,7 @@ import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { User } from '@utils/decorators/user.decorator';
 import { type JWTPayload } from '@auth/models/auth.model';
 import ParamsWithId from '@utils/helper/param-with-id.dto';
-import { ROLE } from '@generated/enums';
+import { StaffRole } from '@generated/enums';
 
 
 @UseGuards(RolesGuard)
@@ -17,36 +17,36 @@ import { ROLE } from '@generated/enums';
 export class UserController {
   constructor(private readonly userService: UserService) { }
 
-  @Post()
-  @Roles(ROLE.ADMIN)
-  create(@Body(new ValidationPipe()) createUserDto: CreateUserDto) {
-    return this.userService.create(createUserDto);
-  }
+  // @Post()
+  // @Roles(StaffRole.OWNER, StaffRole.MANAGER)
+  // create(@Body(new ValidationPipe()) createUserDto: CreateUserDto) {
+  //   return this.userService.create(createUserDto);
+  // }
 
-  @Get()
-  @Roles(ROLE.ADMIN, ROLE.MANAGER)
-  findAll(@User() payload: JWTPayload) {
-    return this.userService.findAll(payload);
-  }
+  // @Get()
+  // @Roles(StaffRole.OWNER, StaffRole.MANAGER)
+  // findAll(@User() payload: JWTPayload) {
+  //   return this.userService.findAll(payload);
+  // }
 
-  @Get(':id')
-  async findOne(@Param() { id }: ParamsWithId) {
-    const user = await this.userService.findOneById(id);
-    if (!user) {
-      return new NotFoundException('User not found');
-    }
-    return user;
-  }
+  // @Get(':id')
+  // async findOne(@Param() { id }: ParamsWithId) {
+  //   const user = await this.userService.findOneById(id);
+  //   if (!user) {
+  //     return new NotFoundException('User not found');
+  //   }
+  //   return user;
+  // }
 
-  @Patch(':id')
-  @Roles(ROLE.ADMIN, ROLE.MANAGER)
-  update(@Param() { id }: ParamsWithId, @Body(new ValidationPipe()) updateUserDto: UpdateUserDto) {
-    return this.userService.update(id, updateUserDto);
-  }
+  // @Patch(':id')
+  // @Roles(StaffRole.OWNER, StaffRole.MANAGER)
+  // update(@Param() { id }: ParamsWithId, @Body(new ValidationPipe()) updateUserDto: UpdateUserDto) {
+  //   return this.userService.update(id, updateUserDto);
+  // }
 
-  @Delete(':id')
-  @Roles(ROLE.ADMIN)
-  remove(@Param() { id }: ParamsWithId) {
-    return this.userService.remove(id);
-  }
+  // @Delete(':id')
+  // @Roles(StaffRole.OWNER, StaffRole.MANAGER)
+  // remove(@Param() { id }: ParamsWithId) {
+  //   return this.userService.remove(id);
+  // }
 }

@@ -1,5 +1,5 @@
 
-import { Prisma, ROLE } from '@generated/client';
+import { Prisma, StaffRole } from '@generated/client';
 
 
 export class UserEntity {
@@ -7,7 +7,7 @@ export class UserEntity {
     password: string = '';
     name: string = '';
     company: string = '';
-    role: ROLE = ROLE.USER;
+    role: StaffRole = StaffRole.SELLER;
     phoneNumber: string = '';
 
     constructor(partial: Partial<Prisma.UserCreateInput>) {

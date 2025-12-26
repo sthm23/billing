@@ -30,7 +30,7 @@ import { User } from '@utils/decorators/user.decorator';
 import ParamsWithId from '@utils/helper/param-with-id.dto';
 import { PaginationParams } from '@utils/helper/pagination-params.dto';
 import QueryWithSizeAndColor from '@utils/helper/product-size-color.dto';
-import { ROLE } from '@generated/enums';
+import { StaffRole } from '@generated/enums';
 
 @Controller('product')
 export class ProductController {
@@ -38,7 +38,7 @@ export class ProductController {
 
   @UseGuards(RolesGuard)
   @UseGuards(AuthJWTGuard)
-  @Roles(ROLE.ADMIN, ROLE.MANAGER)
+  @Roles(StaffRole.MANAGER, StaffRole.OWNER)
   @Post()
   create(
     @Body(
@@ -54,7 +54,7 @@ export class ProductController {
 
   @UseGuards(RolesGuard)
   @UseGuards(AuthJWTGuard)
-  @Roles(ROLE.ADMIN, ROLE.MANAGER)
+  @Roles(StaffRole.MANAGER, StaffRole.OWNER)
   @Post('upload-photo')
   @UseInterceptors(fileUploadInterceptor)
   uploadPhoto(

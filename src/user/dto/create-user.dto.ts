@@ -1,4 +1,4 @@
-import { ROLE } from "@generated/enums"
+import { StaffRole } from "@generated/enums"
 import { IsEnum, IsString, IsNotEmpty, IsOptional } from "class-validator"
 
 export class CreateUserDto {
@@ -16,19 +16,19 @@ export class CreateUserDto {
 
     @IsOptional()
     @IsString()
-    company: string
+    company!: string
 
     @IsNotEmpty()
     @IsString()
     phoneNumber!: string
 
-    @IsNotEmpty()
-    @IsEnum(ROLE)
-    role: ROLE
+    // @IsNotEmpty()
+    // @IsEnum(StaffRole)
+    // role: StaffRole
 
     constructor(obj: Partial<CreateUserDto>) {
-        this.role = ROLE.USER
-        this.company = ''
+        // this.role = StaffRole.
+        // this.company = ''
         Object.assign(this, obj);
     }
 }

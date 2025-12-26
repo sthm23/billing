@@ -1,4 +1,4 @@
-import { ROLE } from "@generated/enums"
+import { StaffRole } from "@generated/enums"
 
 
 
@@ -7,7 +7,7 @@ export interface UserType {
     login: string
     password: string
     name: string
-    role: ROLE
+    role: StaffRole
     company: string
     createAt: string
     updateAt: string

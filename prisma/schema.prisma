@@ -14,30 +14,386 @@ datasource db {
   provider = "postgresql"
 }
 
+/**
+ * =======================
+ * ENUMS
+ * =======================
+ */
+
+enum UserType {
+  CUSTOMER
+  STAFF
+}
+
+enum StaffRole {
+  SELLER
+  MANAGER
+  CASHIER
+  WAREHOUSE
+  OWNER
+}
+
+enum StockMovementType {
+  IN
+  OUT
+}
+
+enum StockMovementReason {
+  PURCHASE
+  SALE
+  ADJUSTMENT
+}
+
+enum OrderStatus {
+  CREATED
+  COMPLETED
+  DEBT
+  CANCELLED
+}
+
+enum PaymentType {
+  CASH
+  CARD
+  DEBT
+  INSTALLMENT
+}
+
+enum OrderChannel {
+  POS
+  ONLINE
+}
+
+enum DeliveryStatus {
+  PENDING
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+}
+
+enum DeliveryType {
+  COURIER
+  PICKUP
+}
+
+enum AttributeType {
+  STRING
+  NUMBER
+  BOOLEAN
+}
+
+/**
+ * =======================
+ * AUTH & USERS
+ * =======================
+ */
+
 model User {
-  id          Int      @id @default(autoincrement())
-  login       String   @unique
-  password    String
-  name        String
-  role        ROLE     @default(USER)
-  company     String   @default("")
-  phoneNumber String?  @map("phone_number")
-  isActive    Boolean  @default(true) @map("is_active")
-  createdAt   DateTime @default(now()) @map("created_at")
+  id        String   @id @default(uuid())
+  fullName  String
+  phone     String?  @unique
+  type      UserType
+  createdAt DateTime @default(now())
+
+  auth    AuthAccount?
+  staff   Staff?
+  orders  Order[]      @relation("CustomerOrders")
+  sellers Seller[]
+  admin   Admin?
+}
+
+model AuthAccount {
+  id           String    @id @default(uuid())
+  userId       String    @unique
+  login        String?   @unique // e.g. email or username or phone
+  passwordHash String
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model Admin {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  user    User     @relation(fields: [userId], references: [id])
+  sellers Seller[]
+}
+
+/**
+ * =======================
+ * SELLERS & STAFF
+ * =======================
+ */
+
+model Seller {
+  id        String   @id @default(uuid())
+  name      String
+  ownerId   String
+  createdAt DateTime @default(now())
+
+  createdBy String // adminId
+  creator   Admin  @relation(fields: [createdBy], references: [id])
+
+  owner      User        @relation(fields: [ownerId], references: [id])
+  staff      Staff[]
+  products   Product[]
+  warehouses Warehouse[]
+  orders     Order[]
+}
+
+model Staff {
+  id       String    @id @default(uuid())
+  userId   String    @unique
+  sellerId String    @unique
+  role     StaffRole
+  isActive Boolean   @default(true)
+
+  user   User   @relation(fields: [userId], references: [id])
+  seller Seller @relation(fields: [sellerId], references: [id])
+
+  warehouses StaffWarehouse[]
+  stockMoves StockMovement[]
+  orders     Order[]
+
+  @@unique([userId, sellerId])
+}
+
+model StaffWarehouse {
+  id          String @id @default(uuid())
+  staffId     String
+  warehouseId String
+
+  staff     Staff     @relation(fields: [staffId], references: [id])
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+
+  @@unique([staffId, warehouseId])
+}
+
+/**
+ * =======================
+ * WAREHOUSES
+ * =======================
+ */
+
+model Warehouse {
+  id       String  @id @default(uuid())
+  sellerId String
+  name     String
+  isActive Boolean @default(true)
+
+  seller          Seller           @relation(fields: [sellerId], references: [id])
+  inventory       Inventory[]
+  orders          Order[]
+  staffWarehouses StaffWarehouse[]
+  stockMovements  StockMovement[]
+}
+
+/**
+ * =======================
+ * CATALOG
+ * =======================
+ */
+
+model Category {
+  id       String  @id @default(uuid())
+  name     String
+  parentId String?
+
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryTree")
+  products Product[]
+}
+
+model Brand {
+  id      String  @id @default(uuid())
+  name    String  @unique
+  logoUrl String?
+
+  products Product[]
 }
 
 model Product {
-  id          Int      @id @default(autoincrement())
-  name        String
-  description String?
-  price       Float
-  createdAt   DateTime @default(now()) @map("created_at")
+  id         String   @id @default(uuid())
+  sellerId   String
+  name       String
+  categoryId String?
+  brandId    String?
+  isArchived Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  seller     Seller                  @relation(fields: [sellerId], references: [id])
+  category   Category?               @relation(fields: [categoryId], references: [id])
+  brand      Brand?                  @relation(fields: [brandId], references: [id])
+  variants   ProductVariant[]
+  images     ProductImage[]
+  attributes ProductAttributeValue[]
 }
 
-enum ROLE {
-  ADMIN
-  MANAGER
-  WORKER
-  CASHIER
-  USER
+model ProductImage {
+  id        String  @id @default(uuid())
+  productId String
+  url       String
+  isMain    Boolean @default(false)
+  order     Int     @default(0)
+
+  product Product @relation(fields: [productId], references: [id])
+}
+
+model ProductVariant {
+  id        String @id @default(uuid())
+  productId String
+  size      String
+  color     String
+  sku       String @unique
+
+  product        Product         @relation(fields: [productId], references: [id])
+  inventory      Inventory[]
+  orderItems     OrderItem[]
+  stockMovements StockMovement[]
+}
+
+/**
+ * =======================
+ * ATTRIBUTES (FILTERS)
+ * =======================
+ */
+
+model Attribute {
+  id   String        @id @default(uuid())
+  name String
+  type AttributeType
+
+  values ProductAttributeValue[]
+}
+
+model ProductAttributeValue {
+  id          String   @id @default(uuid())
+  productId   String
+  attributeId String
+  valueString String?
+  valueNumber Decimal?
+  valueBool   Boolean?
+
+  product   Product   @relation(fields: [productId], references: [id])
+  attribute Attribute @relation(fields: [attributeId], references: [id])
+
+  @@unique([productId, attributeId])
+}
+
+/**
+ * =======================
+ * INVENTORY
+ * =======================
+ */
+
+model Inventory {
+  id          String @id @default(uuid())
+  warehouseId String
+  variantId   String
+  quantity    Int
+
+  warehouse        Warehouse      @relation(fields: [warehouseId], references: [id])
+  variant          ProductVariant @relation(fields: [productVariantId], references: [id])
+  productVariantId String
+
+  @@unique([warehouseId, variantId])
+}
+
+model StockMovement {
+  id          String              @id @default(uuid())
+  variantId   String
+  warehouseId String
+  type        StockMovementType
+  reason      StockMovementReason
+  quantity    Int
+  unitCost    Decimal?
+  createdById String
+  createdAt   DateTime            @default(now())
+
+  variant          ProductVariant @relation(fields: [productVariantId], references: [id])
+  warehouse        Warehouse      @relation(fields: [warehouseId], references: [id])
+  createdBy        Staff          @relation(fields: [staffId], references: [id])
+  productVariantId String
+  staffId          String
+}
+
+/**
+ * =======================
+ * ORDERS & SALES
+ * =======================
+ */
+
+model Order {
+  id          String       @id @default(uuid())
+  sellerId    String
+  warehouseId String
+  cashierId   String?
+  customerId  String?
+  channel     OrderChannel
+  status      OrderStatus
+  totalAmount Decimal
+  createdAt   DateTime     @default(now())
+
+  seller    Seller    @relation(fields: [sellerId], references: [id])
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+  cashier   Staff?    @relation(fields: [staffId], references: [id])
+  customer  User?     @relation("CustomerOrders", fields: [customerId], references: [id])
+
+  items    OrderItem[]
+  payments Payment[]
+  delivery Delivery?
+  staffId  String?
+}
+
+model OrderItem {
+  id          String  @id @default(uuid())
+  orderId     String
+  variantId   String
+  quantity    Int
+  priceAtSale Decimal
+  costAtSale  Decimal
+
+  order            Order          @relation(fields: [orderId], references: [id])
+  variant          ProductVariant @relation(fields: [productVariantId], references: [id])
+  productVariantId String
+}
+
+/**
+ * =======================
+ * PAYMENTS
+ * =======================
+ */
+
+model Payment {
+  id      String      @id @default(uuid())
+  orderId String
+  type    PaymentType
+  amount  Decimal
+  paidAt  DateTime?
+
+  order Order @relation(fields: [orderId], references: [id])
+}
+
+/**
+ * =======================
+ * DELIVERY
+ * =======================
+ */
+
+model Delivery {
+  id          String         @id @default(uuid())
+  orderId     String         @unique
+  type        DeliveryType   @default(PICKUP)
+  address     String?
+  phone       String?
+  fee         Decimal        @default(0)
+  status      DeliveryStatus @default(PENDING)
+  shippedAt   DateTime?
+  deliveredAt DateTime?
+
+  order Order @relation(fields: [orderId], references: [id])
 }

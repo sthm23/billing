@@ -1,10 +1,10 @@
-import { ROLE } from "@generated/enums"
+import { StaffRole } from "@generated/enums"
 
 
 
 export interface JWTPayload {
     userId: string
-    role: ROLE
+    role: StaffRole
     company: string
 }
 

@@ -1,4 +1,4 @@
-import { ROLE } from '@generated/enums';
+import { StaffRole } from '@generated/enums';
 import { Injectable, CanActivate, ExecutionContext, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ROLES_KEY } from '@utils/model/role.model';
@@ -11,7 +11,7 @@ export class RolesGuard implements CanActivate {
 
     canActivate(context: ExecutionContext): boolean {
 
-        const requiredRoles = this.reflector.getAllAndOverride<ROLE[]>(ROLES_KEY, [
+        const requiredRoles = this.reflector.getAllAndOverride<StaffRole[]>(ROLES_KEY, [
             context.getHandler(),
             context.getClass()
         ])

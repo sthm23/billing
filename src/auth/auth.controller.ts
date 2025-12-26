@@ -20,21 +20,21 @@ import { type JWTPayload } from './models/auth.model';
 export class AuthController {
   constructor(private authService: AuthService) { }
 
-  @UseGuards(LocalAuthGuard)
-  @HttpCode(HttpStatus.OK)
-  @Post('login')
-  login(@Body(new ValidationPipe()) signInDto: SignInDto) {
-    return this.authService.signIn(signInDto.login, signInDto.password);
-  }
+  // @UseGuards(LocalAuthGuard)
+  // @HttpCode(HttpStatus.OK)
+  // @Post('login')
+  // login(@Body(new ValidationPipe()) signInDto: SignInDto) {
+  //   return this.authService.signIn(signInDto.login, signInDto.password);
+  // }
 
-  @Post('signup')
-  signup(@Body(new ValidationPipe()) createUserDto: CreateUserDto) {
-    return this.authService.signUp(createUserDto);
-  }
+  // @Post('signup')
+  // signup(@Body(new ValidationPipe()) createUserDto: CreateUserDto) {
+  //   return this.authService.signUp(createUserDto);
+  // }
 
-  @UseGuards(RefreshTokenGuard)
-  @Get('refresh')
-  refreshTokens(@User() user: JWTPayload) {
-    return this.authService.refreshTokens(user);
-  }
+  // @UseGuards(RefreshTokenGuard)
+  // @Get('refresh')
+  // refreshTokens(@User() user: JWTPayload) {
+  //   return this.authService.refreshTokens(user);
+  // }
 }

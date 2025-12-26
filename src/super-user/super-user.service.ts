@@ -1,4 +1,4 @@
-import { ROLE } from '@generated/enums';
+import { StaffRole, UserType } from '@generated/enums';
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HashingHelper } from '@utils/helper/hash.helper';
@@ -7,12 +7,13 @@ import { PrismaService } from 'src/db/prisma.service';
 
 @Injectable()
 export class SuperUserService implements OnModuleInit {
-    constructor(private prismaService: PrismaService, private configService: ConfigService) { }
+    constructor(
+        private prismaService: PrismaService,
+        private configService: ConfigService,
+    ) { }
 
     async onModuleInit() {
-        const existingSuperUser = await this.prismaService.user.findUnique({
-            where: { login: 'admin' }
-        });
+        const existingSuperUser = await this.getAdmin()[0];
 
         if (!existingSuperUser) {
             console.log('Creating super admin...');
@@ -22,14 +23,40 @@ export class SuperUserService implements OnModuleInit {
                 login: 'admin',
                 password: hashedPassword,
                 name: 'Sanjar Tukhtamishev',
-                company: 'sthm23',
-                role: ROLE.ADMIN,
-                phoneNumber: '+998777377177'
+                sellers: 'sthm23',
+                phone: '+998777377177'
             };
-            await this.prismaService.user.create({ data: superUser });
+            const user = await this.prismaService.user.create({
+                data: {
+                    fullName: superUser.name,
+                    phone: superUser.phone,
+                    type: UserType.STAFF,
+                    auth: {
+                        create: {
+                            login: superUser.login,
+                            passwordHash: superUser.password,
+                        }
+
+                    }
+                }
+            });
+            await this.prismaService.admin.create({
+                data: {
+                    userId: user.id,
+                    isActive: true,
+                },
+                include: { user: true },
+            });
             console.log('Super admin is created.');
+
         } else {
             console.log('Super admin already exists.');
         }
+    }
+
+    async getAdmin() {
+        return this.prismaService.admin.findFirst({
+            include: { user: true },
+        });
     }
 }
