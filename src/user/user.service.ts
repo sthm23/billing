@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { HashingHelper } from '@utils/helper/hash.helper';
 
 import { type JWTPayload } from '@auth/models/auth.model';
-import { PrismaService } from 'src/db/prisma.service';
+import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma, StaffRole, User } from '@generated/client';
 import { UserEntity } from './entity/user.entity';
 

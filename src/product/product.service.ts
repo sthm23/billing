@@ -5,8 +5,8 @@ import { FileHelper } from '@utils/helper/file.helper';
 import { JWTPayload } from '@utils/model/auth.model';
 import { ProductSold } from '@utils/model/product.model';
 import QueryWithSizeAndColor from '@utils/helper/product-size-color.dto';
-import { PrismaService } from 'src/db/prisma.service';
-import { S3Service } from 'src/db/s3.service';
+import { PrismaService } from 'src/prisma/prisma.service';
+import { S3Service } from 'src/prisma/s3.service';
 
 @Injectable()
 export class ProductService implements OnModuleInit {
