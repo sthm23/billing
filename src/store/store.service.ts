@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { CreateStoreDto } from './dto/create-store.dto';
+import { CreateStaffDto, CreateStoreDto } from './dto/create-store.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { UserType } from '@generated/enums';
@@ -18,7 +18,7 @@ export class StoreService {
       const passwordHash = await HashingHelper.hash(dto.password, 10);
       const owner = await this.prisma.user.create({
         data: {
-          fullName: dto.fullName,
+          fullName: dto.ownerFullName,
           phone: dto.phone,
           type: UserType.STAFF,
           auth: {
@@ -38,6 +38,43 @@ export class StoreService {
       })
 
       return store
+    } catch (error: any) {
+      throw new BadRequestException(error.error)
+    }
+  }
+
+  async createStaff(dto: CreateStaffDto) {
+    try {
+      const passwordHash = await HashingHelper.hash(dto.password, 10);
+      const user = await this.prisma.user.create({
+        data: {
+          fullName: dto.fullName,
+          phone: dto.phone,
+          type: UserType.STAFF,
+          auth: {
+            create: {
+              login: dto.login,
+              passwordHash,
+            }
+          },
+          staff: {
+            create: {
+              role: dto.role,
+              storeId: dto.storeId
+            }
+          }
+        },
+        include: {
+          staff: true
+        }
+      })
+
+      await this.prisma.staffWarehouse.create({
+        data: {
+          staffId: user.staff!.id,
+          warehouseId: dto.warehouseId
+        }
+      })
     } catch (error: any) {
       throw new BadRequestException(error.error)
     }

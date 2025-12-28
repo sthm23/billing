@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Body, Param, UseGuards, ParseUUIDPipe } from '@nestjs/common';
 import { StoreService } from './store.service';
-import { CreateStoreDto } from './dto/create-store.dto';
+import { CreateStaffDto, CreateStoreDto } from './dto/create-store.dto';
 import { CurrentUser } from '@shared/decorators/user.decorator';
 import type { UserWithAuthAndAdmin } from '@auth/models/auth.model';
 import { AdminGuard } from '@shared/guards/admin.guard';
@@ -17,6 +17,13 @@ export class StoreController {
     @Body() createStoreDto: CreateStoreDto
   ) {
     return this.storeService.create(createStoreDto, user.id);
+  }
+
+  @Post('staff')
+  createStaff(
+    @Body() createStoreDto: CreateStaffDto
+  ) {
+    return this.storeService.createStaff(createStoreDto);
   }
 
   @Get()

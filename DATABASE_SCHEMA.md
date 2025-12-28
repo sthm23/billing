@@ -312,7 +312,7 @@ StockMovement → Inventory → Variant
         └──────▲────────┘       │     │
                │                │     │
         ┌──────┴────────┐       │     │
-        │    Sellers    │◄──────┘     │
+        │    Store      │◄──────┘     │
         │ (Staff/Owner) │             │
         └──────▲────────┘             │
                │                      │
