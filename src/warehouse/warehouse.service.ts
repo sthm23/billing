@@ -20,18 +20,26 @@ export class WarehouseService {
           storeId: dto.storeId
         }
       });
+
       if (dto.worker) {
         const worker = await this.createWarehouseStaff(dto?.worker);
-        await this.prisma.staffWarehouse.create({
-          data: {
-            staffId: worker.id,
-            warehouseId: warehouse.id
-          }
+        await this.prisma.staffWarehouse.createMany({
+          data: [
+            { staffId: dto.ownerId, warehouseId: warehouse.id },
+            { staffId: worker.id, warehouseId: warehouse.id }
+          ]
         })
         return {
           warehouse,
           worker
         }
+      } else {
+        await this.prisma.staffWarehouse.create({
+          data: {
+            staffId: dto.ownerId,
+            warehouseId: warehouse.id
+          }
+        })
       }
 
       return { warehouse, worker: null }

@@ -36,6 +36,10 @@ export class CreateWarehouseDto {
     @IsString()
     name: string = ''
 
+    @IsNotEmpty()
+    @IsString()
+    ownerId: string = ''
+
     @IsOptional()
     @ValidateNested()
     worker?: CreateWarehouseStaffDto
