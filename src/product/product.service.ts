@@ -1,7 +1,7 @@
 import { ForbiddenException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { CreateProductDto } from './dto/create-product.dto';
-import { FileHelper } from '@utils/helper/file.helper';
-import { ProductSold } from '@utils/model/product.model';
+import { FileHelper } from '@shared/helper/file.helper';
+import { ProductSold } from '@shared/model/product.model';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { S3Service } from 'src/prisma/s3.service';
 import { AccessTokenPayload } from '@auth/models/auth.model';

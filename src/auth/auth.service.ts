@@ -2,9 +2,9 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException,
 
 import { LoginResponse, RefreshTokenPayload, type AccessTokenPayload } from './models/auth.model';
 import { UserType } from '@generated/client';
-import { HashingHelper } from '@utils/helper/hash.helper';
+import { HashingHelper } from '@shared/helper/hash.helper';
 import { PrismaService } from '@prisma/prisma.service';
-import { addDays } from '@utils/helper/date.helper';
+import { addDays } from '@shared/helper/date.helper';
 import { SignInDto } from './dto/create-login.dto';
 import { TokenService } from './token.service';
 

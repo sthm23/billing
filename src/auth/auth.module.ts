@@ -9,7 +9,6 @@ import { LocalStrategy } from './strategy/local.strategy';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtStrategy } from './strategy/jwt-access.strategy';
 import { AdminModule } from '@admin/admin.module';
-import { AdminGuard } from './guard/admin.guard';
 import { TokenService } from './token.service';
 
 @Module({
@@ -36,7 +35,6 @@ import { TokenService } from './token.service';
     LocalStrategy,
     JwtStrategy,
     AuthJWTGuard,
-    AdminGuard,
     TokenService
   ],
   controllers: [AuthController],

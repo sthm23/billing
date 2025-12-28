@@ -1,8 +1,8 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "@prisma/prisma.service";
-import { addDays } from "@utils/helper/date.helper";
-import { HashingHelper } from "@utils/helper/hash.helper";
+import { addDays } from "@shared/helper/date.helper";
+import { HashingHelper } from "@shared/helper/hash.helper";
 import { AccessTokenPayload, LoginResponse, RefreshTokenPayload } from "./models/auth.model";
 import { JwtService, JwtSignOptions } from "@nestjs/jwt";
 

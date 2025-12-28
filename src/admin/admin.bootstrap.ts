@@ -1,6 +1,6 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { HashingHelper } from '@utils/helper/hash.helper';
+import { HashingHelper } from '@shared/helper/hash.helper';
 import { UserType } from '@generated/enums';
 
 @Injectable()

@@ -1,6 +1,6 @@
 import { Type } from "class-transformer";
 import { IsArray, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, Min, ValidateNested } from "class-validator";
-import { ProductTag } from "@utils/model/product.model";
+import { ProductTag } from "@shared/model/product.model";
 
 export class CreateProductDto {
     @IsString()

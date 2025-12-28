@@ -20,11 +20,11 @@ import {
 import { ProductService } from './product.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
-import { Roles } from '@utils/decorators/role.decorator';
-import { RolesGuard } from '@utils/guards/role.guard';
+import { Roles } from '@shared/decorators/role.decorator';
+import { RolesGuard } from '@shared/guards/role.guard';
 import { fileUploadInterceptor } from './interceptor/file-upload.interceptor';
-import { CurrentUser } from '@utils/decorators/user.decorator';
-import { PaginationParams } from '@utils/helper/pagination-params.dto';
+import { CurrentUser } from '@shared/decorators/user.decorator';
+import { PaginationParams } from '@shared/helper/pagination-params.dto';
 import { StaffRole } from '@generated/enums';
 import type { AccessTokenPayload } from '@auth/models/auth.model';
 

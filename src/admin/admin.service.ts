@@ -3,7 +3,7 @@ import { CreateAdminDto } from './dto/create-admin.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { ExceptionsHandler } from '@nestjs/core/exceptions/exceptions-handler';
 import { UserType } from '@generated/enums';
-import { HashingHelper } from '@utils/helper/hash.helper';
+import { HashingHelper } from '@shared/helper/hash.helper';
 
 @Injectable()
 export class AdminService {

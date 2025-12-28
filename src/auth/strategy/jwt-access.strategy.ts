@@ -26,8 +26,6 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt-access') {
                 auth: true,
             },
         });
-        console.log(user);
-
         return user;
     }
 }

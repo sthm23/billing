@@ -12,7 +12,7 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { CurrentUser } from '@utils/decorators/user.decorator';
+import { CurrentUser } from '@shared/decorators/user.decorator';
 import { SignInDto } from './dto/create-login.dto';
 import { LocalAuthGuard } from '@auth/guard/local_passport.guard';
 import type { UserAuth } from './models/auth.model';

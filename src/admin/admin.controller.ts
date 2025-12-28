@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Body, Param, Delete, ParseUUIDPipe, UseGuards } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { CreateAdminDto } from './dto/create-admin.dto';
-import { AdminGuard } from '@auth/guard/admin.guard';
+import { AdminGuard } from '@shared/guards/admin.guard';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
 
 @UseGuards(AuthJWTGuard, AdminGuard)

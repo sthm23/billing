@@ -5,7 +5,6 @@ import { MulterModule } from '@nestjs/platform-express';
 import { UserModule } from '@user/user.module';
 import { ProductModule } from './product/product.module';
 import { AdminModule } from './admin/admin.module';
-import { SellerModule } from './seller/seller.module';
 import { WarehouseModule } from './warehouse/warehouse.module';
 import { OrderModule } from './order/order.module';
 import { PaymentModule } from './payment/payment.module';
@@ -23,15 +22,12 @@ import { StoreModule } from './store/store.module';
     UserModule,
     AuthModule,
     ProductModule,
-    SellerModule,
     WarehouseModule,
     OrderModule,
     PaymentModule,
     ReportModule,
     SharedModule,
     StoreModule,
-
-
   ],
   providers: [ConfigService],
 })

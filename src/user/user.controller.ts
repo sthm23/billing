@@ -2,8 +2,8 @@ import { Controller, Get, Post, Body, Param, Delete, ValidationPipe, UseGuards, 
 import { UserService } from './user.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { RolesGuard } from '@utils/guards/role.guard';
-import { Roles } from '@utils/decorators/role.decorator';
+import { RolesGuard } from '@shared/guards/role.guard';
+import { Roles } from '@shared/decorators/role.decorator';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { StaffRole } from '@generated/enums';
 

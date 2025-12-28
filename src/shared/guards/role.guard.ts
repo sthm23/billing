@@ -3,7 +3,7 @@ import { Admin, Staff, User } from '@generated/client';
 import { StaffRole, UserType } from '@generated/enums';
 import { Injectable, CanActivate, ExecutionContext, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { ROLES_KEY } from '@utils/model/role.model';
+import { ROLES_KEY } from '@shared/model/role.model';
 
 
 
