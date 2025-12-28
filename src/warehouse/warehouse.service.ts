@@ -12,52 +12,57 @@ export class WarehouseService {
 
   ) { }
 
-  async create(dto: CreateWarehouseDto, creatorId: string) {
+  async create(dto: CreateWarehouseDto) {
     try {
-      const warehouse = this.prisma.warehouse.create({
+      const warehouse = await this.prisma.warehouse.create({
         data: {
           name: dto.name,
           storeId: dto.storeId
         }
       });
-      const worker = this.createWarehouseStaff(dto?.worker);
-      const result = await Promise.all([warehouse, worker]);
-
-      return {
-        warehouse: result[0],
-        worker: result[1]
+      if (dto.worker) {
+        const worker = await this.createWarehouseStaff(dto?.worker);
+        await this.prisma.staffWarehouse.create({
+          data: {
+            staffId: worker.id,
+            warehouseId: warehouse.id
+          }
+        })
+        return {
+          warehouse,
+          worker
+        }
       }
 
+      return { warehouse, worker: null }
     } catch (error: any) {
       throw new BadRequestException(error.error)
     }
   }
 
-  private async createWarehouseStaff(dto?: CreateWarehouseStaffDto): Promise<User | null> {
+  private async createWarehouseStaff(dto: CreateWarehouseStaffDto): Promise<User> {
     try {
-      if (dto) {
-        const passwordHash = await HashingHelper.hash(dto.password, 10);
-        return this.prisma.user.create({
-          data: {
-            fullName: dto.fullName,
-            phone: dto.phone,
-            type: UserType.STAFF,
-            auth: {
-              create: {
-                login: dto.login,
-                passwordHash
-              }
-            },
-            staff: {
-              create: {
-                role: StaffRole.WAREHOUSE,
-                storeId: dto.storeId
-              }
+      const passwordHash = await HashingHelper.hash(dto.password, 10);
+      return this.prisma.user.create({
+        data: {
+          fullName: dto.fullName,
+          phone: dto.phone,
+          type: UserType.STAFF,
+          auth: {
+            create: {
+              login: dto.login,
+              passwordHash
+            }
+          },
+          staff: {
+            create: {
+              role: StaffRole.WAREHOUSE,
+              storeId: dto.storeId
             }
           }
-        });
-      }
-      return Promise.reject(null)
+        }
+      });
+
     } catch (error: any) {
       throw new BadRequestException(error.error)
     }
