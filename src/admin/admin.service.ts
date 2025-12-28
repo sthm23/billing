@@ -17,6 +17,7 @@ export class AdminService {
         include: { user: true }
       })
       if (authAccount) throw new NotFoundException('Admin is exist!');
+      const passwordHash = await HashingHelper.hash(dto.password, 10);
       const newUser = await this.prisma.user.create({
         data: {
           fullName: dto.fullName,
@@ -25,7 +26,7 @@ export class AdminService {
           auth: {
             create: {
               login: dto.login,
-              passwordHash: await HashingHelper.hash(dto.password, 10),
+              passwordHash
             }
           }
         },

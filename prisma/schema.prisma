@@ -97,7 +97,7 @@ model User {
   auth            AuthAccount?
   staff           Staff?
   orders          Order[]          @relation("CustomerOrders")
-  sellers         Seller[]
+  stores          Store[]
   admin           Admin?
   refreshSessions RefreshSession[]
 }
@@ -120,8 +120,8 @@ model Admin {
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
 
-  user    User     @relation(fields: [userId], references: [id])
-  sellers Seller[]
+  user   User    @relation(fields: [userId], references: [id])
+  stores Store[]
 }
 
 model RefreshSession {
@@ -141,11 +141,11 @@ model RefreshSession {
 
 /**
  * =======================
- * SELLERS & STAFF
+ * STORES & STAFF
  * =======================
  */
 
-model Seller {
+model Store {
   id        String   @id @default(uuid())
   name      String
   ownerId   String
@@ -164,18 +164,18 @@ model Seller {
 model Staff {
   id       String    @id @default(uuid())
   userId   String    @unique
-  sellerId String    @unique
+  storeId  String    @unique
   role     StaffRole
   isActive Boolean   @default(true)
 
-  user   User   @relation(fields: [userId], references: [id])
-  seller Seller @relation(fields: [sellerId], references: [id])
+  user  User  @relation(fields: [userId], references: [id])
+  store Store @relation(fields: [storeId], references: [id])
 
   warehouses StaffWarehouse[]
   stockMoves StockMovement[]
   orders     Order[]
 
-  @@unique([userId, sellerId])
+  @@unique([userId, storeId])
 }
 
 model StaffWarehouse {
@@ -197,11 +197,11 @@ model StaffWarehouse {
 
 model Warehouse {
   id       String  @id @default(uuid())
-  sellerId String
+  storeId  String
   name     String
   isActive Boolean @default(true)
 
-  seller          Seller           @relation(fields: [sellerId], references: [id])
+  store           Store            @relation(fields: [storeId], references: [id])
   inventory       Inventory[]
   orders          Order[]
   staffWarehouses StaffWarehouse[]
@@ -234,14 +234,14 @@ model Brand {
 
 model Product {
   id         String   @id @default(uuid())
-  sellerId   String
+  storeId    String
   name       String
   categoryId String?
   brandId    String?
   isArchived Boolean  @default(false)
   createdAt  DateTime @default(now())
 
-  seller     Seller                  @relation(fields: [sellerId], references: [id])
+  store      Store                   @relation(fields: [storeId], references: [id])
   category   Category?               @relation(fields: [categoryId], references: [id])
   brand      Brand?                  @relation(fields: [brandId], references: [id])
   variants   ProductVariant[]
@@ -345,7 +345,7 @@ model StockMovement {
 
 model Order {
   id          String       @id @default(uuid())
-  sellerId    String
+  storeId     String
   warehouseId String
   cashierId   String?
   customerId  String?
@@ -354,7 +354,7 @@ model Order {
   totalAmount Decimal
   createdAt   DateTime     @default(now())
 
-  seller    Seller    @relation(fields: [sellerId], references: [id])
+  store     Store     @relation(fields: [storeId], references: [id])
   warehouse Warehouse @relation(fields: [warehouseId], references: [id])
   cashier   Staff?    @relation(fields: [staffId], references: [id])
   customer  User?     @relation("CustomerOrders", fields: [customerId], references: [id])

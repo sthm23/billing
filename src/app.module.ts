@@ -12,6 +12,7 @@ import { PaymentModule } from './payment/payment.module';
 import { ReportModule } from './report/report.module';
 import { SharedModule } from './shared/shared.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { StoreModule } from './store/store.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { PrismaModule } from './prisma/prisma.module';
     PaymentModule,
     ReportModule,
     SharedModule,
+    StoreModule,
 
 
   ],

@@ -2,8 +2,9 @@ import { Injectable, ForbiddenException, NotFoundException, BadRequestException 
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { Prisma, User } from '@generated/client';
-import { CreateUserDto } from './dto/create-user.dto';
+import { Prisma, StaffRole, User, UserType } from '@generated/client';
+import { CreateOwnerDto, CreateUserDto } from './dto/create-user.dto';
+import { HashingHelper } from '@utils/helper/hash.helper';
 
 @Injectable()
 export class UserService {
@@ -24,6 +25,29 @@ export class UserService {
       return this.prismaService.user.create({
         data: userEntity
       });
+    } catch (error: any) {
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  async createOwner(dto: CreateOwnerDto) {
+    try {
+      const passwordHash = await HashingHelper.hash(dto.password, 10);
+      const user = await this.prismaService.user.create({
+        data: {
+          fullName: dto.fullName,
+          phone: dto.phone,
+          type: UserType.STAFF,
+          auth: {
+            create: {
+              login: dto.login,
+              passwordHash
+            }
+          }
+        }
+      })
+
+
     } catch (error: any) {
       throw new BadRequestException(error.message);
     }

@@ -15,7 +15,7 @@ import { AuthService } from './auth.service';
 import { CurrentUser } from '@utils/decorators/user.decorator';
 import { SignInDto } from './dto/create-login.dto';
 import { LocalAuthGuard } from '@auth/guard/local_passport.guard';
-import type { RefreshTokenPayload, UserAuth } from './models/auth.model';
+import type { UserAuth } from './models/auth.model';
 import type { Response, Request } from 'express';
 import { AuthJWTGuard } from './guard/auth.guard';
 
@@ -77,6 +77,7 @@ export class AuthController {
     return { accessToken };
   }
 
+  @HttpCode(HttpStatus.OK)
   @Post('logout')
   @UseGuards(AuthJWTGuard)
   async logout(
