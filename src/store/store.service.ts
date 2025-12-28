@@ -1,26 +1,76 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateStoreDto } from './dto/create-store.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
+import { PrismaService } from '@prisma/prisma.service';
+import { UserType } from '@generated/enums';
+import { HashingHelper } from '@shared/helper/hash.helper';
 
 @Injectable()
 export class StoreService {
-  create(createStoreDto: CreateStoreDto) {
-    return 'This action adds a new store';
+
+  constructor(
+    private readonly prisma: PrismaService,
+
+  ) { }
+
+  async create(dto: CreateStoreDto, creatorId: string) {
+    try {
+      const passwordHash = await HashingHelper.hash(dto.password, 10);
+      const owner = await this.prisma.user.create({
+        data: {
+          fullName: dto.fullName,
+          phone: dto.phone,
+          type: UserType.STAFF,
+          auth: {
+            create: {
+              login: dto.login,
+              passwordHash
+            }
+          }
+        }
+      })
+      const store = await this.prisma.store.create({
+        data: {
+          name: dto.name,
+          createdBy: creatorId,
+          ownerId: owner.id
+        }
+      })
+
+      return store
+    } catch (error: any) {
+      throw new BadRequestException(error.error)
+    }
   }
 
   findAll() {
-    return `This action returns all store`;
+    try {
+      return this.prisma.store.findMany()
+    } catch (error: any) {
+      throw new BadRequestException(error.error)
+    }
   }
 
-  findOne(id: number) {
-    return `This action returns a #${id} store`;
-  }
+  findOne(id: string) {
+    try {
+      return this.prisma.store.findUnique({
+        where: { id },
 
-  update(id: number, updateStoreDto: UpdateStoreDto) {
-    return `This action updates a #${id} store`;
-  }
-
-  remove(id: number) {
-    return `This action removes a #${id} store`;
+        include: {
+          _count: {
+            select: {
+              products: true,
+              orders: true
+            }
+          },
+          creator: true,
+          owner: true,
+          staff: true,
+          warehouses: true
+        }
+      })
+    } catch (error: any) {
+      throw new BadRequestException(error.error)
+    }
   }
 }
