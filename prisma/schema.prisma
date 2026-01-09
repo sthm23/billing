@@ -164,7 +164,7 @@ model Store {
 model Staff {
   id       String    @id @default(uuid())
   userId   String    @unique
-  storeId  String    @unique
+  storeId  String
   role     StaffRole
   isActive Boolean   @default(true)
 
@@ -175,7 +175,7 @@ model Staff {
   stockMoves StockMovement[]
   orders     Order[]
 
-  @@unique([userId, storeId])
+  @@index([storeId])
 }
 
 model StaffWarehouse {
@@ -206,6 +206,8 @@ model Warehouse {
   orders          Order[]
   staffWarehouses StaffWarehouse[]
   stockMovements  StockMovement[]
+
+  @@unique([id, storeId])
 }
 
 /**
@@ -268,8 +270,9 @@ model Product {
 model ProductVariant {
   id        String  @id @default(uuid())
   productId String
-  sku       String  @unique
+  sku       String // ску будет уникален в пределах магазина
   price     Decimal
+  storeId   String // это для быстрого поиска уникального SKU в пределах магазина
 
   product   Product     @relation(fields: [productId], references: [id])
   inventory Inventory[]
@@ -277,6 +280,8 @@ model ProductVariant {
   orderItems     OrderItem[]
   stockMovements StockMovement[]
   attributes     VariantAttributeValue[]
+
+  @@unique([storeId, sku])
 }
 
 /**
@@ -334,9 +339,8 @@ model Inventory {
   variantId   String
   quantity    Int
 
-  warehouse        Warehouse      @relation(fields: [warehouseId], references: [id])
-  variant          ProductVariant @relation(fields: [productVariantId], references: [id])
-  productVariantId String
+  warehouse Warehouse      @relation(fields: [warehouseId], references: [id])
+  variant   ProductVariant @relation(fields: [variantId], references: [id])
 
   @@unique([warehouseId, variantId])
 }
@@ -358,11 +362,12 @@ model StockMovement {
   createdById String
   createdAt   DateTime            @default(now())
 
-  variant          ProductVariant @relation(fields: [productVariantId], references: [id])
-  warehouse        Warehouse      @relation(fields: [warehouseId], references: [id])
-  createdBy        Staff          @relation(fields: [staffId], references: [id])
-  productVariantId String
-  staffId          String
+  variant   ProductVariant @relation(fields: [variantId], references: [id])
+  warehouse Warehouse      @relation(fields: [warehouseId], references: [id])
+  createdBy Staff          @relation(fields: [createdById], references: [id])
+
+  @@index([warehouseId, createdAt])
+  @@index([variantId, createdAt])
 }
 
 /**
@@ -384,13 +389,15 @@ model Order {
 
   store     Store     @relation(fields: [storeId], references: [id])
   warehouse Warehouse @relation(fields: [warehouseId], references: [id])
-  cashier   Staff?    @relation(fields: [staffId], references: [id])
+  cashier   Staff?    @relation(fields: [cashierId], references: [id])
   customer  User?     @relation("CustomerOrders", fields: [customerId], references: [id])
 
   items    OrderItem[]
   payments Payment[]
   delivery Delivery?
-  staffId  String?
+
+  @@index([storeId, createdAt])
+  @@index([warehouseId, createdAt])
 }
 
 model OrderItem {
@@ -401,9 +408,11 @@ model OrderItem {
   priceAtSale Decimal // За сколько продали
   costAtSale  Decimal // За сколько закупили
 
-  order            Order          @relation(fields: [orderId], references: [id])
-  variant          ProductVariant @relation(fields: [productVariantId], references: [id])
-  productVariantId String
+  order   Order          @relation(fields: [orderId], references: [id])
+  variant ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@index([orderId])
+  @@index([variantId])
 }
 
 /**
@@ -420,6 +429,8 @@ model Payment {
   paidAt  DateTime?
 
   order Order @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
 }
 
 /**
