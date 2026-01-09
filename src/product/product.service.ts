@@ -5,73 +5,112 @@ import { ProductSold } from '@shared/model/product.model';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { S3Service } from 'src/prisma/s3.service';
 import { AccessTokenPayload } from '@auth/models/auth.model';
+import { ProductVariant } from '@generated/client';
 
 @Injectable()
 export class ProductService {
 
   constructor(
-    private prismaClient: PrismaService,
+    private prisma: PrismaService,
     private s3Service: S3Service,
   ) { }
 
 
-  async createProduct({ sizes, ...createProductDto }: any, payload: AccessTokenPayload) {
-    // const session = await this.connection.startSession();
-    // session.startTransaction();
-    // try {
-    //   const productModel = new this.productModel(createProductDto);
+  async createProduct(dto: CreateProductDto) {
+    try {
+      const product = await this.prisma.product.create({
+        data: {
+          name: dto.name,
+          storeId: dto.storeId,
 
-    //   const id = productModel._id.toString();
-    //   const productId = new Types.ObjectId(id);
-    //   const userId = new Types.ObjectId(payload.userId);
-
-    //   if (sizes && sizes.length) {
-    //     const {
-    //       quantity,
-    //       productSizeIds
-    //     } = await this.workWithProductSizes({ sizes, productId, userId }, session);
-    //     productModel.sizes.push(...productSizeIds);
-    //     productModel.quantity = quantity;
-    //   }
-
-    //   const newProduct = await productModel.save({ session });
-    //   await session.commitTransaction();
-    //   return newProduct;
-    // } catch (error:any) {
-    //   await session.abortTransaction();
-    //   throw new ForbiddenException(error?.message);
-    // } finally {
-    //   await session.endSession();
-    // }
+        }
+      })
+    } catch (error: any) {
+      throw new ForbiddenException(error?.message);
+    }
   }
 
+  async createProductVariant(dto: ProductVariant[]) {
+    await this.prisma.$transaction(async tx => {
+      // const product = await tx.product.create({ ... })
+
+      // await tx.productImage.createMany({ ... })
+
+      // await tx.productVariant.createMany({ ... })
+
+      // await tx.productAttributeValue.createMany({ ... })
+    })
+  }
+
+  async handleFile(
+    files: Express.Multer.File[],
+    productId: string,
+    storeId: string
+  ) {
+    try {
+      const bufferArray: Promise<Buffer<ArrayBufferLike>>[] = []
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const originalBuffer = FileHelper.compressImage(file); // Читаем файл в память
+        bufferArray.push(originalBuffer)
+      }
+      const arr = await Promise.all(bufferArray);
+      const imgUrlArr: Promise<string>[] = []
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const buffer = arr[i];
+        const fileName = FileHelper.createFileName(file, storeId);
+
+        const url = this.s3Service.uploadFile({
+          buffer: buffer,
+          fileName: fileName,
+          mimetype: file.mimetype
+        })
+
+        imgUrlArr.push(url)
+      }
+      const urls = await Promise.all(imgUrlArr);
+      const data = urls.map((url, ind) => {
+        return { productId, url, order: ind, isMain: ind === 0 }
+      })
+      const imgArr = await this.prisma.productImage.createMany({
+        data
+      })
+
+      return { data, imgArr };
+    } catch (error: any) {
+      throw new ForbiddenException(error?.message);
+    }
+  }
+
+  async removeFile(productId: string, body: any, storeId: string) {
+
+  }
 
   async findAll(documentsToSkip = 0, limitOfDocuments?: number) {
     try {
-      const query = this.prismaClient.product.findMany()
+      const query = this.prisma.product.findMany()
       // if (limitOfDocuments) {
       //   query.limit(limitOfDocuments);
       // }
       // const result = await query.exec();
       // const count = await this.productModel.countDocuments({ isActive: true }).exec();
-      // return {
       return query
     } catch (error: any) {
       throw new ForbiddenException(error?.message);
     }
   }
 
-  async findOne(id: string, dto?: any) {
-    // const populateOptions = this.makePopulateOptions(dto);
-    // try {
-    //   const product = await this.productModel.findById(id)
-    //     .populate<{ sizes: ProductSize }>(populateOptions)
-    //     .exec();
-    //   if (!product) throw new NotFoundException('Product not found');
-    //   return product;
-    // } catch (error:any) {
-    //   throw new ForbiddenException('Product not found: ' + error?.message);
-    // }
+  async findOne(id: string) {
+    try {
+      const product = await this.prisma.product.findUnique({ where: { id } });
+      if (!product) throw new NotFoundException('Product not found');
+
+      return product;
+    } catch (error: any) {
+      throw new ForbiddenException('Product not found: ' + error?.message);
+    }
   }
 
   async findByNameOrBrand(text: string) {
@@ -93,53 +132,10 @@ export class ProductService {
     // return product;
   }
 
-  async updateProduct(id: string, { sizes, ...dto }: any) {
+  async updateProduct(id: string, dto: any) {
 
-    // const session = await this.connection.startSession();
 
-    // try {
-    //   session.startTransaction();
-
-    //   // Обновляем продукт
-    //   await this.productModel.findByIdAndUpdate(id, dto, { session });
-
-    //   // Обновляем или создаем варианты
-    //   for (const size of sizes || []) {
-    //     if (size._id) {
-    //       // Если _id есть, обновляем существующий вариант
-    //       const updsize = await this.productSizeModel.updateOne(
-    //         { _id: new Types.ObjectId(size._id) },
-    //         { $set: size },
-    //         { session }
-    //       );
-    //     } else {
-    //       // Если _id нет, создаем новый вариант
-    //       const newSize = await new this.productSizeModel(size).save({ session });
-    //     }
-    //   }
-
-    //   await session.commitTransaction();
-
-    //   return this.findOne(id);
-    // } catch (error:any) {
-    //   await session.abortTransaction();
-    //   throw new ForbiddenException('Product updating error: ' + error?.message);
-    // } finally {
-    //   await session.endSession();
-    // }
   }
-
-  // async updateProductSize(id: string, sizes: UpdateProductSizeDTO) {
-  //   try {
-  //     const productId = new Types.ObjectId(id);
-  //     const productsizes = await this.productSizeModel.find({
-  //       productId
-  //     }).exec();
-  //     return productsizes
-  //   } catch (error:any) {
-  //     throw new ForbiddenException('Product sizes updating error: ' + error?.message);
-  //   }
-  // }
 
   async remove(id: string) {
     // const session = await this.connection.startSession();
@@ -165,53 +161,5 @@ export class ProductService {
     //   await session.endSession();
     // }
 
-  }
-
-  async productSold(dto: ProductSold) {
-
-    // try {
-    //   const productColor = await this.productColorModel.findByIdAndUpdate(dto.colorId, {
-    //     $inc: {
-    //       sold: dto.quantity,
-    //       stock: -dto.quantity
-    //     }
-    //   }, { new: true, session }).exec();
-
-    //   const productSize = await this.productSizeModel.findByIdAndUpdate(dto.sizeId, {
-    //     $inc: {
-    //       quantity: -dto.quantity
-    //     }
-    //   }, { new: true, session }).exec();
-
-    //   const product = await this.productModel.findByIdAndUpdate(dto.productId, {
-    //     $inc: {
-    //       quantity: -dto.quantity
-    //     }
-    //   }, { new: true, session }).exec();
-
-    //   return Promise.all([productColor, productSize, product]);
-
-    // } catch (error:any) {
-    //   throw new Error(`Error selling product: ${error.message}`);
-    // }
-  }
-
-
-
-  async handleFile(files: Express.Multer.File[]) {
-    try {
-      const compressedPhotos = await Promise.all(
-        files.map(async (file) => {
-          const url = this.s3Service.uploadFile(file, file.originalname)
-          // const fileName = FileHelper.createFileName(file);
-          // const originalBuffer = await FileHelper.compressImage(file); // Читаем файл в память
-          // FileHelper.writeFile(fileName, originalBuffer);
-          return url // Возвращаем ссылку
-        })
-      );
-      return compressedPhotos
-    } catch (error: any) {
-      throw new ForbiddenException(error?.message);
-    }
   }
 }

@@ -15,7 +15,8 @@ import {
   MaxFileSizeValidator,
   FileTypeValidator,
   BadRequestException,
-  Query
+  Query,
+  ParseUUIDPipe
 } from '@nestjs/common';
 import { ProductService } from './product.service';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -26,31 +27,24 @@ import { fileUploadInterceptor } from './interceptor/file-upload.interceptor';
 import { CurrentUser } from '@shared/decorators/user.decorator';
 import { PaginationParams } from '@shared/helper/pagination-params.dto';
 import { StaffRole } from '@generated/enums';
-import type { AccessTokenPayload } from '@auth/models/auth.model';
-
+import type { AccessTokenPayload, CurrentUserType } from '@auth/models/auth.model';
+@UseGuards(AuthJWTGuard)
 @Controller('product')
 export class ProductController {
   constructor(private readonly productService: ProductService) { }
 
   @UseGuards(RolesGuard)
-  @UseGuards(AuthJWTGuard)
   @Roles(StaffRole.MANAGER, StaffRole.OWNER)
   @Post()
   create(
-    @Body(
-      new ValidationPipe({
-        transform: true,
-      }),
-    ) createProductDto: CreateProductDto,
-    @CurrentUser() payload: AccessTokenPayload
+    @Body() createProductDto: CreateProductDto,
   ) {
-    return this.productService.createProduct(createProductDto, payload);
+    return this.productService.createProduct(createProductDto);
   }
 
   @UseGuards(RolesGuard)
-  @UseGuards(AuthJWTGuard)
   @Roles(StaffRole.MANAGER, StaffRole.OWNER)
-  @Post('upload-photo')
+  @Post('img/upload/:id')
   @UseInterceptors(fileUploadInterceptor)
   uploadPhoto(
     @UploadedFiles(
@@ -71,8 +65,21 @@ export class ProductController {
         fileIsRequired: false
       }),
     ) photo: Array<Express.Multer.File>,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: CurrentUserType
   ) {
-    return this.productService.handleFile(photo)
+    return this.productService.handleFile(photo, id, user.staff.storeId)
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles(StaffRole.MANAGER, StaffRole.OWNER)
+  @Delete('img/delete/:id')
+  removePhoto(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() body: any,
+    @CurrentUser() user: CurrentUserType
+  ) {
+    return this.productService.removeFile(id, body, user.staff.storeId)
   }
 
   @Get()
@@ -94,31 +101,11 @@ export class ProductController {
   // }
 
   // @UseGuards(RolesGuard)
-  // @UseGuards(AuthJWTGuard)
   // @Roles(ROLE.ADMIN, ROLE.MANAGER)
   // @Delete(':id')
   // remove(@Param() { id }: ParamsWithId) {
   //   return this.productService.remove(id);
   // }
 
-  // @UseGuards(RolesGuard)
-  // @UseGuards(AuthJWTGuard)
-  // @Roles(ROLE.ADMIN, ROLE.MANAGER)
-  // @Put(':id')
-  // update(@Param() { id }: ParamsWithId, @Body(
-  //   new ValidateSizePipe(),
-  //   new ValidationPipe({
-  //     transform: true,
-  //   }),
-  // ) updateProductDto: CreateProductDto) {
-  //   return this.productService.updateProduct(id, updateProductDto);
-  // }
 
-  // @UseGuards(RolesGuard)
-  // @UseGuards(AuthJWTGuard)
-  // @Roles(ROLE.ADMIN, ROLE.MANAGER)
-  // @Patch(':id')
-  // updateProductSize(@Param() { id }: ParamsWithId, @Body() updateProductDto: UpdateProductSizeDTO) {
-  //   return this.productService.updateProductSize(id, updateProductDto);
-  // }
 }

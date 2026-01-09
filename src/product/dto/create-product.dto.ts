@@ -1,45 +1,40 @@
 import { Type } from "class-transformer";
-import { IsArray, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, Min, ValidateNested } from "class-validator";
-import { ProductTag } from "@shared/model/product.model";
+import { IsArray, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Min, ValidateNested } from "class-validator";
 
 export class CreateProductDto {
-    @IsString()
-    @IsNotEmpty() // Обязательное поле
+    @IsNotEmpty()
+    @IsUUID('4')
     brand!: string;
 
-    @IsString()
-    @IsNotEmpty() // Обязательное поле
+    @IsNotEmpty()
+    @IsUUID('4')
     category!: string;
 
-    @IsString()
-    @IsEnum(ProductTag)
-    @IsNotEmpty() // Обязательное поле
-    tag!: ProductTag;
+    @IsNotEmpty()
+    @IsUUID('4')
+    storeId!: string;
 
     @IsString()
-    @IsNotEmpty() // Обязательное поле
-    description!: string;
-
-    @IsString()
-    @IsNotEmpty() // Обязательное поле
+    @IsNotEmpty()
     name!: string;
+
 
     @IsNumber()
     @Type(() => Number)
     @Min(0)
-    @IsNotEmpty() // Обязательное поле
+    @IsNotEmpty()
     price!: number;
 
     @IsNumber()
     @Type(() => Number)
     @Min(0)
-    @IsNotEmpty() // Обязательное поле
+    @IsNotEmpty()
     quantity!: number;
 
     @IsNumber()
     @Type(() => Number)
     @Min(0)
-    @IsNotEmpty() // Обязательное поле
+    @IsNotEmpty()
     discount!: number;
 
     @IsOptional()

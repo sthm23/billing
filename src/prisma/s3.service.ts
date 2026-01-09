@@ -1,5 +1,11 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { GetObjectCommand, PutObjectCommand, S3Client, type S3ClientConfig } from '@aws-sdk/client-s3';
+import {
+    GetObjectCommand,
+    PutObjectCommand,
+    S3Client,
+    type S3ClientConfig,
+    DeleteObjectCommand
+} from '@aws-sdk/client-s3';
 import { ConfigService } from '@nestjs/config';
 
 
@@ -25,20 +31,24 @@ export class S3Service {
 
     }
 
-    async uploadFile(file: Express.Multer.File, fileName: string): Promise<string> {
+    async uploadFile(
+        // file: Express.Multer.File, 
+        // fileName: string
+        file: { buffer: Buffer<ArrayBufferLike>, mimetype: string, fileName: string },
+    ): Promise<string> {
         try {
             const bucketName = this.configService.get<string>('AWS_S3_BUCKET_NAME')
             const endpoint = this.configService.get<string>('AWS_S3_ENDPOINT')
             const params = new PutObjectCommand({
                 Bucket: bucketName || '',
-                Key: fileName,
+                Key: file.fileName,
                 Body: file.buffer,
                 ContentType: file.mimetype,
                 ACL: 'public-read', // Or adjust as needed for your use case
             });
             const uploadResult = await this.s3Client.send(params);
 
-            return `http://${bucketName}.${endpoint}/${fileName}`; // Returns the URL of the uploaded file
+            return `http://${bucketName}.${endpoint}/${file.fileName}`; // Returns the URL of the uploaded file
         } catch (error: any) {
             throw new BadRequestException(error.message);
         }
@@ -52,6 +62,19 @@ export class S3Service {
         const file = await this.s3Client.send(params);
 
         return file;
+    }
+
+    async removeFile(key: string) {
+        try {
+            const params = new DeleteObjectCommand({
+                Bucket: this.configService.get<string>('AWS_S3_BUCKET_NAME') || '',
+                Key: key
+            });
+            await this.s3Client.send(params);
+            return { message: 'Image successfully removed' }
+        } catch (error) {
+            throw new BadRequestException('Issue with removing file!')
+        }
     }
 
 }
