@@ -1,5 +1,5 @@
 import { Type } from "class-transformer";
-import { IsArray, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Min, ValidateNested } from "class-validator";
+import { IsArray, IsDefined, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Min, ValidateNested } from "class-validator";
 
 export class CreateProductDto {
     @IsNotEmpty()
@@ -18,26 +18,53 @@ export class CreateProductDto {
     @IsNotEmpty()
     name!: string;
 
-
-    @IsNumber()
-    @Type(() => Number)
-    @Min(0)
-    @IsNotEmpty()
-    price!: number;
-
-    @IsNumber()
-    @Type(() => Number)
-    @Min(0)
-    @IsNotEmpty()
-    quantity!: number;
-
-    @IsNumber()
-    @Type(() => Number)
-    @Min(0)
-    @IsNotEmpty()
-    discount!: number;
-
     @IsOptional()
     @IsArray()
-    photo!: string[];
+    images!: string[];
+}
+
+export class CreateProductVariantDto {
+    @IsUUID("4")
+    @IsNotEmpty()
+    productId: string = "";
+
+    @IsOptional()
+    @IsString()
+    sku?: string;
+
+    @IsOptional()
+    @IsString()
+    barCode?: string;
+
+    @IsNumber()
+    @Type(() => Number)
+    @Min(0)
+    @IsNotEmpty()
+    price: number = 0;
+
+    // Атрибуты (например Attribute: color/size)
+    @IsDefined()
+    @ValidateNested()
+    @Type(() => AttributeValueDto)
+    color!: AttributeValueDto
+
+    @IsDefined()
+    @ValidateNested()
+    @Type(() => AttributeValueDto)
+    size!: AttributeValueDto
+
+    @IsArray()
+    @ValidateNested({ each: true })
+    @Type(() => AttributeValueDto)
+    attributes?: AttributeValueDto[];
+}
+
+export class AttributeValueDto {
+    @IsUUID("4")
+    @IsNotEmpty()
+    attributeId: string = "";
+
+    @IsString()
+    @IsNotEmpty()
+    value: string = "";
 }

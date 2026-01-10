@@ -1,11 +1,13 @@
-import { ForbiddenException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
-import { CreateProductDto } from './dto/create-product.dto';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { CreateProductDto, CreateProductVariantDto } from './dto/create-product.dto';
 import { FileHelper } from '@shared/helper/file.helper';
 import { ProductSold } from '@shared/model/product.model';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { S3Service } from 'src/prisma/s3.service';
 import { AccessTokenPayload } from '@auth/models/auth.model';
-import { ProductVariant } from '@generated/client';
+import { Prisma, ProductVariant } from '@generated/client';
+import { buildSku } from '@shared/helper/sku-generator.helper';
+import { generateEan13 } from '@shared/helper/bar-code-generator.helper';
 
 @Injectable()
 export class ProductService {
@@ -30,16 +32,52 @@ export class ProductService {
     }
   }
 
-  async createProductVariant(dto: ProductVariant[]) {
-    await this.prisma.$transaction(async tx => {
-      // const product = await tx.product.create({ ... })
+  async createProductVariant(dto: CreateProductVariantDto) {
+    const product = await this.prisma.product.findUnique({ where: { id: dto.productId } });
+    if (!product) throw new NotFoundException("Product not found");
 
-      // await tx.productImage.createMany({ ... })
+    const baseSku = dto.sku?.trim()
+      ? dto.sku.trim().toUpperCase()
+      : buildSku(product.name, dto.color.value, dto.size.value);
 
-      // await tx.productVariant.createMany({ ... })
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const sku = attempt === 0 ? baseSku : `${baseSku}-${attempt + 1}`;
+      const barCode = dto.barCode?.trim() ? dto.barCode.trim() : generateEan13();
 
-      // await tx.productAttributeValue.createMany({ ... })
-    })
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          // (опционально) если хочешь избежать дублей barCode даже без unique в БД:
+          const existing = await tx.productVariant.findFirst({ where: { barCode } });
+          if (existing) throw new Error("BARCODE_COLLISION");
+
+          const variant = await tx.productVariant.create({
+            data: {
+              productId: product.id,
+              storeId: product.storeId, // важно: берем из product, не из dto
+              sku,
+              barCode,
+              price: new Prisma.Decimal(dto.price),
+            },
+          });
+
+          await tx.variantAttributeValue.createMany({
+            data: [
+              { variantId: variant.id, attributeId: dto.color.attributeId, valueString: dto.color.value },
+              { variantId: variant.id, attributeId: dto.size.attributeId, valueString: dto.size.value },
+            ],
+          });
+
+          return variant;
+        });
+      } catch (e: any) {
+        // уникальность SKU (storeId+sku)
+        if (e?.code === "P2002") continue;
+        if (e?.message === "BARCODE_COLLISION") continue;
+        throw new BadRequestException(e?.message ?? "Create variant failed");
+      }
+    }
+
+    throw new BadRequestException("Failed to generate unique SKU/barCode after retries");
   }
 
   async handleFile(

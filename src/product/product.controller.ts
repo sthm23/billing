@@ -19,7 +19,7 @@ import {
   ParseUUIDPipe
 } from '@nestjs/common';
 import { ProductService } from './product.service';
-import { CreateProductDto } from './dto/create-product.dto';
+import { CreateProductDto, CreateProductVariantDto } from './dto/create-product.dto';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { Roles } from '@shared/decorators/role.decorator';
 import { RolesGuard } from '@shared/guards/role.guard';
@@ -40,6 +40,15 @@ export class ProductController {
     @Body() createProductDto: CreateProductDto,
   ) {
     return this.productService.createProduct(createProductDto);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles(StaffRole.MANAGER, StaffRole.OWNER)
+  @Post()
+  createVariant(
+    @Body() dto: CreateProductVariantDto,
+  ) {
+    return this.productService.createProductVariant(dto);
   }
 
   @UseGuards(RolesGuard)

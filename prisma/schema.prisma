@@ -271,6 +271,7 @@ model ProductVariant {
   id        String  @id @default(uuid())
   productId String
   sku       String // ску будет уникален в пределах магазина
+  barCode   String
   price     Decimal
   storeId   String // это для быстрого поиска уникального SKU в пределах магазина
 

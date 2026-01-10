@@ -1,9 +1,10 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { CreateWarehouseDto, CreateWarehouseStaffDto } from './dto/create-warehouse.dto';
 import { PrismaService } from '@prisma/prisma.service';
-import { StaffRole, UserType } from '@generated/enums';
+import { StaffRole, StockMovementReason, StockMovementType, UserType } from '@generated/enums';
 import { HashingHelper } from '@shared/helper/hash.helper';
-import { User } from '@generated/client';
+import { Prisma, User } from '@generated/client';
+import { StockInDto } from './dto/stock-in.dto';
 
 @Injectable()
 export class WarehouseService {
@@ -102,6 +103,46 @@ export class WarehouseService {
       })
     } catch (error: any) {
       throw new BadRequestException(error.error)
+    }
+  }
+
+
+  async stockIn(dto: StockInDto, createdById: string) {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const movement = await tx.stockMovement.create({
+          data: {
+            warehouseId: dto.warehouseId,
+            variantId: dto.variantId,
+            type: StockMovementType.IN,
+            reason: StockMovementReason.PURCHASE,
+            quantity: dto.quantity,
+            unitCost: new Prisma.Decimal(dto.unitCost),
+            createdById,
+          },
+        });
+
+        const inventory = await tx.inventory.upsert({
+          where: {
+            warehouseId_variantId: {
+              warehouseId: dto.warehouseId,
+              variantId: dto.variantId,
+            },
+          },
+          create: {
+            warehouseId: dto.warehouseId,
+            variantId: dto.variantId,
+            quantity: dto.quantity,
+          },
+          update: {
+            quantity: { increment: dto.quantity },
+          },
+        });
+
+        return { movement, inventory };
+      });
+    } catch (e: any) {
+      throw new BadRequestException(e?.message ?? "Stock in failed");
     }
   }
 }
