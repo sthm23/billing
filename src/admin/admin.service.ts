@@ -2,7 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { CreateAdminDto } from './dto/create-admin.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { ExceptionsHandler } from '@nestjs/core/exceptions/exceptions-handler';
-import { UserType } from '@generated/enums';
+import { UserRole, UserType } from '@generated/enums';
 import { HashingHelper } from '@shared/helper/hash.helper';
 
 @Injectable()
@@ -32,13 +32,7 @@ export class AdminService {
         },
 
       })
-      await this.prisma.admin.create({
-        data: {
-          userId: newUser.id,
-          isActive: true,
-        },
-        include: { user: true },
-      });
+
       return newUser
     } catch (error) {
       throw new NotFoundException('Error with creating admin.')
@@ -46,17 +40,19 @@ export class AdminService {
   }
 
   async findAll() {
-    return this.prisma.admin.findMany({
-      include: { user: true },
+    return this.prisma.user.findMany({
+      where: { role: UserRole.ADMIN },
+      include: { auth: true }
     });
   }
 
   async isAdmin(userId: string): Promise<boolean> {
-    const admin = await this.prisma.admin.findUnique({
-      where: { userId },
+    const admin = await this.prisma.user.findUnique({
+      where: { id: userId, role: UserRole.ADMIN },
+      include: { auth: true }
     });
 
-    return !!admin?.isActive;
+    return !!admin?.auth?.isActive;
   }
 
   async findOne(id: string) {
@@ -71,8 +67,8 @@ export class AdminService {
     try {
       const user = await this.prisma.user.update({
         where: { id },
-        include: { admin: true, auth: true },
-        data: { admin: { update: { isActive: false } }, auth: { update: { isActive: false } } }
+        include: { auth: true },
+        data: { auth: { update: { isActive: false } } }
       })
       return { message: `Admin ${user.auth?.login} successfully deactivated!` }
     } catch (error) {

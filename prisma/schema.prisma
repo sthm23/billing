@@ -19,6 +19,11 @@ datasource db {
  * ENUMS
  * =======================
  */
+enum UserRole {
+  ADMIN
+  OWNER
+  USER
+}
 
 enum UserType {
   CUSTOMER
@@ -30,7 +35,6 @@ enum StaffRole {
   MANAGER
   CASHIER
   WAREHOUSE
-  OWNER
 }
 
 enum StockMovementType {
@@ -91,6 +95,7 @@ model User {
   id        String   @id @default(uuid())
   fullName  String
   phone     String   @unique
+  role      UserRole @default(USER)
   type      UserType
   createdAt DateTime @default(now())
 
@@ -98,7 +103,6 @@ model User {
   staff           Staff?
   orders          Order[]          @relation("CustomerOrders")
   stores          Store[]
-  admin           Admin?
   refreshSessions RefreshSession[]
 }
 
@@ -112,15 +116,7 @@ model AuthAccount {
   createdAt    DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id])
-}
 
-model Admin {
-  id        String   @id @default(uuid())
-  userId    String   @unique
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-
-  user   User    @relation(fields: [userId], references: [id])
   stores Store[]
 }
 
@@ -152,7 +148,7 @@ model Store {
   createdAt DateTime @default(now())
 
   createdBy String // adminId
-  creator   Admin  @relation(fields: [createdBy], references: [id])
+  creator   AuthAccount @relation(fields: [createdBy], references: [id])
 
   owner      User        @relation(fields: [ownerId], references: [id])
   staff      Staff[]

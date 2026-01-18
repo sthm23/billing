@@ -1,16 +1,18 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { HashingHelper } from '@shared/helper/hash.helper';
-import { UserType } from '@generated/enums';
+import { UserRole, UserType } from '@generated/enums';
 
 @Injectable()
 export class AdminBootstrap implements OnModuleInit {
     constructor(private prisma: PrismaService) { }
 
     async onModuleInit() {
-        const adminsCount = await this.prisma.admin.count();
+        const isAdmin = await this.prisma.user.findFirst({
+            where: { role: UserRole.ADMIN },
+        });
 
-        if (adminsCount > 0) {
+        if (isAdmin) {
             console.log('Super admin already exists.');
             return;
         }
@@ -22,10 +24,11 @@ export class AdminBootstrap implements OnModuleInit {
             throw new Error('INIT_ADMIN_EMAIL or PASSWORD not set');
         }
         const hashedPassword = await HashingHelper.hash(password, Number(SALT) || 10);
-        const user = await this.prisma.user.create({
+        await this.prisma.user.create({
             data: {
                 fullName: 'System Admin',
                 phone: '+998777377177',
+                role: UserRole.ADMIN,
                 type: UserType.STAFF,
                 auth: {
                     create: {
@@ -34,14 +37,6 @@ export class AdminBootstrap implements OnModuleInit {
                     },
                 },
             },
-        });
-
-        await this.prisma.admin.create({
-            data: {
-                userId: user.id,
-                isActive: true,
-            },
-            include: { user: true },
         });
 
         console.log('✅ Initial admin created');

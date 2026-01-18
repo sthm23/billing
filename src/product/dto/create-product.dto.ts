@@ -1,6 +1,14 @@
 import { Type } from "class-transformer";
 import { IsArray, IsDefined, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Min, ValidateNested } from "class-validator";
+export class AttributeValueDto {
+    @IsUUID("4")
+    @IsNotEmpty()
+    attributeId: string = "";
 
+    @IsString()
+    @IsNotEmpty()
+    value: string = "";
+}
 export class CreateProductDto {
     @IsNotEmpty()
     @IsUUID('4')
@@ -59,12 +67,3 @@ export class CreateProductVariantDto {
     attributes?: AttributeValueDto[];
 }
 
-export class AttributeValueDto {
-    @IsUUID("4")
-    @IsNotEmpty()
-    attributeId: string = "";
-
-    @IsString()
-    @IsNotEmpty()
-    value: string = "";
-}

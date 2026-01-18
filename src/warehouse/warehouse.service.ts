@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateWarehouseDto, CreateWarehouseStaffDto } from './dto/create-warehouse.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { StaffRole, StockMovementReason, StockMovementType, UserType } from '@generated/enums';
@@ -21,6 +21,10 @@ export class WarehouseService {
           storeId: dto.storeId
         }
       });
+
+      if (!warehouse) {
+        throw new NotFoundException('Warehouse not found!');
+      }
 
       if (dto.worker) {
         const worker = await this.createWarehouseStaff(dto?.worker);

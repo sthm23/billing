@@ -13,27 +13,19 @@ export class StoreService {
 
   ) { }
 
-  async create(dto: CreateStoreDto, creatorId: string) {
+  async createStore(dto: CreateStoreDto, creatorId: string) {
     try {
-      const passwordHash = await HashingHelper.hash(dto.password, 10);
-      const owner = await this.prisma.user.create({
-        data: {
-          fullName: dto.ownerFullName,
-          phone: dto.phone,
-          type: UserType.STAFF,
-          auth: {
-            create: {
-              login: dto.login,
-              passwordHash
-            }
-          }
-        }
-      })
+      const owner = await this.prisma.user.findUnique({
+        where: { id: dto.ownerId }
+      });
+      if (!owner) {
+        throw new NotFoundException('Owner not found');
+      }
       const store = await this.prisma.store.create({
         data: {
           name: dto.name,
           createdBy: creatorId,
-          ownerId: owner.id
+          ownerId: owner.id,
         }
       })
 
@@ -46,34 +38,36 @@ export class StoreService {
   async createStaff(dto: CreateStaffDto) {
     try {
       const passwordHash = await HashingHelper.hash(dto.password, 10);
-      const user = await this.prisma.user.create({
-        data: {
-          fullName: dto.fullName,
-          phone: dto.phone,
-          type: UserType.STAFF,
-          auth: {
-            create: {
-              login: dto.login,
-              passwordHash,
+      return this.prisma.$transaction(async (tx) => {
+        const user = await tx.user.create({
+          data: {
+            fullName: dto.fullName,
+            phone: dto.phone,
+            type: UserType.STAFF,
+            auth: {
+              create: {
+                login: dto.login,
+                passwordHash,
+              }
+            },
+            staff: {
+              create: {
+                role: dto.role,
+                storeId: dto.storeId
+              }
             }
           },
-          staff: {
-            create: {
-              role: dto.role,
-              storeId: dto.storeId
-            }
+          include: {
+            staff: true
           }
-        },
-        include: {
-          staff: true
-        }
-      })
+        })
 
-      await this.prisma.staffWarehouse.create({
-        data: {
-          staffId: user.staff!.id,
-          warehouseId: dto.warehouseId
-        }
+        await tx.staffWarehouse.create({
+          data: {
+            staffId: user.staff!.id,
+            warehouseId: dto.warehouseId
+          }
+        })
       })
     } catch (error: any) {
       throw new BadRequestException(error.error)

@@ -26,15 +26,16 @@ import { RolesGuard } from '@shared/guards/role.guard';
 import { fileUploadInterceptor } from './interceptor/file-upload.interceptor';
 import { CurrentUser } from '@shared/decorators/user.decorator';
 import { PaginationParams } from '@shared/helper/pagination-params.dto';
-import { StaffRole } from '@generated/enums';
-import type { AccessTokenPayload, CurrentUserType } from '@auth/models/auth.model';
+import { StaffRole, UserRole } from '@generated/enums';
+import type { UserAuth } from '@auth/models/auth.model';
+import { Staff } from '@generated/client';
 @UseGuards(AuthJWTGuard)
 @Controller('product')
 export class ProductController {
   constructor(private readonly productService: ProductService) { }
 
   @UseGuards(RolesGuard)
-  @Roles(StaffRole.MANAGER, StaffRole.OWNER)
+  @Roles(StaffRole.MANAGER, UserRole.OWNER)
   @Post()
   create(
     @Body() createProductDto: CreateProductDto,
@@ -43,7 +44,7 @@ export class ProductController {
   }
 
   @UseGuards(RolesGuard)
-  @Roles(StaffRole.MANAGER, StaffRole.OWNER)
+  @Roles(StaffRole.MANAGER, UserRole.OWNER)
   @Post()
   createVariant(
     @Body() dto: CreateProductVariantDto,
@@ -52,7 +53,7 @@ export class ProductController {
   }
 
   @UseGuards(RolesGuard)
-  @Roles(StaffRole.MANAGER, StaffRole.OWNER)
+  @Roles(StaffRole.MANAGER, UserRole.OWNER)
   @Post('img/upload/:id')
   @UseInterceptors(fileUploadInterceptor)
   uploadPhoto(
@@ -75,18 +76,18 @@ export class ProductController {
       }),
     ) photo: Array<Express.Multer.File>,
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @CurrentUser() user: CurrentUserType
+    @CurrentUser() user: UserAuth & { staff: Staff }
   ) {
     return this.productService.handleFile(photo, id, user.staff.storeId)
   }
 
   @UseGuards(RolesGuard)
-  @Roles(StaffRole.MANAGER, StaffRole.OWNER)
+  @Roles(StaffRole.MANAGER)
   @Delete('img/delete/:id')
   removePhoto(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() body: any,
-    @CurrentUser() user: CurrentUserType
+    @CurrentUser() user: UserAuth & { staff: Staff }
   ) {
     return this.productService.removeFile(id, body, user.staff.storeId)
   }

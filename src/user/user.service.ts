@@ -45,7 +45,6 @@ export class UserService {
       return await this.prismaService.user.findUnique({
         where: { id }, include: {
           auth: true,
-          admin: true,
           staff: true,
         }
       });
@@ -65,7 +64,6 @@ export class UserService {
         },
         include: {
           auth: true,
-          admin: true,
           staff: true,
         },
       });
@@ -91,7 +89,6 @@ export class UserService {
       const result = await this.prismaService.user.findUnique({
         where: { id }, include: {
           auth: true,
-          admin: true,
           staff: true,
         }
       });
@@ -105,10 +102,8 @@ export class UserService {
       if (result.auth && result.auth.isActive) {
         data = { ...data, auth: { update: { isActive: false } } };
       }
-      if (result.admin && result.admin.isActive) {
-        data = { ...data, admin: { update: { isActive: false } } };
-      }
-      await this.prismaService.user.update({ where: { id }, include: { auth: true, admin: true, staff: true }, data: data });
+
+      await this.prismaService.user.update({ where: { id }, include: { auth: true, staff: true }, data: data });
       return { login: result.auth!.login, message: 'User deactivated successfully' };
     } catch (error: any) {
       throw new BadRequestException(error.message);

@@ -2,7 +2,7 @@ import { Controller, Get, Post, Body, Param, UseGuards, ParseUUIDPipe } from '@n
 import { StoreService } from './store.service';
 import { CreateStaffDto, CreateStoreDto } from './dto/create-store.dto';
 import { CurrentUser } from '@shared/decorators/user.decorator';
-import type { UserWithAuthAndAdmin } from '@auth/models/auth.model';
+import type { UserAuth } from '@auth/models/auth.model';
 import { AdminGuard } from '@shared/guards/admin.guard';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
 
@@ -13,10 +13,10 @@ export class StoreController {
 
   @Post()
   create(
-    @CurrentUser() user: UserWithAuthAndAdmin,
+    @CurrentUser() user: UserAuth,
     @Body() createStoreDto: CreateStoreDto
   ) {
-    return this.storeService.create(createStoreDto, user.id);
+    return this.storeService.createStore(createStoreDto, user.id);
   }
 
   @Post('staff')

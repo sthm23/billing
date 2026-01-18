@@ -5,7 +5,7 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { RolesGuard } from '@shared/guards/role.guard';
 import { Roles } from '@shared/decorators/role.decorator';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
-import { StaffRole } from '@generated/enums';
+import { StaffRole, UserRole } from '@generated/enums';
 
 
 @Controller('user')
@@ -26,7 +26,7 @@ export class UserController {
     return user;
   }
 
-  @Roles(StaffRole.OWNER)
+  @Roles(UserRole.OWNER)
   @UseGuards(AuthJWTGuard, RolesGuard)
   @Get()
   findAll() {
@@ -35,7 +35,7 @@ export class UserController {
 
   @UseGuards(AuthJWTGuard, RolesGuard)
   @Put(':id')
-  @Roles(StaffRole.OWNER)
+  @Roles(UserRole.OWNER)
   update(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body(new ValidationPipe()) updateUserDto: UpdateUserDto
@@ -45,7 +45,7 @@ export class UserController {
 
   @UseGuards(AuthJWTGuard, RolesGuard)
   @Delete(':id')
-  @Roles(StaffRole.OWNER)
+  @Roles(UserRole.OWNER)
   remove(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
     return this.userService.remove(id);
   }
