@@ -1,8 +1,8 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { CreateStaffDto, CreateStoreDto } from './dto/create-store.dto';
+import { CreateOwnerDto, CreateStaffDto, CreateStoreDto } from './dto/create-store.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
 import { PrismaService } from '@prisma/prisma.service';
-import { UserType } from '@generated/enums';
+import { UserRole, UserType } from '@generated/enums';
 import { HashingHelper } from '@shared/helper/hash.helper';
 
 @Injectable()
@@ -31,6 +31,47 @@ export class StoreService {
 
       return store
     } catch (error: any) {
+      throw new BadRequestException(error.error)
+    }
+  }
+
+  async createOwner(dto: CreateOwnerDto) {
+    try {
+      const existingUser = await this.prisma.user.findFirst({
+        where: {
+          OR: [
+            {
+              auth: {
+                login: dto.login
+              }
+            },
+            { phone: dto.phone }
+          ]
+        },
+        include: { auth: true },
+      });
+      if (existingUser) {
+        throw new BadRequestException('User with this login already exists');
+      }
+
+      const passwordHash = await HashingHelper.hash(dto.password, 10);
+      return this.prisma.user.create({
+        data: {
+          fullName: dto.fullName,
+          phone: dto.phone,
+          role: UserRole.OWNER,
+          type: UserType.STAFF,
+          auth: {
+            create: {
+              login: dto.login,
+              passwordHash
+            }
+          }
+        }
+      })
+    } catch (error: any) {
+      console.log(error);
+
       throw new BadRequestException(error.error)
     }
   }

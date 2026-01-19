@@ -8,7 +8,7 @@ import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { StaffRole, UserRole } from '@generated/enums';
 
 
-@Controller('user')
+@Controller('users')
 export class UserController {
   constructor(private readonly userService: UserService) { }
 

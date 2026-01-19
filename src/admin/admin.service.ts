@@ -1,7 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { CreateAdminDto } from './dto/create-admin.dto';
 import { PrismaService } from '@prisma/prisma.service';
-import { ExceptionsHandler } from '@nestjs/core/exceptions/exceptions-handler';
 import { UserRole, UserType } from '@generated/enums';
 import { HashingHelper } from '@shared/helper/hash.helper';
 
@@ -23,6 +22,7 @@ export class AdminService {
           fullName: dto.fullName,
           phone: dto.phone,
           type: UserType.STAFF,
+          role: UserRole.ADMIN,
           auth: {
             create: {
               login: dto.login,
@@ -44,15 +44,6 @@ export class AdminService {
       where: { role: UserRole.ADMIN },
       include: { auth: true }
     });
-  }
-
-  async isAdmin(userId: string): Promise<boolean> {
-    const admin = await this.prisma.user.findUnique({
-      where: { id: userId, role: UserRole.ADMIN },
-      include: { auth: true }
-    });
-
-    return !!admin?.auth?.isActive;
   }
 
   async findOne(id: string) {

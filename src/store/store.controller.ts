@@ -1,12 +1,12 @@
 import { Controller, Get, Post, Body, Param, UseGuards, ParseUUIDPipe } from '@nestjs/common';
 import { StoreService } from './store.service';
-import { CreateStaffDto, CreateStoreDto } from './dto/create-store.dto';
+import { CreateOwnerDto, CreateStaffDto, CreateStoreDto } from './dto/create-store.dto';
 import { CurrentUser } from '@shared/decorators/user.decorator';
 import type { UserAuth } from '@auth/models/auth.model';
 import { AdminGuard } from '@shared/guards/admin.guard';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
 
-@UseGuards(AdminGuard, AuthJWTGuard)
+@UseGuards(AuthJWTGuard, AdminGuard)
 @Controller('store')
 export class StoreController {
   constructor(private readonly storeService: StoreService) { }
@@ -17,6 +17,13 @@ export class StoreController {
     @Body() createStoreDto: CreateStoreDto
   ) {
     return this.storeService.createStore(createStoreDto, user.id);
+  }
+
+  @Post('owner')
+  createOwner(
+    @Body() createStoreDto: CreateOwnerDto
+  ) {
+    return this.storeService.createOwner(createStoreDto);
   }
 
   @Post('staff')
