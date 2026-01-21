@@ -11,6 +11,7 @@ import { ReportModule } from './report/report.module';
 import { SharedModule } from './shared/shared.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { StoreModule } from './store/store.module';
+import { CategoryAttributesModule } from './category-attributes/category-attributes.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { StoreModule } from './store/store.module';
     ReportModule,
     SharedModule,
     StoreModule,
+    CategoryAttributesModule,
   ],
   providers: [ConfigService],
 })
