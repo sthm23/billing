@@ -207,19 +207,9 @@ model Warehouse {
 
 /**
  * =======================
- * CATALOG
+ * PRODUCTS & VARIANTS
  * =======================
  */
-
-model Category {
-  id       String  @id @default(uuid())
-  name     String
-  parentId String?
-
-  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
-  children Category[] @relation("CategoryTree")
-  products Product[]
-}
 
 model Brand {
   id      String  @id @default(uuid())
@@ -278,6 +268,27 @@ model ProductVariant {
   attributes     VariantAttributeValue[]
 
   @@unique([storeId, sku])
+  @@unique([storeId, barCode])
+  @@index([productId])
+}
+
+/**
+ * =======================
+ * CATALOG
+ * =======================
+ */
+
+model Category {
+  id       String  @id @default(uuid())
+  name     String  @unique
+  parentId String?
+
+  parent             Category?           @relation("CategoryTree", fields: [parentId], references: [id])
+  children           Category[]          @relation("CategoryTree")
+  products           Product[]
+  categoryAttributes CategoryAttribute[]
+
+  @@index([parentId])
 }
 
 /**
@@ -288,11 +299,12 @@ model ProductVariant {
 
 model Attribute {
   id   String        @id @default(uuid())
-  name String
+  name String        @unique
   type AttributeType
 
   values                 VariantAttributeValue[]
   productAttributeValues ProductAttributeValue[]
+  categoryAttributes     CategoryAttribute[]
 }
 
 model ProductAttributeValue {
@@ -321,6 +333,17 @@ model VariantAttributeValue {
   attribute Attribute      @relation(fields: [attributeId], references: [id])
 
   @@unique([variantId, attributeId])
+}
+
+model CategoryAttribute {
+  id          String @id @default(uuid())
+  categoryId  String
+  attributeId String
+
+  category  Category  @relation(fields: [categoryId], references: [id])
+  attribute Attribute @relation(fields: [attributeId], references: [id])
+
+  @@unique([categoryId, attributeId])
 }
 
 /**
