@@ -283,10 +283,10 @@ model Category {
   name     String  @unique
   parentId String?
 
-  parent             Category?           @relation("CategoryTree", fields: [parentId], references: [id])
-  children           Category[]          @relation("CategoryTree")
-  products           Product[]
-  categoryAttributes CategoryAttribute[]
+  parent    Category?               @relation("CategoryTree", fields: [parentId], references: [id])
+  children  Category[]              @relation("CategoryTree")
+  products  Product[]
+  attribute CategoriesOnAttribute[]
 
   @@index([parentId])
 }
@@ -304,7 +304,7 @@ model Attribute {
 
   values                 VariantAttributeValue[]
   productAttributeValues ProductAttributeValue[]
-  categoryAttributes     CategoryAttribute[]
+  category               CategoriesOnAttribute[]
 }
 
 model ProductAttributeValue {
@@ -335,15 +335,13 @@ model VariantAttributeValue {
   @@unique([variantId, attributeId])
 }
 
-model CategoryAttribute {
-  id          String @id @default(uuid())
-  categoryId  String
+model CategoriesOnAttribute {
+  attribute   Attribute @relation(fields: [attributeId], references: [id])
   attributeId String
+  category    Category  @relation(fields: [categoryId], references: [id])
+  categoryId  String
 
-  category  Category  @relation(fields: [categoryId], references: [id])
-  attribute Attribute @relation(fields: [attributeId], references: [id])
-
-  @@unique([categoryId, attributeId])
+  @@id([attributeId, categoryId])
 }
 
 /**

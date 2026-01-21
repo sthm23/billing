@@ -42,7 +42,8 @@ async function main() {
      * CATEGORY ↔ ATTRIBUTES
      * ======================
      */
-    await prisma.categoryAttribute.createMany({
+
+    await prisma.categoriesOnAttribute.createMany({
         data: [
             // Smartphones
             { categoryId: smartphones.id, attributeId: attrMap['Color'] },
@@ -65,9 +66,8 @@ async function main() {
             { categoryId: women.id, attributeId: attrMap['Color'] },
             { categoryId: women.id, attributeId: attrMap['Gender'] },
         ],
-        skipDuplicates: true,
+        skipDuplicates: true
     })
-
     console.log('✅ Seed completed successfully')
 }
 

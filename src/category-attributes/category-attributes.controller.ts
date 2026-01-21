@@ -11,16 +11,11 @@ export class CategoryAttributesController {
   create(@Body() createCategoryAttributeDto: CreateCategoryAttributeDto) {
     return this.categoryAttributesService.create(createCategoryAttributeDto);
   }
-
-  @Get()
-  findAll() {
-    return this.categoryAttributesService.findAll();
-  }
-
-  @Get()
+  @Get('tree')
   findTree() {
     return this.categoryAttributesService.findTRee();
   }
+
 
   @Get(':id')
   findOne(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
