@@ -14,10 +14,12 @@ export class UserService {
     private prismaService: PrismaService,
   ) { }
 
-  async create(createUserDto: Prisma.UserCreateInput): Promise<User> {
+  async create(createUserDto: CreateUserDto): Promise<User> {
     try {
-      const user = await this.prismaService.user.findUnique({
-        where: { phone: createUserDto.phone }
+      const user = await this.prismaService.user.findFirst({
+        where: {
+          phone: createUserDto.phone
+        }
       })
       if (user) throw new ForbiddenException('Phone already existing');
       const userEntity = new CreateUserDto(createUserDto);
@@ -30,9 +32,20 @@ export class UserService {
     }
   }
 
-  findAll(): Promise<User[]> {
+  async findAll(pageSize = 10, currentPage = 1) {
+    const skip = (currentPage - 1) * pageSize;
     try {
-      return this.prismaService.user.findMany();
+      const result = await this.prismaService.user.findMany({
+        skip: skip,
+        take: pageSize,
+      });
+      const count = await this.prismaService.user.count();
+      return {
+        currentPage,
+        pageSize,
+        total: count,
+        data: result
+      };
     } catch (error: any) {
       console.log(error);
       throw new BadRequestException(error.message);

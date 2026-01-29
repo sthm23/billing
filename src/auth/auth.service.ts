@@ -75,6 +75,20 @@ export class AuthService {
   async signUp(dto: SignInDto): Promise<LoginResponse> {
 
     try {
+      const existingUser = await this.prisma.user.findFirst({
+        where: {
+          OR: [
+            {
+              auth: {
+                login: dto.login
+              }
+            },
+            { phone: dto.phone }
+          ]
+        },
+        include: { auth: true },
+      });
+      if (existingUser) throw new NotFoundException('Login or Phone is exist!');
       const passwordHash = await HashingHelper.hash(dto.password, 10);
       const newUser = await this.prisma.user.create({
         data: {

@@ -126,15 +126,20 @@ export class ProductService {
 
   }
 
-  async findAll(documentsToSkip = 0, limitOfDocuments?: number) {
+  async findAll(pageSize = 10, currentPage = 1) {
+    const skip = (currentPage - 1) * pageSize;
     try {
-      const query = this.prisma.product.findMany()
-      // if (limitOfDocuments) {
-      //   query.limit(limitOfDocuments);
-      // }
-      // const result = await query.exec();
-      // const count = await this.productModel.countDocuments({ isActive: true }).exec();
-      return query
+      const result = await this.prisma.product.findMany({
+        skip: skip,
+        take: pageSize,
+      });
+      const count = await this.prisma.product.count();
+      return {
+        currentPage,
+        pageSize,
+        total: count,
+        data: result
+      };
     } catch (error: any) {
       throw new ForbiddenException(error?.message);
     }

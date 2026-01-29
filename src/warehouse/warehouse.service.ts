@@ -55,6 +55,20 @@ export class WarehouseService {
 
   private async createWarehouseStaff(dto: CreateWarehouseStaffDto): Promise<User> {
     try {
+      const existingUser = await this.prisma.user.findFirst({
+        where: {
+          OR: [
+            {
+              auth: {
+                login: dto.login
+              }
+            },
+            { phone: dto.phone }
+          ]
+        },
+        include: { auth: true },
+      });
+      if (existingUser) throw new NotFoundException('Login or Phone is exist!');
       const passwordHash = await HashingHelper.hash(dto.password, 10);
       return this.prisma.user.create({
         data: {
@@ -77,13 +91,24 @@ export class WarehouseService {
       });
 
     } catch (error: any) {
-      throw new BadRequestException(error.error)
+      throw new BadRequestException(error.message)
     }
   }
 
-  findAll() {
+  async findAll(pageSize = 10, currentPage = 1) {
+    const skip = (currentPage - 1) * pageSize;
     try {
-      return this.prisma.warehouse.findMany()
+      const result = await this.prisma.warehouse.findMany({
+        skip: skip,
+        take: pageSize,
+      });
+      const count = await this.prisma.warehouse.count();
+      return {
+        currentPage,
+        pageSize,
+        total: count,
+        data: result
+      };
     } catch (error: any) {
       throw new BadRequestException(error.error)
     }

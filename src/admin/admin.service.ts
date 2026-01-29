@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateAdminDto } from './dto/create-admin.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { UserRole, UserType } from '@generated/enums';
@@ -7,15 +7,27 @@ import { HashingHelper } from '@shared/helper/hash.helper';
 @Injectable()
 export class AdminService {
 
-  constructor(private prisma: PrismaService) { }
+  constructor(
+    private prisma: PrismaService
+  ) { }
 
   async create(dto: CreateAdminDto) {
     try {
-      const authAccount = await this.prisma.authAccount.findUnique({
-        where: { login: dto.login },
-        include: { user: true }
-      })
-      if (authAccount) throw new NotFoundException('Admin is exist!');
+      const existingUser = await this.prisma.user.findFirst({
+        where: {
+          OR: [
+            {
+              auth: {
+                login: dto.login
+              }
+            },
+            { phone: dto.phone }
+          ]
+        },
+        include: { auth: true },
+      });
+
+      if (existingUser) throw new NotFoundException('Login or Phone is exist!');
       const passwordHash = await HashingHelper.hash(dto.password, 10);
       const newUser = await this.prisma.user.create({
         data: {
@@ -39,11 +51,26 @@ export class AdminService {
     }
   }
 
-  async findAll() {
-    return this.prisma.user.findMany({
-      where: { role: UserRole.ADMIN },
-      include: { auth: true }
-    });
+  async findAll(pageSize = 10, currentPage = 1) {
+    const skip = (currentPage - 1) * pageSize;
+
+    try {
+      const count = await this.prisma.user.count({ where: { role: UserRole.ADMIN } });
+      const result = await this.prisma.user.findMany({
+        skip: skip,
+        take: pageSize,
+        where: { role: UserRole.ADMIN },
+        include: { auth: true }
+      });
+      return {
+        currentPage,
+        pageSize,
+        total: count,
+        data: result
+      };
+    } catch (error: any) {
+      throw new BadRequestException(error.error)
+    }
   }
 
   async findOne(id: string) {

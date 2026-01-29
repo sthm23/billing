@@ -4,6 +4,7 @@ import 'dotenv/config'
 import { seedBrands } from './brand.seed';
 import { seedCategories } from './category.seed';
 import { seedAttributes } from './attribute.seed';
+import { seedUsers } from './user.seed';
 
 const adapter = new PrismaPg({
     connectionString: process.env.DATABASE_URL,
@@ -15,6 +16,12 @@ const prisma = new PrismaClient({
 
 
 async function main() {
+    /**
+     * ======================
+     * USERS
+     * ======================
+     */
+    await seedUsers(prisma);
     /**
      * ======================
      * BRANDS
