@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, UseGuards, ParseUUIDPipe } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, UseGuards, ParseUUIDPipe, Query } from '@nestjs/common';
 import { StoreService } from './store.service';
 import { CreateOwnerDto, CreateStaffDto, CreateStoreDto } from './dto/create-store.dto';
 import { CurrentUser } from '@shared/decorators/user.decorator';
@@ -34,8 +34,11 @@ export class StoreController {
   }
 
   @Get()
-  findAll() {
-    return this.storeService.findAll();
+  findAll(@Query() query: { currentPage?: string, pageSize?: string }) {
+    return this.storeService.findAll(
+      query.pageSize ? parseInt(query.pageSize) : undefined,
+      query.currentPage ? parseInt(query.currentPage) : undefined
+    );
   }
 
   @Get(':id')

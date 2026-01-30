@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateAdminDto } from './dto/create-admin.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { UserRole, UserType } from '@generated/enums';
@@ -27,7 +27,7 @@ export class AdminService {
         include: { auth: true },
       });
 
-      if (existingUser) throw new NotFoundException('Login or Phone is exist!');
+      if (existingUser) throw new ConflictException('Login or Phone is exist!');
       const passwordHash = await HashingHelper.hash(dto.password, 10);
       const newUser = await this.prisma.user.create({
         data: {
@@ -47,7 +47,7 @@ export class AdminService {
 
       return newUser
     } catch (error) {
-      throw new NotFoundException('Error with creating admin.')
+      throw new BadRequestException('Error with creating admin.')
     }
   }
 
@@ -69,7 +69,7 @@ export class AdminService {
         data: result
       };
     } catch (error: any) {
-      throw new BadRequestException(error.error)
+      throw new BadRequestException(error.response || error.message)
     }
   }
 

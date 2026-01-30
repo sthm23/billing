@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 
 import { LoginResponse, RefreshTokenPayload, type AccessTokenPayload } from './models/auth.model';
 import { UserType } from '@generated/client';
@@ -88,7 +88,7 @@ export class AuthService {
         },
         include: { auth: true },
       });
-      if (existingUser) throw new NotFoundException('Login or Phone is exist!');
+      if (existingUser) throw new ConflictException('Login or Phone is exist!');
       const passwordHash = await HashingHelper.hash(dto.password, 10);
       const newUser = await this.prisma.user.create({
         data: {
@@ -106,7 +106,7 @@ export class AuthService {
 
       return this.login(newUser.id, {});
     } catch (error: any) {
-      throw new BadRequestException(error.message);
+      throw new BadRequestException(error.response || error.message)
     }
   }
 

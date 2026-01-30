@@ -1,4 +1,4 @@
-import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, ForbiddenException, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from 'src/prisma/prisma.service';
@@ -21,14 +21,14 @@ export class UserService {
           phone: createUserDto.phone
         }
       })
-      if (user) throw new ForbiddenException('Phone already existing');
+      if (user) throw new ConflictException('Phone already existing');
       const userEntity = new CreateUserDto(createUserDto);
 
       return this.prismaService.user.create({
         data: userEntity
       });
     } catch (error: any) {
-      throw new BadRequestException(error.message);
+      throw new BadRequestException(error.response || error.message)
     }
   }
 
@@ -48,7 +48,7 @@ export class UserService {
       };
     } catch (error: any) {
       console.log(error);
-      throw new BadRequestException(error.message);
+      throw new BadRequestException(error.response || error.message)
     }
   }
 
@@ -62,7 +62,7 @@ export class UserService {
         }
       });
     } catch (error: any) {
-      throw new BadRequestException(error.message);
+      throw new BadRequestException(error.response || error.message)
     }
 
   }
@@ -81,7 +81,7 @@ export class UserService {
         },
       });
     } catch (error: any) {
-      throw new BadRequestException(error.message);
+      throw new BadRequestException(error.response || error.message)
     }
 
   }
@@ -93,7 +93,7 @@ export class UserService {
         data: dto,
       });
     } catch (error: any) {
-      throw new BadRequestException(error.message);
+      throw new BadRequestException(error.response || error.message)
     }
   }
 
@@ -119,7 +119,7 @@ export class UserService {
       await this.prismaService.user.update({ where: { id }, include: { auth: true, staff: true }, data: data });
       return { login: result.auth!.login, message: 'User deactivated successfully' };
     } catch (error: any) {
-      throw new BadRequestException(error.message);
+      throw new BadRequestException(error.response || error.message)
     }
   }
 }

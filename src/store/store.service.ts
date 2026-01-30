@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateOwnerDto, CreateStaffDto, CreateStoreDto } from './dto/create-store.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
 import { PrismaService } from '@prisma/prisma.service';
@@ -31,7 +31,7 @@ export class StoreService {
 
       return store
     } catch (error: any) {
-      throw new BadRequestException(error.error)
+      throw new BadRequestException(error.response || error.message)
     }
   }
 
@@ -50,7 +50,8 @@ export class StoreService {
         },
         include: { auth: true },
       });
-      if (existingUser) throw new NotFoundException('Login or Phone is exist!');
+
+      if (existingUser) throw new ConflictException('Login or Phone is exist!');
 
       const passwordHash = await HashingHelper.hash(dto.password, 10);
       return this.prisma.user.create({
@@ -68,9 +69,7 @@ export class StoreService {
         }
       })
     } catch (error: any) {
-      console.log(error);
-
-      throw new BadRequestException(error.error)
+      throw new BadRequestException(error.response || error.message)
     }
   }
 
@@ -89,7 +88,7 @@ export class StoreService {
         },
         include: { auth: true },
       });
-      if (existingUser) throw new NotFoundException('Login or Phone is exist!');
+      if (existingUser) throw new ConflictException('Login or Phone is exist!');
       const passwordHash = await HashingHelper.hash(dto.password, 10);
       return this.prisma.$transaction(async (tx) => {
         const user = await tx.user.create({
@@ -124,7 +123,7 @@ export class StoreService {
         })
       })
     } catch (error: any) {
-      throw new BadRequestException(error.error)
+      throw new BadRequestException(error.response || error.message)
     }
   }
 
@@ -143,7 +142,7 @@ export class StoreService {
         data: result
       };
     } catch (error: any) {
-      throw new BadRequestException(error.error)
+      throw new BadRequestException(error.response || error.message)
     }
   }
 
@@ -166,7 +165,7 @@ export class StoreService {
         }
       })
     } catch (error: any) {
-      throw new BadRequestException(error.error)
+      throw new BadRequestException(error.response || error.message)
     }
   }
 }

@@ -27,7 +27,7 @@ export class PaymentService {
         data: result
       };
     } catch (error: any) {
-      throw new BadRequestException(error.error)
+      throw new BadRequestException(error.response || error.message)
     }
   }
 

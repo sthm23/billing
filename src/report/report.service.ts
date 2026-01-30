@@ -26,7 +26,7 @@ export class ReportService {
       // };
       return { currentPage, pageSize, total: 0, data: [] };
     } catch (error: any) {
-      throw new BadRequestException(error.message);
+      throw new BadRequestException(error.response || error.message)
     }
   }
 

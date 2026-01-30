@@ -1,15 +1,17 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateWarehouseDto, CreateWarehouseStaffDto } from './dto/create-warehouse.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { StaffRole, StockMovementReason, StockMovementType, UserType } from '@generated/enums';
 import { HashingHelper } from '@shared/helper/hash.helper';
 import { Prisma, User } from '@generated/client';
 import { StockInDto } from './dto/stock-in.dto';
+import { UserHelperService } from '@shared/services/user/user-helper.service';
 
 @Injectable()
 export class WarehouseService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly userHelper: UserHelperService,
 
   ) { }
 
@@ -49,7 +51,7 @@ export class WarehouseService {
 
       return { warehouse, worker: null }
     } catch (error: any) {
-      throw new BadRequestException(error.error)
+      throw new BadRequestException(error.response || error.message)
     }
   }
 
@@ -68,7 +70,7 @@ export class WarehouseService {
         },
         include: { auth: true },
       });
-      if (existingUser) throw new NotFoundException('Login or Phone is exist!');
+      if (existingUser) throw new ConflictException('Login or Phone is exist!');
       const passwordHash = await HashingHelper.hash(dto.password, 10);
       return this.prisma.user.create({
         data: {
@@ -91,7 +93,7 @@ export class WarehouseService {
       });
 
     } catch (error: any) {
-      throw new BadRequestException(error.message)
+      throw new BadRequestException(error.response || error.message)
     }
   }
 
@@ -110,7 +112,7 @@ export class WarehouseService {
         data: result
       };
     } catch (error: any) {
-      throw new BadRequestException(error.error)
+      throw new BadRequestException(error.response || error.message)
     }
   }
 
@@ -131,7 +133,7 @@ export class WarehouseService {
         }
       })
     } catch (error: any) {
-      throw new BadRequestException(error.error)
+      throw new BadRequestException(error.response || error.message)
     }
   }
 

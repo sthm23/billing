@@ -28,7 +28,7 @@ export class ProductService {
         }
       })
     } catch (error: any) {
-      throw new ForbiddenException(error?.message);
+      throw new BadRequestException(error.response || error.message)
     }
   }
 
@@ -118,7 +118,7 @@ export class ProductService {
 
       return { data, imgArr };
     } catch (error: any) {
-      throw new ForbiddenException(error?.message);
+      throw new BadRequestException(error.response || error.message)
     }
   }
 
@@ -141,7 +141,7 @@ export class ProductService {
         data: result
       };
     } catch (error: any) {
-      throw new ForbiddenException(error?.message);
+      throw new BadRequestException(error.response || error.message)
     }
   }
 

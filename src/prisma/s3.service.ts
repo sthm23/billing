@@ -50,7 +50,7 @@ export class S3Service {
 
             return `http://${bucketName}.${endpoint}/${file.fileName}`; // Returns the URL of the uploaded file
         } catch (error: any) {
-            throw new BadRequestException(error.message);
+            throw new BadRequestException(error.response || error.message)
         }
     }
 
