@@ -5,13 +5,11 @@ import { StaffRole, StockMovementReason, StockMovementType, UserType } from '@ge
 import { HashingHelper } from '@shared/helper/hash.helper';
 import { Prisma, User } from '@generated/client';
 import { StockInDto } from './dto/stock-in.dto';
-import { UserHelperService } from '@shared/services/user/user-helper.service';
 
 @Injectable()
 export class WarehouseService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly userHelper: UserHelperService,
 
   ) { }
 
