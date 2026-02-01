@@ -18,6 +18,8 @@ import { LocalAuthGuard } from '@auth/guard/local_passport.guard';
 import type { UserAuth } from './models/auth.model';
 import type { Response, Request } from 'express';
 import { AuthJWTGuard } from './guard/auth.guard';
+import { LogoutDto } from './dto/logout-dto';
+import { TokenValidationPipe } from './pipes/token-validation.pipe';
 
 @Controller()
 export class AuthController {
@@ -77,19 +79,19 @@ export class AuthController {
     return { accessToken };
   }
 
-  @UseGuards(AuthJWTGuard)
   @HttpCode(HttpStatus.OK)
-  @Get('logout')
+  @Post('logout')
   async logout(
-    @Req() req: Request & { user: UserAuth & { sessionId: string } },
+    @Body(TokenValidationPipe) body: LogoutDto,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.authService.logout(req.user.sessionId);
+    const result = await this.authService.logout(body);
     if (result) {
       res.clearCookie('refreshToken', {
         path: '/api/refresh',
       });
     }
-    return { success: true };
+    return { accessToken: null };
   }
 }

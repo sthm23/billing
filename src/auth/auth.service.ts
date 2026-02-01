@@ -7,6 +7,7 @@ import { PrismaService } from '@prisma/prisma.service';
 import { addDays } from '@shared/helper/date.helper';
 import { SignInDto } from './dto/create-login.dto';
 import { TokenService } from './token.service';
+import { LogoutDto } from './dto/logout-dto';
 
 @Injectable()
 export class AuthService {
@@ -110,10 +111,10 @@ export class AuthService {
     }
   }
 
-  async logout(sessionId: string) {
+  async logout(dto: LogoutDto) {
     try {
       const result = await this.prisma.refreshSession.update({
-        where: { id: sessionId },
+        where: { id: dto.sessionId },
         data: { isRevoked: true },
       });
 

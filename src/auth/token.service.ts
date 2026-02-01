@@ -18,38 +18,41 @@ export class TokenService {
 
     async refreshTokens(refreshToken: string): Promise<LoginResponse> {
 
-        const payload: RefreshTokenPayload = await this.jwtService.verifyAsync(refreshToken, {
-            secret: this.refreshTokenSecret
-        });
+        try {
+            const payload: RefreshTokenPayload = await this.jwtService.verifyAsync(refreshToken, {
+                secret: this.refreshTokenSecret
+            });
 
-        const tokenFromDb =
-            await this.findValidToken(payload.sub, refreshToken);
+            const tokenFromDb =
+                await this.findValidToken(payload.sub, refreshToken);
 
-        if (!tokenFromDb) {
-            throw new UnauthorizedException('Invalid refresh token');
+            if (!tokenFromDb) {
+                throw new UnauthorizedException('Invalid refresh token');
+            }
+
+            await this.prisma.refreshSession.update({ where: { id: tokenFromDb.id }, data: { isRevoked: true } });
+
+            const newRefreshToken = await this.generateToken({
+                sub: payload.sub,
+                type: 'refresh'
+            }, {
+                secret: this.refreshTokenSecret,
+                expiresIn: this.refreshTokenExpire,
+            });
+
+            const savedRefreshToken = await this.saveRefreshToken(payload.sub, newRefreshToken);
+            const accessToken = await this.generateToken({
+                sub: payload.sub,
+                sid: savedRefreshToken.id,
+                type: 'access'
+            }, {
+                secret: this.accessTokenSecret,
+                expiresIn: this.accessTokenExpire,
+            });
+            return { accessToken, refreshToken };
+        } catch (error: any) {
+            throw new UnauthorizedException(error.response || error.message)
         }
-
-        await this.prisma.refreshSession.update({ where: { id: tokenFromDb.id }, data: { isRevoked: true } });
-
-        const newRefreshToken = await this.generateToken({
-            sub: payload.sub,
-            type: 'refresh'
-        }, {
-            secret: this.refreshTokenSecret,
-            expiresIn: this.refreshTokenExpire,
-        });
-
-        const savedRefreshToken = await this.saveRefreshToken(payload.sub, newRefreshToken);
-        const accessToken = await this.generateToken({
-            sub: payload.sub,
-            sid: savedRefreshToken.id,
-            type: 'access'
-        }, {
-            secret: this.accessTokenSecret,
-            expiresIn: this.accessTokenExpire,
-        });
-        return { accessToken, refreshToken };
-
     }
 
     private async saveRefreshToken(userId: string, refreshToken: string) {
