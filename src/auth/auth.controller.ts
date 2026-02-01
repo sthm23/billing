@@ -77,19 +77,19 @@ export class AuthController {
     return { accessToken };
   }
 
-  @HttpCode(HttpStatus.OK)
-  @Post('logout')
   @UseGuards(AuthJWTGuard)
+  @HttpCode(HttpStatus.OK)
+  @Get('logout')
   async logout(
-    @Req() req,
+    @Req() req: Request & { user: UserAuth & { sessionId: string } },
     @Res({ passthrough: true }) res: Response,
   ) {
-    await this.authService.logout(req.user.sessionId);
-
-    res.clearCookie('refreshToken', {
-      path: '/api/refresh',
-    });
-
+    const result = await this.authService.logout(req.user.sessionId);
+    if (result) {
+      res.clearCookie('refreshToken', {
+        path: '/api/refresh',
+      });
+    }
     return { success: true };
   }
 }

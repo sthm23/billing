@@ -25,6 +25,6 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt-access') {
                 auth: true,
             },
         });
-        return user;
+        return { ...user, sessionId: payload.sid };
     }
 }

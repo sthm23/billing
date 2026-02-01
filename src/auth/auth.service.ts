@@ -111,10 +111,16 @@ export class AuthService {
   }
 
   async logout(sessionId: string) {
-    await this.prisma.refreshSession.update({
-      where: { id: sessionId },
-      data: { isRevoked: true },
-    });
+    try {
+      const result = await this.prisma.refreshSession.update({
+        where: { id: sessionId },
+        data: { isRevoked: true },
+      });
+
+      return true;
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
   }
 
   async logoutAll(userId: string) {
