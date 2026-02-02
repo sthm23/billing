@@ -133,6 +133,10 @@ export class StoreService {
       const result = await this.prisma.store.findMany({
         skip: skip,
         take: pageSize,
+        include: {
+          warehouses: true,
+          staff: true,
+        }
       });
       const count = await this.prisma.store.count();
       return {

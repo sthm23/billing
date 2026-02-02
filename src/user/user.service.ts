@@ -59,6 +59,11 @@ export class UserService {
         where: { id }, include: {
           auth: true,
           staff: true,
+          stores: {
+            include: {
+              warehouses: true,
+            }
+          },
         }
       });
     } catch (error: any) {

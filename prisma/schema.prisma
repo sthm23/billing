@@ -146,7 +146,7 @@ model Store {
   ownerId   String
   createdAt DateTime @default(now())
 
-  createdBy String // adminId
+  createdBy String // admin auth account id
   creator   AuthAccount @relation(fields: [createdBy], references: [id])
 
   owner      User        @relation(fields: [ownerId], references: [id])
@@ -157,11 +157,12 @@ model Store {
 }
 
 model Staff {
-  id       String    @id @default(uuid())
-  userId   String    @unique
-  storeId  String
-  role     StaffRole
-  isActive Boolean   @default(true)
+  id        String    @id @default(uuid())
+  userId    String    @unique
+  storeId   String
+  role      StaffRole
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
 
   user  User  @relation(fields: [userId], references: [id])
   store Store @relation(fields: [storeId], references: [id])
@@ -201,6 +202,7 @@ model Warehouse {
   orders          Order[]
   staffWarehouses StaffWarehouse[]
   stockMovements  StockMovement[]
+  createdAt       DateTime         @default(now())
 
   @@unique([id, storeId])
 }

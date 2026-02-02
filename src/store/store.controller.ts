@@ -16,7 +16,7 @@ export class StoreController {
     @CurrentUser() user: UserAuth,
     @Body() createStoreDto: CreateStoreDto
   ) {
-    return this.storeService.createStore(createStoreDto, user.id);
+    return this.storeService.createStore(createStoreDto, user.auth.id);
   }
 
   @Post('owner')

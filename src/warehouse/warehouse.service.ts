@@ -22,10 +22,6 @@ export class WarehouseService {
         }
       });
 
-      if (!warehouse) {
-        throw new NotFoundException('Warehouse not found!');
-      }
-
       if (dto.worker) {
         const worker = await this.createWarehouseStaff(dto?.worker);
         await this.prisma.staffWarehouse.createMany({
@@ -38,13 +34,6 @@ export class WarehouseService {
           warehouse,
           worker
         }
-      } else {
-        await this.prisma.staffWarehouse.create({
-          data: {
-            staffId: dto.ownerId,
-            warehouseId: warehouse.id
-          }
-        })
       }
 
       return { warehouse, worker: null }

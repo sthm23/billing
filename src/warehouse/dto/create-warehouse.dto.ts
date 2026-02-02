@@ -29,7 +29,7 @@ export class CreateWarehouseStaffDto {
 }
 export class CreateWarehouseDto {
     @IsNotEmpty()
-    @IsUUID()
+    @IsUUID('4')
     storeId: string = ''
 
     @IsNotEmpty()
@@ -37,7 +37,7 @@ export class CreateWarehouseDto {
     name: string = ''
 
     @IsNotEmpty()
-    @IsString()
+    @IsUUID('4')
     ownerId: string = ''
 
     @IsOptional()
