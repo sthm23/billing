@@ -90,7 +90,7 @@ export class StoreService {
       });
       if (existingUser) throw new ConflictException('Login or Phone is exist!');
       const passwordHash = await HashingHelper.hash(dto.password, 10);
-      return this.prisma.$transaction(async (tx) => {
+      await this.prisma.$transaction(async (tx) => {
         const user = await tx.user.create({
           data: {
             fullName: dto.fullName,
@@ -122,6 +122,7 @@ export class StoreService {
           }
         })
       })
+      return { message: 'Staff created successfully' }
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }

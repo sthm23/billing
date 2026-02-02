@@ -61,7 +61,12 @@ export class UserService {
           staff: true,
           stores: {
             include: {
-              warehouses: true,
+              warehouses: {
+                include: {
+                  staffWarehouses: true
+                }
+              },
+              staff: true
             }
           },
         }
