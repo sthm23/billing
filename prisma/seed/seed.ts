@@ -35,7 +35,7 @@ async function main() {
      */
     const {
         electronics, phones, smartphones,
-        laptops, fashion, men, women
+        laptops, fashion, men, women, lumber, beam, batten
     } = await seedCategories(prisma);
     /**
      * ======================
@@ -72,6 +72,15 @@ async function main() {
             { categoryId: women.id, attributeId: attrMap['Size'] },
             { categoryId: women.id, attributeId: attrMap['Color'] },
             { categoryId: women.id, attributeId: attrMap['Gender'] },
+            // Lumber (Beam, Batten)
+            { categoryId: beam.id, attributeId: attrMap['Wood Species'] },
+            { categoryId: beam.id, attributeId: attrMap['Lumber Size'] },
+            { categoryId: beam.id, attributeId: attrMap['Length (m)'] },
+
+            { categoryId: batten.id, attributeId: attrMap['Wood Species'] },
+            { categoryId: batten.id, attributeId: attrMap['Lumber Size'] },
+            { categoryId: batten.id, attributeId: attrMap['Length (m)'] },
+
         ],
         skipDuplicates: true
     })

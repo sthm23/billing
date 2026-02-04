@@ -2,6 +2,24 @@ import { PrismaClient } from "../../generated/prisma/client"
 
 
 export async function seedCategories(prisma: PrismaClient) {
+    const lumber = await prisma.category.upsert({
+        where: { name: 'Lumber' }, //пиломатериалы древесины
+        update: {},
+        create: { name: 'Lumber' },
+    })
+
+    const beam = await prisma.category.upsert({
+        where: { name: 'Beam' }, //балка брус
+        update: {},
+        create: { name: 'Beam', parentId: lumber.id },
+    })
+
+    const batten = await prisma.category.upsert({
+        where: { name: 'Batten' }, //рейка
+        update: {},
+        create: { name: 'Batten', parentId: lumber.id },
+    })
+
     const electronics = await prisma.category.upsert({
         where: { name: 'Electronics' },
         update: {},
@@ -58,5 +76,5 @@ export async function seedCategories(prisma: PrismaClient) {
             parentId: fashion.id,
         },
     })
-    return { electronics, phones, smartphones, laptops, fashion, men, women }
+    return { electronics, phones, smartphones, laptops, fashion, men, women, lumber, beam, batten }
 }

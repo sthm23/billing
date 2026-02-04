@@ -40,6 +40,21 @@ export async function seedAttributes(prisma: PrismaClient) {
             create: { name: 'Gender', type: AttributeType.STRING },
         }),
         prisma.attribute.upsert({
+            where: { name: 'Wood Species' }, //порода древесины (сосна/ель/дуб)
+            update: {},
+            create: { name: 'Wood Species', type: AttributeType.STRING },
+        }),
+        prisma.attribute.upsert({
+            where: { name: 'Lumber Size' }, //размер пиломатериалов 20×80 или 2×8
+            update: {},
+            create: { name: 'Lumber Size', type: AttributeType.STRING },
+        }),
+        prisma.attribute.upsert({
+            where: { name: 'Length (m)' }, //длина в метрах
+            update: {},
+            create: { name: 'Length (m)', type: AttributeType.NUMBER },
+        }),
+        prisma.attribute.upsert({
             where: { name: 'Is New' },
             update: {},
             create: { name: 'Is New', type: AttributeType.BOOLEAN },
