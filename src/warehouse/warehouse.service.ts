@@ -89,7 +89,7 @@ export class WarehouseService {
     try {
       const result = await this.prisma.warehouse.findMany({
         skip: skip,
-        take: pageSize,
+        take: +pageSize,
       });
       const count = await this.prisma.warehouse.count();
       return {

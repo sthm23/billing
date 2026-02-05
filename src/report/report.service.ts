@@ -15,7 +15,7 @@ export class ReportService {
     try {
       //             const result = await this.prisma.report.findMany({
       //   skip: skip,
-      //   take: pageSize,
+      //   take: +pageSize,
       // });
       // const count = await this.prisma.report.count();
       // return {

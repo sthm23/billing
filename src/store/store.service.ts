@@ -134,7 +134,7 @@ export class StoreService {
     try {
       const result = await this.prisma.store.findMany({
         skip: skip,
-        take: pageSize,
+        take: +pageSize,
         where: user.role === UserRole.OWNER ? { ownerId: user.id } : {},
         include: {
           warehouses: true,

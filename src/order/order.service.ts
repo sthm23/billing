@@ -17,7 +17,7 @@ export class OrderService {
     try {
       const result = await this.prisma.order.findMany({
         skip: skip,
-        take: pageSize,
+        take: +pageSize,
       });
       const count = await this.prisma.order.count();
       return {

@@ -37,7 +37,7 @@ export class UserService {
     try {
       const result = await this.prismaService.user.findMany({
         skip: skip,
-        take: pageSize,
+        take: +pageSize,
       });
       const count = await this.prismaService.user.count();
       return {

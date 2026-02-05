@@ -17,7 +17,7 @@ export class PaymentService {
     try {
       const result = await this.prisma.payment.findMany({
         skip: skip,
-        take: pageSize,
+        take: +pageSize,
       });
       const count = await this.prisma.payment.count();
       return {

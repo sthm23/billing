@@ -94,4 +94,10 @@ export class AuthController {
     }
     return { accessToken: null };
   }
+
+  @UseGuards(AuthJWTGuard)
+  @Get('auth/me')
+  async me(@CurrentUser() user: UserAuth) {
+    return this.authService.getMe(user.id);
+  }
 }

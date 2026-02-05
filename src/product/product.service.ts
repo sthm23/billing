@@ -131,7 +131,7 @@ export class ProductService {
     try {
       const result = await this.prisma.product.findMany({
         skip: skip,
-        take: pageSize,
+        take: +pageSize,
       });
       const count = await this.prisma.product.count();
       return {

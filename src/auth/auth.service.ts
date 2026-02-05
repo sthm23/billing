@@ -141,4 +141,27 @@ export class AuthService {
     });
   }
 
+  async getMe(userId: string) {
+    try {
+      return this.prisma.user.findUnique({
+        where: { id: userId },
+        include: {
+          auth: true,
+          staff: true,
+          stores: {
+            include: {
+              warehouses: {
+                include: {
+                  staffWarehouses: true
+                }
+              },
+              staff: true
+            }
+          },
+        }
+      });
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
 }

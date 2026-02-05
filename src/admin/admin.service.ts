@@ -58,7 +58,7 @@ export class AdminService {
       const count = await this.prisma.user.count({ where: { role: UserRole.ADMIN } });
       const result = await this.prisma.user.findMany({
         skip: skip,
-        take: pageSize,
+        take: +pageSize,
         where: { role: UserRole.ADMIN },
         include: { auth: true }
       });
