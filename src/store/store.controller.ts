@@ -5,11 +5,17 @@ import { CurrentUser } from '@shared/decorators/user.decorator';
 import type { UserAuth } from '@auth/models/auth.model';
 import { AdminGuard } from '@shared/guards/admin.guard';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
+import { RolesGuard } from '@shared/guards/role.guard';
+import { Roles } from '@shared/decorators/role.decorator';
+import { UserRole } from '@generated/enums';
+import { PaginationParams } from '@shared/helper/pagination-params.dto';
 
-@UseGuards(AuthJWTGuard, AdminGuard)
+@UseGuards(AuthJWTGuard, RolesGuard)
+@Roles(UserRole.OWNER)
 @Controller('store')
 export class StoreController {
   constructor(private readonly storeService: StoreService) { }
+
 
   @Post()
   create(
@@ -19,6 +25,7 @@ export class StoreController {
     return this.storeService.createStore(createStoreDto, user.auth.id);
   }
 
+  @UseGuards(AdminGuard)
   @Post('owner')
   createOwner(
     @Body() createStoreDto: CreateOwnerDto
@@ -34,11 +41,11 @@ export class StoreController {
   }
 
   @Get()
-  findAll(@Query() query: { currentPage?: string, pageSize?: string }) {
-    return this.storeService.findAll(
-      query.pageSize ? parseInt(query.pageSize) : undefined,
-      query.currentPage ? parseInt(query.currentPage) : undefined
-    );
+  findAll(
+    @CurrentUser() user: UserAuth,
+    @Query() { pageSize, currentPage }: PaginationParams
+  ) {
+    return this.storeService.findAll(pageSize, currentPage, user);
   }
 
   @Get(':id')

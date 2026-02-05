@@ -1,7 +1,8 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, ParseUUIDPipe } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, ParseUUIDPipe, Query } from '@nestjs/common';
 import { ReportService } from './report.service';
 import { CreateReportDto } from './dto/create-report.dto';
 import { UpdateReportDto } from './dto/update-report.dto';
+import { PaginationParams } from '@shared/helper/pagination-params.dto';
 
 @Controller('report')
 export class ReportController {
@@ -13,8 +14,8 @@ export class ReportController {
   }
 
   @Get()
-  findAll() {
-    return this.reportService.findAll();
+  findAll(@Query() { pageSize, currentPage }: PaginationParams) {
+    return this.reportService.findAll(pageSize, currentPage);
   }
 
   @Get(':id')

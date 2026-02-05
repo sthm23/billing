@@ -35,7 +35,7 @@ export class ProductController {
   constructor(private readonly productService: ProductService) { }
 
   @UseGuards(RolesGuard)
-  @Roles(StaffRole.MANAGER, UserRole.OWNER)
+  @Roles(UserRole.OWNER, StaffRole.MANAGER)
   @Post()
   create(
     @Body() createProductDto: CreateProductDto,
@@ -44,7 +44,7 @@ export class ProductController {
   }
 
   @UseGuards(RolesGuard)
-  @Roles(StaffRole.MANAGER, UserRole.OWNER)
+  @Roles(UserRole.OWNER, StaffRole.MANAGER)
   @Post()
   createVariant(
     @Body() dto: CreateProductVariantDto,
@@ -53,7 +53,7 @@ export class ProductController {
   }
 
   @UseGuards(RolesGuard)
-  @Roles(StaffRole.MANAGER, UserRole.OWNER)
+  @Roles(UserRole.OWNER, StaffRole.MANAGER)
   @Post('img/upload/:id')
   @UseInterceptors(fileUploadInterceptor)
   uploadPhoto(
@@ -93,8 +93,8 @@ export class ProductController {
   }
 
   @Get()
-  findAll(@Query() { skip, limit }: PaginationParams) {
-    return this.productService.findAll(skip, limit);
+  findAll(@Query() { pageSize, currentPage }: PaginationParams) {
+    return this.productService.findAll(pageSize, currentPage);
   }
 
   // @Get('search')

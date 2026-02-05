@@ -1,7 +1,8 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, ParseUUIDPipe } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, ParseUUIDPipe, Query } from '@nestjs/common';
 import { PaymentService } from './payment.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
+import { PaginationParams } from '@shared/helper/pagination-params.dto';
 
 @Controller('payment')
 export class PaymentController {
@@ -13,8 +14,8 @@ export class PaymentController {
   }
 
   @Get()
-  findAll() {
-    return this.paymentService.findAll();
+  findAll(@Query() { pageSize, currentPage }: PaginationParams) {
+    return this.paymentService.findAll(pageSize, currentPage);
   }
 
   @Get(':id')

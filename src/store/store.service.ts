@@ -4,6 +4,7 @@ import { UpdateStoreDto } from './dto/update-store.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { UserRole, UserType } from '@generated/enums';
 import { HashingHelper } from '@shared/helper/hash.helper';
+import { UserAuth } from '@auth/models/auth.model';
 
 @Injectable()
 export class StoreService {
@@ -128,12 +129,13 @@ export class StoreService {
     }
   }
 
-  async findAll(pageSize = 10, currentPage = 1) {
+  async findAll(pageSize: number = 10, currentPage: number = 1, user: UserAuth) {
     const skip = (currentPage - 1) * pageSize;
     try {
       const result = await this.prisma.store.findMany({
         skip: skip,
         take: pageSize,
+        where: user.role === UserRole.OWNER ? { ownerId: user.id } : {},
         include: {
           warehouses: true,
           staff: true,

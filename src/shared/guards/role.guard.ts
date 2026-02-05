@@ -13,7 +13,7 @@ export class RolesGuard implements CanActivate {
 
     canActivate(context: ExecutionContext): boolean {
 
-        const requiredRoles = this.reflector.getAllAndOverride<StaffRole[]>(ROLES_KEY, [
+        const requiredRoles = this.reflector.getAllAndOverride<(UserRole | StaffRole)[]>(ROLES_KEY, [
             context.getHandler(),
             context.getClass()
         ])
@@ -28,13 +28,15 @@ export class RolesGuard implements CanActivate {
         if (user.role === UserRole.ADMIN) {
             return true;
         }
+        if (user.role === UserRole.OWNER && requiredRoles.includes(UserRole.OWNER)) {
+            return true;
+        }
 
-
-        const userRole = user.type === UserType.STAFF && user.auth && user.staff.role;
+        const userRole = user.type === UserType.STAFF && user.auth && user?.staff?.role;
         if (!userRole) {
             throw new ForbiddenException('You do not have access to this resource');
         }
-        const hasRole = requiredRoles.some((role) => user.staff.role === role);
+        const hasRole = requiredRoles.some((role) => user.role === role);
         if (!hasRole) {
             throw new ForbiddenException('You do not have access to this resource');
         }
