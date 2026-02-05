@@ -17,16 +17,21 @@ export class AuthService {
   ) { }
 
   async validateUser(email: string, password: string) {
-    const user = await this.prisma.user.findFirst({
-      where: { auth: { login: email } },
-      include: { auth: true, staff: true },
-    });
-    const userAuth = user?.auth;
-    if (!user || !userAuth) return null;
-    const isValid = await HashingHelper.isMatch(password, userAuth.passwordHash);
-    if (!isValid) return null;
+    try {
+      const user = await this.prisma.user.findFirst({
+        where: { auth: { login: email } },
+        include: { auth: true, staff: true },
+      });
+      if (!user) return null;
+      const userAuth = user?.auth;
+      if (!user || !userAuth) return null;
+      const isValid = await HashingHelper.isMatch(password, userAuth.passwordHash);
+      if (!isValid) return null;
 
-    return user;
+      return user;
+    } catch (error) {
+      return null;
+    }
   }
 
   async login(userId: string, meta: { ip?: string; ua?: string }): Promise<LoginResponse> {

@@ -16,7 +16,7 @@ export class LocalStrategy extends PassportStrategy(Strategy) {
     async validate(login: string, password: string): Promise<User> {
         const user = await this.authService.validateUser(login, password);
         if (!user) {
-            throw new NotFoundException();
+            throw new NotFoundException('User not found or invalid credentials');
         }
         return user;
     }

@@ -2,10 +2,15 @@ import { PrismaClient, UserRole, UserType } from "../../generated/prisma/client"
 import * as bcrypt from 'bcrypt';
 
 export async function seedUsers(prisma: PrismaClient) {
-    await prisma.user.deleteMany({
-        where: { role: UserRole.ADMIN }
+    await prisma.authAccount.deleteMany({
+        where: {
+            user: { role: UserRole.ADMIN },
+        },
     });
-    const password = process.env.SUPER_ADMIN_PASSWORD || 'SuperAdmin@123';
+    await prisma.user.deleteMany({
+        where: { role: UserRole.ADMIN },
+    });
+    const password = process.env.SUPER_ADMIN_PASSWORD || 'test';
     const email = process.env.INIT_ADMIN_EMAIL || 'admin';
     const SALT = process.env.SALT || '10';
     const hashedPassword = await bcrypt.hash(password, Number(SALT) || 10);
