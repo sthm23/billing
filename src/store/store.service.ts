@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { CreateOwnerDto, CreateStaffDto, CreateStoreDto } from './dto/create-store.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
 import { PrismaService } from '@prisma/prisma.service';
-import { UserRole, UserType } from '@generated/enums';
+import { StaffRole, UserRole, UserType } from '@generated/enums';
 import { HashingHelper } from '@shared/helper/hash.helper';
 import { UserAuth } from '@auth/models/auth.model';
 
@@ -22,15 +22,24 @@ export class StoreService {
       if (!owner) {
         throw new NotFoundException('Owner not found');
       }
-      const store = await this.prisma.store.create({
-        data: {
-          name: dto.name,
-          createdBy: creatorId,
-          ownerId: owner.id,
-        }
+      let store;
+      await this.prisma.$transaction(async (tx) => {
+        store = await tx.store.create({
+          data: {
+            name: dto.name,
+            createdBy: creatorId,
+            ownerId: owner.id,
+          }
+        })
+        await tx.staff.create({
+          data: {
+            userId: owner.id,
+            storeId: store.id,
+            role: StaffRole.OWNER,
+          }
+        })
       })
-
-      return store
+      return Promise.resolve(store);
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }

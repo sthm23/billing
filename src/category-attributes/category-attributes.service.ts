@@ -1,6 +1,9 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { CreateCategoryAttributeDto } from './dto/create-category-attribute.dto';
 import { PrismaService } from '@prisma/prisma.service';
+import { Staff } from '@generated/client';
+import { UserAuth } from '@auth/models/auth.model';
+import { count } from 'console';
 
 @Injectable()
 export class CategoryAttributesService {
@@ -20,6 +23,38 @@ export class CategoryAttributesService {
     } catch (error: any) {
       throw new BadRequestException('Category could not be created: ' + error.message);
     }
+  }
+
+  async findBrands(pageSize = 10, currentPage = 1) {
+    try {
+      const count = await this.prisma.brand.count();
+      const data = await this.prisma.brand.findMany({
+        skip: (currentPage - 1) * pageSize,
+        take: +pageSize,
+      });
+
+      return {
+        currentPage,
+        pageSize,
+        total: count,
+        data
+      }
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
+
+  findCategories() {
+    return this.prisma.category.findMany({
+      where: {
+        parentId: null
+      },
+      include: {
+        children: {
+          include: { children: true }
+        }
+      },
+    });
   }
 
 

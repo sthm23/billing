@@ -31,6 +31,7 @@ enum UserType {
 }
 
 enum StaffRole {
+  OWNER
   SELLER
   MANAGER
   CASHIER

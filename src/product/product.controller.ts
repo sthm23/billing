@@ -45,16 +45,17 @@ export class ProductController {
 
   @UseGuards(RolesGuard)
   @Roles(UserRole.OWNER, StaffRole.MANAGER)
-  @Post()
+  @Post('variants')
   createVariant(
     @Body() dto: CreateProductVariantDto,
+
   ) {
     return this.productService.createProductVariant(dto);
   }
 
   @UseGuards(RolesGuard)
   @Roles(UserRole.OWNER, StaffRole.MANAGER)
-  @Post('img/upload/:id')
+  @Post('img/upload')
   @UseInterceptors(fileUploadInterceptor)
   uploadPhoto(
     @UploadedFiles(
@@ -74,11 +75,9 @@ export class ProductController {
         },
         fileIsRequired: false
       }),
-    ) photo: Array<Express.Multer.File>,
-    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @CurrentUser() user: UserAuth & { staff: Staff }
+    ) photo: Array<Express.Multer.File>
   ) {
-    return this.productService.handleFile(photo, id, user.staff.storeId)
+    return this.productService.handleFile(photo)
   }
 
   @UseGuards(RolesGuard)
@@ -93,8 +92,11 @@ export class ProductController {
   }
 
   @Get()
-  findAll(@Query() { pageSize, currentPage }: PaginationParams) {
-    return this.productService.findAll(pageSize, currentPage);
+  findAll(
+    @Query() { pageSize, currentPage }: PaginationParams,
+    @CurrentUser() user: UserAuth & { staff: Staff }
+  ) {
+    return this.productService.findAll(pageSize, currentPage, user);
   }
 
   // @Get('search')
@@ -104,7 +106,7 @@ export class ProductController {
 
   // @Get(':id')
   // findOne(
-  //   @Param() { id }: ParamsWithId,
+  //   @Param('id', ParseUUIDPipe) id: string,
   //   @Query() { color, size }: QueryWithSizeAndColor
   // ) {
   //   return this.productService.findOne(id, { color, size });

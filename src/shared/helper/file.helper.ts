@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import sharp from 'sharp';
 
 export class FileHelper {
-    static createFileName(file: Express.Multer.File, folderName: string) {
+    static createFileName(file: Express.Multer.File, folderName: string = 'temp'): string {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
         const ext = path.extname(file.originalname);
         const fileName = `${uniqueSuffix}${ext}`;
