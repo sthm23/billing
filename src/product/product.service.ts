@@ -25,14 +25,10 @@ export class ProductService {
           data: {
             name: dto.name,
             storeId: dto.storeId,
-            brandId: dto.brand ?? null,
-            categoryId: dto.category ?? null,
-          },
-          include: {
-            images: true
+            brandId: dto.brandId ?? null,
+            categoryId: dto.categoryId ?? null,
           }
         })
-
 
         for (let i = 0; i < dto.images.length; i++) {
           const img = dto.images[i];
@@ -154,17 +150,34 @@ export class ProductService {
         take: +pageSize,
         where: user.role === UserRole.ADMIN ? {} : { storeId: user.staff.storeId },
         include: {
-          images: true,
+          images: {
+            select: {
+              url: true,
+              isMain: true,
+              id: true,
+            }
+          },
           category: true,
           brand: true,
-        },
+          _count: { select: { variants: true } },
+        }
       });
 
       return {
         currentPage,
         pageSize,
         total: count,
-        data: result
+        data: result.map(product => ({
+          brand: product.brand?.name,
+          category: product.category?.name,
+          variants: product._count.variants,
+          name: product.name,
+          id: product.id,
+          images: product.images,
+          createdAt: product.createdAt,
+          storeId: product.storeId,
+          isArchived: product.isArchived,
+        }))
       };
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
@@ -173,7 +186,22 @@ export class ProductService {
 
   async findOne(id: string) {
     try {
-      const product = await this.prisma.product.findUnique({ where: { id } });
+      const product = await this.prisma.product.findUnique({
+        where: { id },
+        include: {
+          images: {
+            select: {
+              url: true,
+              isMain: true,
+              id: true,
+            }
+          },
+          category: true,
+          brand: true,
+          attributes: true,
+          variants: true,
+        }
+      });
       if (!product) throw new NotFoundException('Product not found');
 
       return product;

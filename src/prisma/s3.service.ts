@@ -5,8 +5,6 @@ import {
     S3Client,
     type S3ClientConfig,
     DeleteObjectCommand,
-    PutObjectAclCommandInput,
-    DeleteObjectCommandInput,
     CopyObjectCommand,
     CreateBucketCommandInput,
     CreateBucketCommand,
@@ -144,7 +142,7 @@ export class S3Service {
         try {
             await this.ensureBucketExists();
 
-            const result = await this.s3Client.send(
+            await this.s3Client.send(
                 new CopyObjectCommand({
                     Bucket: this.bucketName,
                     Key: permanentKey,
@@ -153,14 +151,13 @@ export class S3Service {
                 }),
             );
 
-            const deleteResult = await this.s3Client.send(
+            await this.s3Client.send(
                 new DeleteObjectCommand({
                     Bucket: this.bucketName,
                     Key: tempKey,
                 }),
             );
-            console.log(result, deleteResult);
-            return this.getPublicUrl(permanentKey.split('/').slice(-1)[0]);
+            return this.getPublicUrl(permanentKey);
         } catch (error: any) {
             throw new BadRequestException(error?.message ?? 'Issue with moving file to permanent storage!');
         }

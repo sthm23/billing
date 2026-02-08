@@ -12,11 +12,11 @@ export class AttributeValueDto {
 export class CreateProductDto {
     @IsNotEmpty()
     @IsUUID('4')
-    brand!: string;
+    brandId!: string;
 
     @IsNotEmpty()
     @IsUUID('4')
-    category!: string;
+    categoryId!: string;
 
     @IsNotEmpty()
     @IsUUID('4')

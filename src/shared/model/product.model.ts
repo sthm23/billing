@@ -18,4 +18,8 @@ export enum ProductTag {
     POPULAR = 'POPULAR',
 }
 
-export interface UploadFileType { buffer: Buffer<ArrayBufferLike>, mimetype: string, fileName: string }
+export interface UploadFileType {
+    buffer: Buffer<ArrayBufferLike>,
+    mimetype: string,
+    fileName: string
+}
