@@ -12,6 +12,7 @@ import { SharedModule } from './shared/shared.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { StoreModule } from './store/store.module';
 import { CategoryAttributesModule } from './category-attributes/category-attributes.module';
+import { FileModule } from './file/file.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { CategoryAttributesModule } from './category-attributes/category-attribu
     SharedModule,
     StoreModule,
     CategoryAttributesModule,
+    FileModule,
   ],
   providers: [ConfigService],
 })

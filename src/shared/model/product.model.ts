@@ -17,9 +17,3 @@ export enum ProductTag {
     DISCOUNT = 'DISCOUNT',
     POPULAR = 'POPULAR',
 }
-
-export interface UploadFileType {
-    buffer: Buffer<ArrayBufferLike>,
-    mimetype: string,
-    fileName: string
-}
