@@ -103,8 +103,10 @@ model User {
   auth            AuthAccount?
   staff           Staff?
   orders          Order[]          @relation("CustomerOrders")
-  stores          Store[]
   refreshSessions RefreshSession[]
+  stores          Store[] //created stores by this auth account
+
+  @@map("users")
 }
 
 model AuthAccount {
@@ -117,7 +119,7 @@ model AuthAccount {
 
   user User @relation(fields: [userId], references: [id])
 
-  stores Store[]
+  @@map("auth_accounts")
 }
 
 model RefreshSession {
@@ -133,6 +135,7 @@ model RefreshSession {
   user User @relation(fields: [userId], references: [id])
 
   @@index([userId])
+  @@map("refresh_sessions")
 }
 
 /**
@@ -148,13 +151,14 @@ model Store {
   createdAt DateTime @default(now())
 
   createdBy String // admin auth account id
-  creator   AuthAccount @relation(fields: [createdBy], references: [id])
+  creator   User   @relation(fields: [createdBy], references: [id])
 
-  owner      User        @relation(fields: [ownerId], references: [id])
-  staff      Staff[]
-  products   Product[]
-  warehouses Warehouse[]
-  orders     Order[]
+  warehouse Warehouse?
+  staff     Staff[]
+  products  Product[]
+  orders    Order[]
+
+  @@map("stores")
 }
 
 model Staff {
@@ -168,22 +172,13 @@ model Staff {
   user  User  @relation(fields: [userId], references: [id])
   store Store @relation(fields: [storeId], references: [id])
 
-  warehouses StaffWarehouse[]
-  stockMoves StockMovement[]
-  orders     Order[]
+  warehouse   Warehouse?      @relation(fields: [warehouseId], references: [id])
+  stockMoves  StockMovement[]
+  orders      Order[]
+  warehouseId String?
 
   @@index([storeId])
-}
-
-model StaffWarehouse {
-  id          String @id @default(uuid())
-  staffId     String
-  warehouseId String
-
-  staff     Staff     @relation(fields: [staffId], references: [id])
-  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
-
-  @@unique([staffId, warehouseId])
+  @@map("staff")
 }
 
 /**
@@ -194,18 +189,18 @@ model StaffWarehouse {
 
 model Warehouse {
   id       String  @id @default(uuid())
-  storeId  String
+  storeId  String  @unique
   name     String
   isActive Boolean @default(true)
 
-  store           Store            @relation(fields: [storeId], references: [id])
-  inventory       Inventory[]
-  orders          Order[]
-  staffWarehouses StaffWarehouse[]
-  stockMovements  StockMovement[]
-  createdAt       DateTime         @default(now())
+  store          Store           @relation(fields: [storeId], references: [id])
+  inventory      Inventory[]
+  orders         Order[]
+  stockMovements StockMovement[]
+  staffs         Staff[]
+  createdAt      DateTime        @default(now())
 
-  @@unique([id, storeId])
+  @@map("warehouses")
 }
 
 /**
@@ -220,6 +215,8 @@ model Brand {
   logoUrl String?
 
   products Product[]
+
+  @@map("brands")
 }
 
 model ProductImage {
@@ -232,6 +229,7 @@ model ProductImage {
   product Product @relation(fields: [productId], references: [id])
 
   @@index([productId, isMain])
+  @@map("product_images")
 }
 
 model Product {
@@ -253,6 +251,7 @@ model Product {
   @@index([storeId])
   @@index([categoryId])
   @@index([brandId])
+  @@map("products")
 }
 
 model ProductVariant {
@@ -273,6 +272,7 @@ model ProductVariant {
   @@unique([storeId, sku])
   @@unique([storeId, barCode])
   @@index([productId])
+  @@map("product_variants")
 }
 
 /**
@@ -292,6 +292,7 @@ model Category {
   attribute CategoriesOnAttribute[]
 
   @@index([parentId])
+  @@map("categories")
 }
 
 /**
@@ -308,6 +309,8 @@ model Attribute {
   values                 VariantAttributeValue[]
   productAttributeValues ProductAttributeValue[]
   category               CategoriesOnAttribute[]
+
+  @@map("attributes")
 }
 
 model ProductAttributeValue {
@@ -322,6 +325,7 @@ model ProductAttributeValue {
   attribute Attribute @relation(fields: [attributeId], references: [id])
 
   @@unique([productId, attributeId])
+  @@map("product_attribute_values")
 }
 
 model VariantAttributeValue {
@@ -336,6 +340,7 @@ model VariantAttributeValue {
   attribute Attribute      @relation(fields: [attributeId], references: [id])
 
   @@unique([variantId, attributeId])
+  @@map("variant_attribute_values")
 }
 
 model CategoriesOnAttribute {
@@ -345,6 +350,7 @@ model CategoriesOnAttribute {
   categoryId  String
 
   @@id([attributeId, categoryId])
+  @@map("categories_on_attributes")
 }
 
 /**
@@ -363,6 +369,7 @@ model Inventory {
   variant   ProductVariant @relation(fields: [variantId], references: [id])
 
   @@unique([warehouseId, variantId])
+  @@map("inventories")
 }
 
 /**
@@ -388,6 +395,7 @@ model StockMovement {
 
   @@index([warehouseId, createdAt])
   @@index([variantId, createdAt])
+  @@map("stock_movements")
 }
 
 /**
@@ -418,6 +426,7 @@ model Order {
 
   @@index([storeId, createdAt])
   @@index([warehouseId, createdAt])
+  @@map("orders")
 }
 
 model OrderItem {
@@ -433,6 +442,7 @@ model OrderItem {
 
   @@index([orderId])
   @@index([variantId])
+  @@map("order_items")
 }
 
 /**
@@ -451,6 +461,7 @@ model Payment {
   order Order @relation(fields: [orderId], references: [id])
 
   @@index([orderId])
+  @@map("payments")
 }
 
 /**
@@ -471,4 +482,6 @@ model Delivery {
   deliveredAt DateTime?
 
   order Order @relation(fields: [orderId], references: [id])
+
+  @@map("deliveries")
 }

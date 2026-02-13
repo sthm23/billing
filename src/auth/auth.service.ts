@@ -20,7 +20,25 @@ export class AuthService {
     try {
       const user = await this.prisma.user.findFirst({
         where: { auth: { login: email } },
-        include: { auth: true, staff: true },
+        include: {
+          auth: {
+            select: {
+              id: true,
+              login: true,
+              isActive: true,
+              passwordHash: true,
+            }
+          },
+          staff: {
+            select: {
+              id: true,
+              role: true,
+              isActive: true,
+              storeId: true,
+              warehouseId: true,
+            }
+          }
+        },
       });
       if (!user) return null;
       const userAuth = user?.auth;
@@ -147,17 +165,12 @@ export class AuthService {
         where: { id: userId },
         include: {
           auth: true,
-          staff: true,
-          stores: {
+          staff: {
             include: {
-              warehouses: {
-                include: {
-                  staffWarehouses: true
-                }
-              },
-              staff: true
+              store: true,
+              warehouse: true
             }
-          },
+          }
         }
       });
     } catch (error: any) {

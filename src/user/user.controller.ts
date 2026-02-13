@@ -5,8 +5,11 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { RolesGuard } from '@shared/guards/role.guard';
 import { Roles } from '@shared/decorators/role.decorator';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
-import { StaffRole, UserRole } from '@generated/enums';
+import { UserRole } from '@generated/enums';
 import { PaginationParams } from '@shared/helper/pagination-params.dto';
+import { CurrentUser } from '@shared/decorators/user.decorator';
+import { UserAuth } from '@auth/models/auth.model';
+import { Staff } from '@generated/client';
 
 
 @Controller('users')
@@ -30,8 +33,11 @@ export class UserController {
   @Roles(UserRole.OWNER)
   @UseGuards(AuthJWTGuard, RolesGuard)
   @Get()
-  findAll(@Query() { pageSize, currentPage }: PaginationParams) {
-    return this.userService.findAll(pageSize, currentPage);
+  findAll(
+    @Query() { pageSize, currentPage }: PaginationParams,
+    @CurrentUser() user: UserAuth & { staff: Staff }
+  ) {
+    return this.userService.findAll(pageSize, currentPage, user);
   }
 
   @UseGuards(AuthJWTGuard, RolesGuard)

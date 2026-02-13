@@ -35,7 +35,7 @@ export class StoreService {
           data: {
             userId: owner.id,
             storeId: store.id,
-            role: StaffRole.OWNER,
+            role: StaffRole.OWNER
           }
         })
       })
@@ -100,39 +100,31 @@ export class StoreService {
       });
       if (existingUser) throw new ConflictException('Login or Phone is exist!');
       const passwordHash = await HashingHelper.hash(dto.password, 10);
-      await this.prisma.$transaction(async (tx) => {
-        const user = await tx.user.create({
-          data: {
-            fullName: dto.fullName,
-            phone: dto.phone,
-            type: UserType.STAFF,
-            auth: {
-              create: {
-                login: dto.login,
-                passwordHash,
-              }
-            },
-            staff: {
-              create: {
-                role: dto.role,
-                storeId: dto.storeId
-              }
+      const staff = await this.prisma.user.create({
+        data: {
+          fullName: dto.fullName,
+          phone: dto.phone,
+          type: UserType.STAFF,
+          auth: {
+            create: {
+              login: dto.login,
+              passwordHash,
             }
           },
-          include: {
-            staff: true,
-            auth: true
+          staff: {
+            create: {
+              role: dto.role,
+              storeId: dto.storeId,
+              warehouseId: dto.warehouseId
+            }
           }
-        })
-
-        await tx.staffWarehouse.create({
-          data: {
-            staffId: user.staff!.id,
-            warehouseId: dto.warehouseId
-          }
-        })
+        },
+        include: {
+          auth: true,
+          staff: true
+        }
       })
-      return { message: 'Staff created successfully' }
+      return staff
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }
@@ -146,7 +138,7 @@ export class StoreService {
         take: +pageSize,
         where: user.role === UserRole.OWNER ? { ownerId: user.id } : {},
         include: {
-          warehouses: true,
+          warehouse: true,
           staff: true,
         }
       });
@@ -175,9 +167,8 @@ export class StoreService {
             }
           },
           creator: true,
-          owner: true,
           staff: true,
-          warehouses: true
+          warehouse: true
         }
       })
     } catch (error: any) {

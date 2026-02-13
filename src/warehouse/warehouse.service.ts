@@ -13,7 +13,7 @@ export class WarehouseService {
 
   ) { }
 
-  async create(dto: CreateWarehouseDto) {
+  async createWarehouse(dto: CreateWarehouseDto) {
     try {
       const warehouse = await this.prisma.warehouse.create({
         data: {
@@ -22,63 +22,7 @@ export class WarehouseService {
         }
       });
 
-      if (dto.worker) {
-        const worker = await this.createWarehouseStaff(dto?.worker);
-        await this.prisma.staffWarehouse.createMany({
-          data: [
-            { staffId: dto.ownerId, warehouseId: warehouse.id },
-            { staffId: worker.id, warehouseId: warehouse.id }
-          ]
-        })
-        return {
-          warehouse,
-          worker
-        }
-      }
-
       return { warehouse, worker: null }
-    } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
-    }
-  }
-
-  private async createWarehouseStaff(dto: CreateWarehouseStaffDto): Promise<User> {
-    try {
-      const existingUser = await this.prisma.user.findFirst({
-        where: {
-          OR: [
-            {
-              auth: {
-                login: dto.login
-              }
-            },
-            { phone: dto.phone }
-          ]
-        },
-        include: { auth: true },
-      });
-      if (existingUser) throw new ConflictException('Login or Phone is exist!');
-      const passwordHash = await HashingHelper.hash(dto.password, 10);
-      return this.prisma.user.create({
-        data: {
-          fullName: dto.fullName,
-          phone: dto.phone,
-          type: UserType.STAFF,
-          auth: {
-            create: {
-              login: dto.login,
-              passwordHash
-            }
-          },
-          staff: {
-            create: {
-              role: StaffRole.WAREHOUSE,
-              storeId: dto.storeId
-            }
-          }
-        }
-      });
-
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }
@@ -112,7 +56,7 @@ export class WarehouseService {
             select: {
               inventory: true,
               orders: true,
-              staffWarehouses: true,
+              staffs: true,
               stockMovements: true
             }
           }

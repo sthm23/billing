@@ -2,9 +2,10 @@ import { Injectable, ForbiddenException, NotFoundException, BadRequestException,
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { Prisma, StaffRole, User, UserType } from '@generated/client';
+import { Prisma, Staff, StaffRole, User, UserRole, UserType } from '@generated/client';
 import { CreateUserDto } from './dto/create-user.dto';
 import { HashingHelper } from '@shared/helper/hash.helper';
+import { UserAuth } from '@auth/models/auth.model';
 
 @Injectable()
 export class UserService {
@@ -32,14 +33,19 @@ export class UserService {
     }
   }
 
-  async findAll(pageSize = 10, currentPage = 1) {
+  async findAll(pageSize = 10, currentPage = 1, user: UserAuth & { staff: Staff }) {
     const skip = (currentPage - 1) * pageSize;
+    const param = user.role === UserRole.ADMIN ? {} : { staff: { storeId: user.staff!.storeId } };
     try {
       const result = await this.prismaService.user.findMany({
         skip: skip,
         take: +pageSize,
+        where: param,
+        include: {
+          staff: true,
+        }
       });
-      const count = await this.prismaService.user.count();
+      const count = await this.prismaService.user.count({ where: param });
       return {
         currentPage,
         pageSize,
@@ -58,17 +64,13 @@ export class UserService {
       return await this.prismaService.user.findUnique({
         where: { id }, include: {
           auth: true,
-          staff: true,
-          stores: {
+          staff: {
             include: {
-              warehouses: {
-                include: {
-                  staffWarehouses: true
-                }
-              },
-              staff: true
+              store: true,
+              warehouse: true,
             }
           },
+
         }
       });
     } catch (error: any) {

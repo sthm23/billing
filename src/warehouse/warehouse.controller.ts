@@ -13,7 +13,7 @@ export class WarehouseController {
   create(
     @Body() dto: CreateWarehouseDto
   ) {
-    return this.warehouseService.create(dto);
+    return this.warehouseService.createWarehouse(dto);
   }
 
   @Get()

@@ -21,47 +21,18 @@ services:
       - "127.0.0.1:4566:4566" # LocalStack Gateway
       - "127.0.0.1:4510-4559:4510-4559" # external services port range
     environment:
-      # LocalStack configuration: https://docs.localstack.cloud/references/configuration/
       - DEBUG=${DEBUG:-0}
       - SERVICES=s3
+      - PERSISTENCE=1
+      - SNAPSHOT_SAVE_STRATEGY=ON_SHUTDOWN
+      - SNAPSHOT_LOAD_STRATEGY=ON_STARTUP
       - EXTRA_CORS_ALLOWED_ORIGINS=http://localhost:4200
       - EXTRA_CORS_ALLOWED_HEADERS=*
       - EXTRA_CORS_ALLOWED_METHODS=GET,PUT,POST,HEAD,DELETE,OPTIONS
     volumes:
-      - "${LOCALSTACK_VOLUME_DIR:-./volume}:/var/lib/localstack"
-      - "/var/run/docker.sock:/var/run/docker.sock"
-  localstack-init:
-    image: amazon/aws-cli:2.15.57
-    depends_on:
-      - localstack
-    environment:
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
-      AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
-      BUCKET: ${AWS_S3_BUCKET_NAME:-billing}
-      CORS_ORIGIN: ${AWS_S3_CORS_ORIGIN:-http://localhost:4200}
-    entrypoint: ["/bin/sh", "-c"]
-    command: >
-      echo "Waiting for LocalStack..." &&
-      until aws --endpoint-url=http://localstack:4566 s3api list-buckets >/dev/null 2>&1; do sleep 1; done &&
-      echo "Creating bucket: $BUCKET" &&
-      aws --endpoint-url=http://localstack:4566 s3api create-bucket --bucket "$BUCKET" || true &&
-      echo "Applying CORS for bucket: $BUCKET (origin: $CORS_ORIGIN)" &&
-      cat > /tmp/cors.json <<EOF
-      {
-        "CORSRules": [
-          {
-            "AllowedOrigins": ["$CORS_ORIGIN"],
-            "AllowedMethods": ["GET", "PUT", "POST", "HEAD"],
-            "AllowedHeaders": ["*"],
-            "ExposeHeaders": ["ETag", "x-amz-request-id", "x-amz-id-2"],
-            "MaxAgeSeconds": 3000
-          }
-        ]
-      }
-      EOF
-      &&
-      aws --endpoint-url=http://localstack:4566 s3api put-bucket-cors --bucket "$BUCKET" --cors-configuration file:///tmp/cors.json
-
+      # - "${LOCALSTACK_VOLUME_DIR:-./volume}:/var/lib/localstack"
+      - localstack_data:/var/lib/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
 volumes:
   postgres_data:
+  localstack_data:
