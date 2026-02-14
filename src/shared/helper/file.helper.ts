@@ -3,9 +3,9 @@ import * as path from "path";
 // import sharp from 'sharp';
 
 export class FileHelper {
-    static createFileName(file: Express.Multer.File): string {
+    static createFileName(fileName: string): string {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-        const ext = path.extname(file.originalname);
+        const ext = path.extname(fileName);
         return `${uniqueSuffix}${ext}`;
     }
 

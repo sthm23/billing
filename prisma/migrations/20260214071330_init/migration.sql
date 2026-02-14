@@ -88,7 +88,7 @@ CREATE TABLE "staff" (
     "role" "StaffRole" NOT NULL,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "warehouseId" TEXT NOT NULL,
+    "warehouseId" TEXT,
 
     CONSTRAINT "staff_pkey" PRIMARY KEY ("id")
 );
@@ -197,6 +197,14 @@ CREATE TABLE "categories_on_attributes" (
     "categoryId" TEXT NOT NULL,
 
     CONSTRAINT "categories_on_attributes_pkey" PRIMARY KEY ("attributeId","categoryId")
+);
+
+-- CreateTable
+CREATE TABLE "categories_on_stores" (
+    "storeId" TEXT NOT NULL,
+    "categoryId" TEXT NOT NULL,
+
+    CONSTRAINT "categories_on_stores_pkey" PRIMARY KEY ("storeId","categoryId")
 );
 
 -- CreateTable
@@ -371,7 +379,7 @@ ALTER TABLE "auth_accounts" ADD CONSTRAINT "auth_accounts_userId_fkey" FOREIGN K
 ALTER TABLE "refresh_sessions" ADD CONSTRAINT "refresh_sessions_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "stores" ADD CONSTRAINT "stores_createdBy_fkey" FOREIGN KEY ("createdBy") REFERENCES "auth_accounts"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "stores" ADD CONSTRAINT "stores_createdBy_fkey" FOREIGN KEY ("createdBy") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "staff" ADD CONSTRAINT "staff_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -380,7 +388,7 @@ ALTER TABLE "staff" ADD CONSTRAINT "staff_userId_fkey" FOREIGN KEY ("userId") RE
 ALTER TABLE "staff" ADD CONSTRAINT "staff_storeId_fkey" FOREIGN KEY ("storeId") REFERENCES "stores"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "staff" ADD CONSTRAINT "staff_warehouseId_fkey" FOREIGN KEY ("warehouseId") REFERENCES "warehouses"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "staff" ADD CONSTRAINT "staff_warehouseId_fkey" FOREIGN KEY ("warehouseId") REFERENCES "warehouses"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "warehouses" ADD CONSTRAINT "warehouses_storeId_fkey" FOREIGN KEY ("storeId") REFERENCES "stores"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -420,6 +428,12 @@ ALTER TABLE "categories_on_attributes" ADD CONSTRAINT "categories_on_attributes_
 
 -- AddForeignKey
 ALTER TABLE "categories_on_attributes" ADD CONSTRAINT "categories_on_attributes_categoryId_fkey" FOREIGN KEY ("categoryId") REFERENCES "categories"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "categories_on_stores" ADD CONSTRAINT "categories_on_stores_storeId_fkey" FOREIGN KEY ("storeId") REFERENCES "stores"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "categories_on_stores" ADD CONSTRAINT "categories_on_stores_categoryId_fkey" FOREIGN KEY ("categoryId") REFERENCES "categories"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "inventories" ADD CONSTRAINT "inventories_warehouseId_fkey" FOREIGN KEY ("warehouseId") REFERENCES "warehouses"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

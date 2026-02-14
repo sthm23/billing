@@ -3,6 +3,7 @@ import { CreateProductImageDto, CreateProductImageResponseDto } from './dto/crea
 import { PrismaService } from '@prisma/prisma.service';
 import { S3Service } from '@prisma/s3.service';
 import { PresignedUrlResult, UploadFileParam } from '@prisma/models/s3.model';
+import { FileHelper } from '@shared/helper/file.helper';
 
 @Injectable()
 export class FileService {
@@ -17,7 +18,7 @@ export class FileService {
     for (let i = 0; i < dto.files.length; i++) {
       const file = dto.files[i];
       const param = {
-        imgName: file.fileName,
+        imgName: FileHelper.createFileName(file.fileName),
         mimetype: file.mimeType,
         pathName: 'product',
         storeId: file.storeId
