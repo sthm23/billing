@@ -76,11 +76,11 @@ export class CategoryAttributesService {
       jsonb_agg(
         DISTINCT jsonb_build_object('id', a.id, 'name', a.name)
       ) FILTER (WHERE a.id IS NOT NULL), 
-      '[]'::jsonb) AS attribute 
-    FROM "Category" c
-      LEFT JOIN "Category" parent ON parent.id = c."parentId"
-      LEFT JOIN "CategoriesOnAttribute" coa ON coa."categoryId" = c.id
-      LEFT JOIN "Attribute" a ON a.id = coa."attributeId"
+      '[]'::jsonb) AS attributes 
+    FROM "categories" c
+      LEFT JOIN "categories" parent ON parent.id = c."parentId"
+      LEFT JOIN "categories_on_attributes" coa ON coa."categoryId" = c.id
+      LEFT JOIN "attributes" a ON a.id = coa."attributeId"
       WHERE c."parentId" IS NOT NULL -- Adjust this condition as needed!
       GROUP BY c.id, c.name, parent.id, parent.name, parent."parentId";
       `

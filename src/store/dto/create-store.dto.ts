@@ -57,6 +57,14 @@ export class CreateStoreDto {
     name: string = ''
 
     @IsNotEmpty()
+    @IsString()
+    warehouseName: string = ''
+
+    @IsNotEmpty()
+    @IsUUID('4')
+    categoryId: string = ''
+
+    @IsNotEmpty()
     @IsUUID('4')
     ownerId: string = ''
 

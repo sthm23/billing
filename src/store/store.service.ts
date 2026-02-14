@@ -19,23 +19,47 @@ export class StoreService {
       const owner = await this.prisma.user.findUnique({
         where: { id: dto.ownerId }
       });
+      const category = await this.prisma.category.findUnique({
+        where: { id: dto.categoryId }
+      });
       if (!owner) {
         throw new NotFoundException('Owner not found');
       }
+      if (!category) {
+        throw new NotFoundException('Category not found');
+      }
+
       let store;
+
       await this.prisma.$transaction(async (tx) => {
         store = await tx.store.create({
           data: {
             name: dto.name,
             createdBy: creatorId,
-            ownerId: owner.id,
+            ownerId: dto.ownerId,
+            categories: {
+              create: {
+                category: {
+                  connect: { id: category.id }
+                }
+              }
+            },
+            warehouse: {
+              create: {
+                name: dto.warehouseName,
+              }
+            }
+          },
+          include: {
+            warehouse: true
           }
         })
         await tx.staff.create({
           data: {
             userId: owner.id,
             storeId: store.id,
-            role: StaffRole.OWNER
+            role: StaffRole.OWNER,
+            warehouseId: store?.warehouse?.id ?? null
           }
         })
       })

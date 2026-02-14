@@ -21,6 +21,16 @@ export class UserController {
     return this.userService.create(createUserDto);
   }
 
+  @Roles(UserRole.OWNER)
+  @UseGuards(AuthJWTGuard, RolesGuard)
+  @Get('owners')
+  findOwners(
+    @Query() { pageSize, currentPage }: PaginationParams,
+    @CurrentUser() user: UserAuth & { staff: Staff }
+  ) {
+    return this.userService.findAllOwners(pageSize, currentPage, user);
+  }
+
   @Get(':id')
   async findOne(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
     const user = await this.userService.findOneById(id);

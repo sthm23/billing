@@ -33,9 +33,41 @@ export class UserService {
     }
   }
 
+  async findAllOwners(pageSize = 10, currentPage = 1, user: UserAuth & { staff: Staff }) {
+    const skip = (currentPage - 1) * pageSize;
+    const param = {
+      role: UserRole.OWNER,
+      staff: user.role === UserRole.ADMIN ? undefined : { storeId: user.staff!.storeId }
+    } as Prisma.UserWhereInput;
+
+    try {
+      const result = await this.prismaService.user.findMany({
+        skip: skip,
+        take: +pageSize,
+        where: param,
+        include: {
+          staff: true,
+        }
+      });
+      const count = await this.prismaService.user.count({ where: param });
+      return {
+        currentPage,
+        pageSize,
+        total: count,
+        data: result
+      };
+    } catch (error: any) {
+      console.log(error);
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
+
   async findAll(pageSize = 10, currentPage = 1, user: UserAuth & { staff: Staff }) {
     const skip = (currentPage - 1) * pageSize;
-    const param = user.role === UserRole.ADMIN ? {} : { staff: { storeId: user.staff!.storeId } };
+    const param = {
+      staff: user.role === UserRole.ADMIN ? undefined : { storeId: user.staff!.storeId }
+    } as Prisma.UserWhereInput;
+
     try {
       const result = await this.prismaService.user.findMany({
         skip: skip,

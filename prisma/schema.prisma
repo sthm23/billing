@@ -158,6 +158,8 @@ model Store {
   products  Product[]
   orders    Order[]
 
+  categories CategoriesOnStore[]
+
   @@map("stores")
 }
 
@@ -290,6 +292,7 @@ model Category {
   children  Category[]              @relation("CategoryTree")
   products  Product[]
   attribute CategoriesOnAttribute[]
+  store     CategoriesOnStore[]
 
   @@index([parentId])
   @@map("categories")
@@ -351,6 +354,16 @@ model CategoriesOnAttribute {
 
   @@id([attributeId, categoryId])
   @@map("categories_on_attributes")
+}
+
+model CategoriesOnStore {
+  store      Store    @relation(fields: [storeId], references: [id])
+  storeId    String // relation scalar field (used in the `@relation` attribute above)
+  category   Category @relation(fields: [categoryId], references: [id])
+  categoryId String // relation scalar field (used in the `@relation` attribute above)
+
+  @@id([storeId, categoryId])
+  @@map("categories_on_stores")
 }
 
 /**
