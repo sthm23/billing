@@ -44,13 +44,22 @@ export class CategoryAttributesService {
     }
   }
 
-  findCategories(storeId?: string) {
-    const store = storeId ? { some: { storeId } } : undefined;
+  async findStoreBrands(storeId: string) {
+    try {
+      const brands = await this.prisma.brandsOnStore.findMany({
+        where: { storeId },
+        include: { brand: true },
+      });
+      return brands.map((b) => b.brand);
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
 
+  findCategories() {
     return this.prisma.category.findMany({
       where: {
-        store,
-        parentId: !storeId ? null : undefined
+        parentId: null
       },
       include: {
         store: true,
@@ -61,33 +70,31 @@ export class CategoryAttributesService {
     });
   }
 
-
-  findTRee() {
-    return this.prisma
-      .$queryRaw`
-    SELECT 
-      c.id,
-      c.name,
-      CASE
-        WHEN parent.id IS NULL THEN NULL
-        ELSE jsonb_build_object(
-          'id', parent.id,
-          'name', parent.name,
-          'parentId', parent."parentId"
-        )
-      END AS parent,
-    COALESCE(
-      jsonb_agg(
-        DISTINCT jsonb_build_object('id', a.id, 'name', a.name)
-      ) FILTER (WHERE a.id IS NOT NULL), 
-      '[]'::jsonb) AS attributes 
-    FROM "categories" c
-      LEFT JOIN "categories" parent ON parent.id = c."parentId"
-      LEFT JOIN "categories_on_attributes" coa ON coa."categoryId" = c.id
-      LEFT JOIN "attributes" a ON a.id = coa."attributeId"
-      WHERE c."parentId" IS NOT NULL -- Adjust this condition as needed!
-      GROUP BY c.id, c.name, parent.id, parent.name, parent."parentId";
-      `
+  async findStoreCategories(storeId: string) {
+    try {
+      const categories = await this.prisma.categoriesOnStore.findMany({
+        where: {
+          storeId
+        },
+        include: {
+          category: {
+            include: {
+              children: {
+                include: {
+                  children: true
+                }
+              }
+            }
+          }
+        },
+      });
+      return categories.map((c) => c.category);
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
+  findAttributes() {
+    return this.prisma.attribute.findMany();
   }
 
   findOne(id: string) {
@@ -95,7 +102,9 @@ export class CategoryAttributesService {
       where: { id },
       include: {
         children: {
-          include: { children: true }
+          include: {
+            children: true
+          }
         }
       },
     });

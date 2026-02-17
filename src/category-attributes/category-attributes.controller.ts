@@ -12,22 +12,10 @@ export class CategoryAttributesController {
   constructor(private readonly categoryAttributesService: CategoryAttributesService) { }
 
   @Post()
-  create(@Body() createCategoryAttributeDto: CreateCategoryAttributeDto) {
+  createCategory(@Body() createCategoryAttributeDto: CreateCategoryAttributeDto) {
     return this.categoryAttributesService.create(createCategoryAttributeDto);
   }
 
-  @Get()
-  getCategories(
-    @Query('storeId') storeId?: string,
-  ) {
-    return this.categoryAttributesService.findCategories(storeId);
-  }
-
-
-  @Get('tree')
-  findTree() {
-    return this.categoryAttributesService.findTRee();
-  }
 
   @Get('brand')
   findBrands(
@@ -36,6 +24,30 @@ export class CategoryAttributesController {
     return this.categoryAttributesService.findBrands(pageSize, currentPage);
   }
 
+  @Get('brand/:id')
+  findStoreBrands(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) storeId: string
+  ) {
+    return this.categoryAttributesService.findStoreBrands(storeId);
+  }
+
+
+  @Get('attributes')
+  getAttributes() {
+    return this.categoryAttributesService.findAttributes();
+  }
+
+  @Get()
+  getCategories() {
+    return this.categoryAttributesService.findCategories();
+  }
+
+  @Get(':id/categories')
+  findStoreCategories(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) storeId: string
+  ) {
+    return this.categoryAttributesService.findStoreCategories(storeId);
+  }
 
   @Get(':id')
   findOne(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {

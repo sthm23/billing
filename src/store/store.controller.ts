@@ -18,7 +18,7 @@ export class StoreController {
 
 
   @Post()
-  create(
+  createStore(
     @CurrentUser() user: UserAuth,
     @Body() createStoreDto: CreateStoreDto
   ) {
@@ -40,12 +40,12 @@ export class StoreController {
     return this.storeService.createStaff(createStoreDto);
   }
 
+  @UseGuards(AdminGuard)
   @Get()
   findAll(
-    @CurrentUser() user: UserAuth,
     @Query() { pageSize, currentPage }: PaginationParams
   ) {
-    return this.storeService.findAll(pageSize, currentPage, user);
+    return this.storeService.findAll(pageSize, currentPage);
   }
 
   @Get(':id')

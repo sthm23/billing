@@ -48,6 +48,13 @@ export class StoreService {
               create: {
                 name: dto.warehouseName,
               }
+            },
+            brands: {
+              createMany: {
+                data: [
+                  ...dto.brandIds.map(brandId => ({ brandId }))
+                ]
+              }
             }
           },
           include: {
@@ -154,13 +161,12 @@ export class StoreService {
     }
   }
 
-  async findAll(pageSize: number = 10, currentPage: number = 1, user: UserAuth) {
+  async findAll(pageSize: number = 10, currentPage: number = 1) {
     const skip = (currentPage - 1) * pageSize;
     try {
       const result = await this.prisma.store.findMany({
         skip: skip,
         take: +pageSize,
-        where: user.role === UserRole.OWNER ? { ownerId: user.id } : {},
         include: {
           warehouse: true,
           staff: true,

@@ -159,6 +159,7 @@ model Store {
   orders    Order[]
 
   categories CategoriesOnStore[]
+  brands     BrandsOnStore[]
 
   @@map("stores")
 }
@@ -216,6 +217,7 @@ model Brand {
   name    String  @unique
   logoUrl String?
 
+  stores   BrandsOnStore[]
   products Product[]
 
   @@map("brands")
@@ -370,6 +372,16 @@ model CategoriesOnStore {
 
   @@id([storeId, categoryId])
   @@map("categories_on_stores")
+}
+
+model BrandsOnStore {
+  store   Store  @relation(fields: [storeId], references: [id])
+  storeId String
+  brand   Brand  @relation(fields: [brandId], references: [id])
+  brandId String
+
+  @@id([storeId, brandId])
+  @@map("brands_on_stores")
 }
 
 /**

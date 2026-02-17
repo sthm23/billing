@@ -23,13 +23,13 @@ async function main() {
      * USERS
      * ======================
      */
-    // await seedUsers(prisma);
+    await seedUsers(prisma);
     /**
      * ======================
      * BRANDS
      * ======================
      */
-    // const brands = await seedBrands(prisma)
+    await seedBrands(prisma)
     /**
      * ======================
      * CATEGORIES

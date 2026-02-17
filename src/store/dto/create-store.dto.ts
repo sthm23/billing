@@ -1,5 +1,5 @@
 import { StaffRole, UserRole, UserType } from "@generated/enums";
-import { IsBoolean, IsEnum, IsNotEmpty, IsString, IsUUID } from "class-validator";
+import { ArrayMinSize, IsArray, IsBoolean, IsEnum, IsNotEmpty, IsString, IsUUID } from "class-validator";
 
 export class CreateStaffDto {
     @IsNotEmpty()
@@ -68,5 +68,7 @@ export class CreateStoreDto {
     @IsUUID('4')
     ownerId: string = ''
 
-
+    @IsArray()
+    @IsUUID('4', { each: true })
+    brandIds: string[] = []
 }
