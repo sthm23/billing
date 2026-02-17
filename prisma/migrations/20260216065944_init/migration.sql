@@ -168,27 +168,30 @@ CREATE TABLE "attributes" (
 );
 
 -- CreateTable
-CREATE TABLE "product_attribute_values" (
+CREATE TABLE "AttributeValue" (
     "id" TEXT NOT NULL,
-    "productId" TEXT NOT NULL,
     "attributeId" TEXT NOT NULL,
     "valueString" TEXT,
     "valueNumber" DECIMAL(65,30),
     "valueBool" BOOLEAN,
 
-    CONSTRAINT "product_attribute_values_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "AttributeValue_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "product_attribute_values" (
+    "productId" TEXT NOT NULL,
+    "attributeValueId" TEXT NOT NULL,
+
+    CONSTRAINT "product_attribute_values_pkey" PRIMARY KEY ("productId","attributeValueId")
 );
 
 -- CreateTable
 CREATE TABLE "variant_attribute_values" (
-    "id" TEXT NOT NULL,
     "variantId" TEXT NOT NULL,
-    "attributeId" TEXT NOT NULL,
-    "valueString" TEXT,
-    "valueNumber" DECIMAL(65,30),
-    "valueBool" BOOLEAN,
+    "attributeValueId" TEXT NOT NULL,
 
-    CONSTRAINT "variant_attribute_values_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "variant_attribute_values_pkey" PRIMARY KEY ("variantId","attributeValueId")
 );
 
 -- CreateTable
@@ -340,10 +343,7 @@ CREATE INDEX "categories_parentId_idx" ON "categories"("parentId");
 CREATE UNIQUE INDEX "attributes_name_key" ON "attributes"("name");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "product_attribute_values_productId_attributeId_key" ON "product_attribute_values"("productId", "attributeId");
-
--- CreateIndex
-CREATE UNIQUE INDEX "variant_attribute_values_variantId_attributeId_key" ON "variant_attribute_values"("variantId", "attributeId");
+CREATE UNIQUE INDEX "AttributeValue_attributeId_valueString_valueNumber_valueBoo_key" ON "AttributeValue"("attributeId", "valueString", "valueNumber", "valueBool");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "inventories_warehouseId_variantId_key" ON "inventories"("warehouseId", "variantId");
@@ -412,16 +412,19 @@ ALTER TABLE "product_variants" ADD CONSTRAINT "product_variants_productId_fkey" 
 ALTER TABLE "categories" ADD CONSTRAINT "categories_parentId_fkey" FOREIGN KEY ("parentId") REFERENCES "categories"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "AttributeValue" ADD CONSTRAINT "AttributeValue_attributeId_fkey" FOREIGN KEY ("attributeId") REFERENCES "attributes"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "product_attribute_values" ADD CONSTRAINT "product_attribute_values_productId_fkey" FOREIGN KEY ("productId") REFERENCES "products"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "product_attribute_values" ADD CONSTRAINT "product_attribute_values_attributeId_fkey" FOREIGN KEY ("attributeId") REFERENCES "attributes"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "product_attribute_values" ADD CONSTRAINT "product_attribute_values_attributeValueId_fkey" FOREIGN KEY ("attributeValueId") REFERENCES "AttributeValue"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "variant_attribute_values" ADD CONSTRAINT "variant_attribute_values_variantId_fkey" FOREIGN KEY ("variantId") REFERENCES "product_variants"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "variant_attribute_values" ADD CONSTRAINT "variant_attribute_values_attributeId_fkey" FOREIGN KEY ("attributeId") REFERENCES "attributes"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "variant_attribute_values" ADD CONSTRAINT "variant_attribute_values_attributeValueId_fkey" FOREIGN KEY ("attributeValueId") REFERENCES "AttributeValue"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "categories_on_attributes" ADD CONSTRAINT "categories_on_attributes_attributeId_fkey" FOREIGN KEY ("attributeId") REFERENCES "attributes"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

@@ -17,8 +17,10 @@ export class CategoryAttributesController {
   }
 
   @Get()
-  getCategories() {
-    return this.categoryAttributesService.findCategories();
+  getCategories(
+    @Query('storeId') storeId?: string,
+  ) {
+    return this.categoryAttributesService.findCategories(storeId);
   }
 
 

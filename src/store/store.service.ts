@@ -164,6 +164,11 @@ export class StoreService {
         include: {
           warehouse: true,
           staff: true,
+          categories: {
+            include: {
+              category: true,
+            }
+          }
         }
       });
       const count = await this.prisma.store.count();
@@ -178,11 +183,10 @@ export class StoreService {
     }
   }
 
-  findOne(id: string) {
+  async findStoreById(id: string) {
     try {
-      return this.prisma.store.findUnique({
+      const store = await this.prisma.store.findUnique({
         where: { id },
-
         include: {
           _count: {
             select: {
@@ -190,11 +194,15 @@ export class StoreService {
               orders: true
             }
           },
-          creator: true,
           staff: true,
-          warehouse: true
+          warehouse: true,
+          categories: true,
         }
       })
+      if (!store) {
+        throw new NotFoundException('Store not found');
+      }
+      return store;
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }

@@ -66,12 +66,12 @@ export class ProductService {
               },
             });
 
-            await tx.variantAttributeValue.createMany({
-              data: [
-                { variantId: variant.id, attributeId: dto.color.attributeId, valueString: dto.color.value },
-                { variantId: variant.id, attributeId: dto.size.attributeId, valueString: dto.size.value },
-              ],
-            });
+            // await tx.variantAttributeValue.createMany({
+            //   data: [
+            //     { variantId: variant.id, attributeId: dto.color.attributeId, valueString: dto.color.value },
+            //     { variantId: variant.id, attributeId: dto.size.attributeId, valueString: dto.size.value },
+            //   ],
+            // });
 
             return variant;
           });

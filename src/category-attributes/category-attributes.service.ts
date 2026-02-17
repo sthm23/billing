@@ -44,14 +44,18 @@ export class CategoryAttributesService {
     }
   }
 
-  findCategories() {
+  findCategories(storeId?: string) {
+    const store = storeId ? { some: { storeId } } : undefined;
+
     return this.prisma.category.findMany({
       where: {
-        parentId: null
+        store,
+        parentId: !storeId ? null : undefined
       },
       include: {
+        store: true,
         children: {
-          include: { children: true }
+          include: { children: { include: { children: true } } }
         }
       },
     });
@@ -89,7 +93,11 @@ export class CategoryAttributesService {
   findOne(id: string) {
     return this.prisma.category.findUnique({
       where: { id },
-      include: { children: true },
+      include: {
+        children: {
+          include: { children: true }
+        }
+      },
     });
   }
 

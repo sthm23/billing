@@ -49,7 +49,7 @@ export class StoreController {
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseUUIDPipe) id: string) {
-    return this.storeService.findOne(id);
+  findStoreById(@Param('id', ParseUUIDPipe) id: string) {
+    return this.storeService.findStoreById(id);
   }
 }
