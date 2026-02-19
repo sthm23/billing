@@ -5,7 +5,6 @@ import { seedBrands } from './brand.seed';
 import { CategoryEnum, seedCategories } from './category.seed';
 import { AttributeEnum, seedAttributes } from './attribute.seed';
 import { seedUsers } from './user.seed';
-import { categoryOnAttributes } from './category-on-attribute.seet';
 import { seedAttributeValues } from './attribute-value.seed';
 
 const adapter = new PrismaPg({
@@ -35,7 +34,7 @@ async function main() {
      * CATEGORIES
      * ======================
      */
-    const categories = await seedCategories(prisma);
+    await seedCategories(prisma);
     /**
      * ======================
      * ATTRIBUTES
@@ -49,7 +48,6 @@ async function main() {
      * ======================
      */
     await seedAttributeValues(prisma, attrMap);
-    await categoryOnAttributes(prisma, categories, attrMap);
 
     console.log('✅ Seed completed successfully')
 }

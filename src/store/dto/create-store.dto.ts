@@ -71,4 +71,8 @@ export class CreateStoreDto {
     @IsArray()
     @IsUUID('4', { each: true })
     brandIds: string[] = []
+
+    @IsArray()
+    @IsUUID('4', { each: true })
+    attributeIds: string[] = []
 }

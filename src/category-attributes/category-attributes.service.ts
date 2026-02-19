@@ -1,9 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { CreateCategoryAttributeDto } from './dto/create-category-attribute.dto';
 import { PrismaService } from '@prisma/prisma.service';
-import { Staff } from '@generated/client';
-import { UserAuth } from '@auth/models/auth.model';
-import { count } from 'console';
+import { AttributeType } from '@generated/enums';
 
 @Injectable()
 export class CategoryAttributesService {
@@ -25,20 +23,9 @@ export class CategoryAttributesService {
     }
   }
 
-  async findBrands(pageSize = 10, currentPage = 1) {
+  async findBrands() {
     try {
-      const count = await this.prisma.brand.count();
-      const data = await this.prisma.brand.findMany({
-        skip: (currentPage - 1) * pageSize,
-        take: +pageSize,
-      });
-
-      return {
-        currentPage,
-        pageSize,
-        total: count,
-        data
-      }
+      return this.prisma.brand.findMany();
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }
@@ -93,21 +80,50 @@ export class CategoryAttributesService {
       throw new BadRequestException(error.response || error.message)
     }
   }
-  findAttributes() {
-    return this.prisma.attribute.findMany();
+  async findAttributes() {
+    try {
+      return this.prisma.attribute.findMany();
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
   }
 
-  findOne(id: string) {
-    return this.prisma.category.findUnique({
-      where: { id },
-      include: {
-        children: {
-          include: {
-            children: true
-          }
+  async findAttributeItem(attrId: string) {
+
+    try {
+      const attributes = await this.prisma.attributeValue.findMany({
+        where: {
+          attributeId: attrId
         }
-      },
-    });
+      });
+      return attributes.map(el => {
+        const value = el.valueString !== null ? el.valueString
+          : el.valueBool !== null ? Boolean(el.valueBool)
+            : el.valueNumber !== null ? Number(el.valueNumber) : null;
+        return {
+          id: el.id,
+          value: value
+        }
+      });
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
+
+  async findStoreAttributes(storeId: string) {
+    try {
+      const attributes = await this.prisma.attributeOnStore.findMany({
+        where: {
+          storeId
+        },
+        include: {
+          attribute: true
+        }
+      })
+      return attributes.map((a) => a.attribute);
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
   }
 
 }

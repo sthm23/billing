@@ -29,6 +29,12 @@ export class CreateProductDto {
     @IsOptional()
     @IsArray()
     images!: string[];
+
+
+    @IsNotEmpty()
+    @IsArray()
+    @IsUUID('4', { each: true })
+    attributeIds: string[] = [];
 }
 
 export class CreateProductVariantDto {

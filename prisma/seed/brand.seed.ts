@@ -12,7 +12,17 @@ export async function seedBrands(prisma: PrismaClient) {
         'Nike',
         'Adidas',
         'Loro Piano',
-        'Hermes'
+        'Hermes',
+        'Gucci',
+        'Prada',
+        'Zara',
+        'H&M',
+        'Uniqlo',
+        'Puma',
+        'Reebok',
+        'Under Armour',
+        'New Balance',
+        'Asics'
     ]
 
     await prisma.brand.createMany({

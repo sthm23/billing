@@ -160,6 +160,7 @@ model Store {
 
   categories CategoriesOnStore[]
   brands     BrandsOnStore[]
+  attributes AttributeOnStore[]
 
   @@map("stores")
 }
@@ -213,9 +214,8 @@ model Warehouse {
  */
 
 model Brand {
-  id      String  @id @default(uuid())
-  name    String  @unique
-  logoUrl String?
+  id   String @id @default(uuid())
+  name String @unique
 
   stores   BrandsOnStore[]
   products Product[]
@@ -245,12 +245,12 @@ model Product {
   isArchived Boolean  @default(false)
   createdAt  DateTime @default(now())
 
-  store      Store                   @relation(fields: [storeId], references: [id])
-  category   Category?               @relation(fields: [categoryId], references: [id])
-  brand      Brand?                  @relation(fields: [brandId], references: [id])
+  store      Store              @relation(fields: [storeId], references: [id])
+  category   Category?          @relation(fields: [categoryId], references: [id])
+  brand      Brand?             @relation(fields: [brandId], references: [id])
   images     ProductImage[]
   variants   ProductVariant[]
-  attributes ProductAttributeValue[]
+  attributes ProductAttribute[]
 
   @@index([storeId])
   @@index([categoryId])
@@ -290,11 +290,10 @@ model Category {
   name     String  @unique
   parentId String?
 
-  parent    Category?               @relation("CategoryTree", fields: [parentId], references: [id])
-  children  Category[]              @relation("CategoryTree")
-  products  Product[]
-  attribute CategoriesOnAttribute[]
-  store     CategoriesOnStore[]
+  parent   Category?           @relation("CategoryTree", fields: [parentId], references: [id])
+  children Category[]          @relation("CategoryTree")
+  products Product[]
+  store    CategoriesOnStore[]
 
   @@index([parentId])
   @@map("categories")
@@ -311,8 +310,10 @@ model Attribute {
   name String        @unique
   type AttributeType
 
-  values   AttributeValue[]
-  category CategoriesOnAttribute[]
+  values AttributeValue[]
+
+  store   AttributeOnStore[]
+  product ProductAttribute[]
 
   @@map("attributes")
 }
@@ -326,21 +327,20 @@ model AttributeValue {
   valueBool   Boolean?
 
   attribute Attribute               @relation(fields: [attributeId], references: [id])
-  product   ProductAttributeValue[]
   variant   VariantAttributeValue[]
 
   @@unique([attributeId, valueString, valueNumber, valueBool])
 }
 
-model ProductAttributeValue {
-  productId        String
-  attributeValueId String
+model ProductAttribute {
+  productId   String
+  attributeId String
 
-  product Product        @relation(fields: [productId], references: [id])
-  value   AttributeValue @relation(fields: [attributeValueId], references: [id])
+  product   Product   @relation(fields: [productId], references: [id])
+  attribute Attribute @relation(fields: [attributeId], references: [id])
 
-  @@id([productId, attributeValueId])
-  @@map("product_attribute_values")
+  @@id([productId, attributeId])
+  @@map("product_attributes")
 }
 
 model VariantAttributeValue {
@@ -352,16 +352,6 @@ model VariantAttributeValue {
 
   @@id([variantId, attributeValueId])
   @@map("variant_attribute_values")
-}
-
-model CategoriesOnAttribute {
-  attribute   Attribute @relation(fields: [attributeId], references: [id])
-  attributeId String
-  category    Category  @relation(fields: [categoryId], references: [id])
-  categoryId  String
-
-  @@id([attributeId, categoryId])
-  @@map("categories_on_attributes")
 }
 
 model CategoriesOnStore {
@@ -382,6 +372,16 @@ model BrandsOnStore {
 
   @@id([storeId, brandId])
   @@map("brands_on_stores")
+}
+
+model AttributeOnStore {
+  store       Store     @relation(fields: [storeId], references: [id])
+  storeId     String
+  attribute   Attribute @relation(fields: [attributeId], references: [id])
+  attributeId String
+
+  @@id([storeId, attributeId])
+  @@map("attributes_on_stores")
 }
 
 /**

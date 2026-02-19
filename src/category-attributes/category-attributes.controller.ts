@@ -1,10 +1,6 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, ParseUUIDPipe, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, ParseUUIDPipe, Query } from '@nestjs/common';
 import { CategoryAttributesService } from './category-attributes.service';
 import { CreateCategoryAttributeDto } from './dto/create-category-attribute.dto';
-import { UpdateCategoryAttributeDto } from './dto/update-category-attribute.dto';
-import { UserAuth } from '@auth/models/auth.model';
-import { Staff } from '@generated/client';
-import { CurrentUser } from '@shared/decorators/user.decorator';
 import { PaginationParams } from '@shared/helper/pagination-params.dto';
 
 @Controller('category')
@@ -18,10 +14,8 @@ export class CategoryAttributesController {
 
 
   @Get('brand')
-  findBrands(
-    @Query() { pageSize, currentPage }: PaginationParams
-  ) {
-    return this.categoryAttributesService.findBrands(pageSize, currentPage);
+  findBrands() {
+    return this.categoryAttributesService.findBrands();
   }
 
   @Get('brand/:id')
@@ -37,6 +31,18 @@ export class CategoryAttributesController {
     return this.categoryAttributesService.findAttributes();
   }
 
+  @Get('attributes/store/:id')
+  findOne(@Param('id', new ParseUUIDPipe({ version: '4' })) storeId: string) {
+    return this.categoryAttributesService.findStoreAttributes(storeId);
+  }
+
+  @Get('attributes/:id')
+  getAttributeItem(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) attrId: string
+  ) {
+    return this.categoryAttributesService.findAttributeItem(attrId);
+  }
+
   @Get()
   getCategories() {
     return this.categoryAttributesService.findCategories();
@@ -48,11 +54,4 @@ export class CategoryAttributesController {
   ) {
     return this.categoryAttributesService.findStoreCategories(storeId);
   }
-
-  @Get(':id')
-  findOne(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
-    return this.categoryAttributesService.findOne(id);
-  }
-
-
 }

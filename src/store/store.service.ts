@@ -51,11 +51,14 @@ export class StoreService {
             },
             brands: {
               createMany: {
-                data: [
-                  ...dto.brandIds.map(brandId => ({ brandId }))
-                ]
+                data: dto.brandIds.map(brandId => ({ brandId }))
               }
-            }
+            },
+            attributes: {
+              createMany: {
+                data: dto.attributeIds.map(attrId => ({ attributeId: attrId }))
+              }
+            },
           },
           include: {
             warehouse: true

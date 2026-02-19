@@ -28,6 +28,11 @@ export class ProductService {
                 isMain: index === 0,
               })),
             }
+          },
+          attributes: {
+            createMany: {
+              data: dto.attributeIds.map(id => ({ attributeId: id }))
+            }
           }
         }
       });

@@ -108,7 +108,6 @@ CREATE TABLE "warehouses" (
 CREATE TABLE "brands" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
-    "logoUrl" TEXT,
 
     CONSTRAINT "brands_pkey" PRIMARY KEY ("id")
 );
@@ -179,11 +178,11 @@ CREATE TABLE "AttributeValue" (
 );
 
 -- CreateTable
-CREATE TABLE "product_attribute_values" (
+CREATE TABLE "product_attributes" (
     "productId" TEXT NOT NULL,
-    "attributeValueId" TEXT NOT NULL,
+    "attributeId" TEXT NOT NULL,
 
-    CONSTRAINT "product_attribute_values_pkey" PRIMARY KEY ("productId","attributeValueId")
+    CONSTRAINT "product_attributes_pkey" PRIMARY KEY ("productId","attributeId")
 );
 
 -- CreateTable
@@ -195,19 +194,27 @@ CREATE TABLE "variant_attribute_values" (
 );
 
 -- CreateTable
-CREATE TABLE "categories_on_attributes" (
-    "attributeId" TEXT NOT NULL,
-    "categoryId" TEXT NOT NULL,
-
-    CONSTRAINT "categories_on_attributes_pkey" PRIMARY KEY ("attributeId","categoryId")
-);
-
--- CreateTable
 CREATE TABLE "categories_on_stores" (
     "storeId" TEXT NOT NULL,
     "categoryId" TEXT NOT NULL,
 
     CONSTRAINT "categories_on_stores_pkey" PRIMARY KEY ("storeId","categoryId")
+);
+
+-- CreateTable
+CREATE TABLE "brands_on_stores" (
+    "storeId" TEXT NOT NULL,
+    "brandId" TEXT NOT NULL,
+
+    CONSTRAINT "brands_on_stores_pkey" PRIMARY KEY ("storeId","brandId")
+);
+
+-- CreateTable
+CREATE TABLE "attributes_on_stores" (
+    "storeId" TEXT NOT NULL,
+    "attributeId" TEXT NOT NULL,
+
+    CONSTRAINT "attributes_on_stores_pkey" PRIMARY KEY ("storeId","attributeId")
 );
 
 -- CreateTable
@@ -415,10 +422,10 @@ ALTER TABLE "categories" ADD CONSTRAINT "categories_parentId_fkey" FOREIGN KEY (
 ALTER TABLE "AttributeValue" ADD CONSTRAINT "AttributeValue_attributeId_fkey" FOREIGN KEY ("attributeId") REFERENCES "attributes"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "product_attribute_values" ADD CONSTRAINT "product_attribute_values_productId_fkey" FOREIGN KEY ("productId") REFERENCES "products"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "product_attributes" ADD CONSTRAINT "product_attributes_productId_fkey" FOREIGN KEY ("productId") REFERENCES "products"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "product_attribute_values" ADD CONSTRAINT "product_attribute_values_attributeValueId_fkey" FOREIGN KEY ("attributeValueId") REFERENCES "AttributeValue"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "product_attributes" ADD CONSTRAINT "product_attributes_attributeId_fkey" FOREIGN KEY ("attributeId") REFERENCES "attributes"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "variant_attribute_values" ADD CONSTRAINT "variant_attribute_values_variantId_fkey" FOREIGN KEY ("variantId") REFERENCES "product_variants"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -427,16 +434,22 @@ ALTER TABLE "variant_attribute_values" ADD CONSTRAINT "variant_attribute_values_
 ALTER TABLE "variant_attribute_values" ADD CONSTRAINT "variant_attribute_values_attributeValueId_fkey" FOREIGN KEY ("attributeValueId") REFERENCES "AttributeValue"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "categories_on_attributes" ADD CONSTRAINT "categories_on_attributes_attributeId_fkey" FOREIGN KEY ("attributeId") REFERENCES "attributes"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "categories_on_attributes" ADD CONSTRAINT "categories_on_attributes_categoryId_fkey" FOREIGN KEY ("categoryId") REFERENCES "categories"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
 ALTER TABLE "categories_on_stores" ADD CONSTRAINT "categories_on_stores_storeId_fkey" FOREIGN KEY ("storeId") REFERENCES "stores"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "categories_on_stores" ADD CONSTRAINT "categories_on_stores_categoryId_fkey" FOREIGN KEY ("categoryId") REFERENCES "categories"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "brands_on_stores" ADD CONSTRAINT "brands_on_stores_storeId_fkey" FOREIGN KEY ("storeId") REFERENCES "stores"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "brands_on_stores" ADD CONSTRAINT "brands_on_stores_brandId_fkey" FOREIGN KEY ("brandId") REFERENCES "brands"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "attributes_on_stores" ADD CONSTRAINT "attributes_on_stores_storeId_fkey" FOREIGN KEY ("storeId") REFERENCES "stores"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "attributes_on_stores" ADD CONSTRAINT "attributes_on_stores_attributeId_fkey" FOREIGN KEY ("attributeId") REFERENCES "attributes"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "inventories" ADD CONSTRAINT "inventories_warehouseId_fkey" FOREIGN KEY ("warehouseId") REFERENCES "warehouses"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
