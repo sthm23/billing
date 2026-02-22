@@ -2,7 +2,7 @@ import { Controller, Get, Post, Body, Patch, Param, Delete, ParseUUIDPipe, Query
 import { PaymentService } from './payment.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
-import { PaginationParams } from '@shared/helper/pagination-params.dto';
+import { PaginationParams } from '@shared/dto/pagination-params.dto';
 
 @Controller('payment')
 export class PaymentController {

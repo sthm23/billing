@@ -126,4 +126,32 @@ export class CategoryAttributesService {
     }
   }
 
+  async getAttributeItems(ids: string[]) {
+    try {
+      const attributeItems = await this.prisma.attributeValue.findMany({
+        where: {
+          attributeId: {
+            in: ids
+          }
+        },
+        include: {
+          attribute: true
+        }
+      })
+      return attributeItems.map(el => {
+        const value = el.valueString !== null ? el.valueString
+          : el.valueBool !== null ? Boolean(el.valueBool)
+            : el.valueNumber !== null ? Number(el.valueNumber) : null;
+        return {
+          id: el.id,
+          attributeId: el.attributeId,
+          attributeName: el.attribute.name,
+          value: value
+        }
+      });
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
+
 }

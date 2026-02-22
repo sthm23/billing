@@ -6,7 +6,7 @@ import { RolesGuard } from '@shared/guards/role.guard';
 import { Roles } from '@shared/decorators/role.decorator';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { UserRole } from '@generated/enums';
-import { PaginationParams } from '@shared/helper/pagination-params.dto';
+import { PaginationParams } from '@shared/dto/pagination-params.dto';
 import { CurrentUser } from '@shared/decorators/user.decorator';
 import { UserAuth } from '@auth/models/auth.model';
 import { Staff } from '@generated/client';

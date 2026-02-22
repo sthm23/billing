@@ -2,7 +2,7 @@ import { Controller, Get, Post, Body, Patch, Param, Delete, ParseUUIDPipe, Query
 import { OrderService } from './order.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
-import { PaginationParams } from '@shared/helper/pagination-params.dto';
+import { PaginationParams } from '@shared/dto/pagination-params.dto';
 
 @Controller('order')
 export class OrderController {

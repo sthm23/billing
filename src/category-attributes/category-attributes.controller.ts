@@ -1,7 +1,8 @@
 import { Controller, Get, Post, Body, Param, ParseUUIDPipe, Query } from '@nestjs/common';
 import { CategoryAttributesService } from './category-attributes.service';
 import { CreateCategoryAttributeDto } from './dto/create-category-attribute.dto';
-import { PaginationParams } from '@shared/helper/pagination-params.dto';
+import { PaginationParams } from '@shared/dto/pagination-params.dto';
+import { IdParamDto } from '@shared/dto/id-param.dto';
 
 @Controller('category')
 export class CategoryAttributesController {
@@ -34,6 +35,15 @@ export class CategoryAttributesController {
   @Get('attributes/store/:id')
   findOne(@Param('id', new ParseUUIDPipe({ version: '4' })) storeId: string) {
     return this.categoryAttributesService.findStoreAttributes(storeId);
+  }
+
+
+  @Get('attributes/items')
+  getAttributeItems(
+    @Query() { attributeIds }: IdParamDto
+  ) {
+    const idArray = attributeIds.split(',');
+    return this.categoryAttributesService.getAttributeItems(idArray);
   }
 
   @Get('attributes/:id')

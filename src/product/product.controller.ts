@@ -14,7 +14,7 @@ import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { Roles } from '@shared/decorators/role.decorator';
 import { RolesGuard } from '@shared/guards/role.guard';
 import { CurrentUser } from '@shared/decorators/user.decorator';
-import { PaginationParams } from '@shared/helper/pagination-params.dto';
+import { PaginationParams } from '@shared/dto/pagination-params.dto';
 import { StaffRole, UserRole } from '@generated/enums';
 import type { UserAuth } from '@auth/models/auth.model';
 import { Staff } from '@generated/client';
@@ -49,11 +49,6 @@ export class ProductController {
   ) {
     return this.productService.findAll(pageSize, currentPage, user);
   }
-
-  // @Get('search')
-  // search(@Query('text') text: string) {
-  //   return this.productService.findByNameOrBrand(text);
-  // }
 
   @Get(':id')
   findOne(

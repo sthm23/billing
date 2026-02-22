@@ -8,7 +8,7 @@ import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { RolesGuard } from '@shared/guards/role.guard';
 import { Roles } from '@shared/decorators/role.decorator';
 import { UserRole } from '@generated/enums';
-import { PaginationParams } from '@shared/helper/pagination-params.dto';
+import { PaginationParams } from '@shared/dto/pagination-params.dto';
 
 @UseGuards(AuthJWTGuard, RolesGuard)
 @Roles(UserRole.OWNER)

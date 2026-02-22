@@ -3,7 +3,7 @@ import { WarehouseService } from './warehouse.service';
 import { CreateWarehouseDto } from './dto/create-warehouse.dto';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { AdminGuard } from '@shared/guards/admin.guard';
-import { PaginationParams } from '@shared/helper/pagination-params.dto';
+import { PaginationParams } from '@shared/dto/pagination-params.dto';
 @UseGuards(AuthJWTGuard, AdminGuard)
 @Controller('warehouse')
 export class WarehouseController {

@@ -151,7 +151,11 @@ export class ProductService {
           },
           category: true,
           brand: true,
-          attributes: true,
+          attributes: {
+            include: {
+              attribute: true
+            }
+          },
           variants: true,
         }
       });
@@ -163,7 +167,7 @@ export class ProductService {
         brand: product.brand?.name,
         category: product.category?.name,
         images: product.images,
-        attributes: product.attributes,
+        attributes: product.attributes.map(a => ({ ...a.attribute })),
         variants: product.variants,
         isArchived: product.isArchived,
         createdAt: product.createdAt,
