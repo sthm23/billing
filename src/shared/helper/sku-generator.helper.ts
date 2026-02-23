@@ -1,5 +1,6 @@
-export function skuToken(value: string): string {
+export function skuToken(value: string | number): string {
     const t = value
+        .toString()
         .trim()
         .toUpperCase()
         .normalize("NFKD")
@@ -7,6 +8,7 @@ export function skuToken(value: string): string {
     return t || "ITEM";
 }
 
-export function buildSku(productName: string, color: string, size: string) {
-    return `${skuToken(productName)}-${skuToken(color)}-${skuToken(size)}`;
+export function buildSku(productName: string, productCategory: string, attrNames: (string | number)[]) {
+    const skuParts = [productName, productCategory, ...attrNames].map(skuToken);
+    return skuParts.join("-");
 }

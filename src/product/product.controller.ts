@@ -37,9 +37,10 @@ export class ProductController {
   @Post('variants')
   createVariant(
     @Body() dto: CreateProductVariantDto,
+    @CurrentUser() user: UserAuth & { staff: Staff }
 
   ) {
-    return this.productService.createProductVariant(dto);
+    return this.productService.createProductVariant(dto, user);
   }
 
   @Get()

@@ -23,6 +23,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt-access') {
             include: {
                 staff: {
                     select: {
+                        id: true,
                         isActive: true,
                         role: true,
                         storeId: true,
@@ -31,6 +32,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt-access') {
                 },
                 auth: {
                     select: {
+                        id: true,
                         login: true,
                         passwordHash: true,
                         isActive: true

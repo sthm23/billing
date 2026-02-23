@@ -262,7 +262,7 @@ model ProductVariant {
   id        String  @id @default(uuid())
   productId String
   sku       String // ску будет уникален в пределах магазина
-  barCode   String
+  barCode   String?
   price     Decimal
   storeId   String // это для быстрого поиска уникального SKU в пределах магазина
 
@@ -277,6 +277,51 @@ model ProductVariant {
   @@unique([storeId, barCode])
   @@index([productId])
   @@map("product_variants")
+}
+
+/**
+ * =======================
+ * INVENTORY
+ * =======================
+ */
+
+model Inventory {
+  id          String @id @default(uuid())
+  warehouseId String
+  variantId   String
+  quantity    Int
+
+  warehouse Warehouse      @relation(fields: [warehouseId], references: [id])
+  variant   ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@unique([warehouseId, variantId])
+  @@map("inventories")
+}
+
+/**
+ * складские движения приход/расход
+ * =======================
+ * STOCK MOVEMENTS
+ * =======================
+ */
+model StockMovement {
+  id          String              @id @default(uuid())
+  variantId   String
+  warehouseId String
+  type        StockMovementType
+  reason      StockMovementReason
+  quantity    Int
+  unitCost    Decimal? // только для IN себестоимость
+  createdById String
+  createdAt   DateTime            @default(now())
+
+  variant   ProductVariant @relation(fields: [variantId], references: [id])
+  warehouse Warehouse      @relation(fields: [warehouseId], references: [id])
+  createdBy Staff          @relation(fields: [createdById], references: [id])
+
+  @@index([warehouseId, createdAt])
+  @@index([variantId, createdAt])
+  @@map("stock_movements")
 }
 
 /**
@@ -382,51 +427,6 @@ model AttributeOnStore {
 
   @@id([storeId, attributeId])
   @@map("attributes_on_stores")
-}
-
-/**
- * =======================
- * INVENTORY
- * =======================
- */
-
-model Inventory {
-  id          String @id @default(uuid())
-  warehouseId String
-  variantId   String
-  quantity    Int
-
-  warehouse Warehouse      @relation(fields: [warehouseId], references: [id])
-  variant   ProductVariant @relation(fields: [variantId], references: [id])
-
-  @@unique([warehouseId, variantId])
-  @@map("inventories")
-}
-
-/**
- * складские движения приход/расход
- * =======================
- * STOCK MOVEMENTS
- * =======================
- */
-model StockMovement {
-  id          String              @id @default(uuid())
-  variantId   String
-  warehouseId String
-  type        StockMovementType
-  reason      StockMovementReason
-  quantity    Int
-  unitCost    Decimal? // только для IN себестоимость
-  createdById String
-  createdAt   DateTime            @default(now())
-
-  variant   ProductVariant @relation(fields: [variantId], references: [id])
-  warehouse Warehouse      @relation(fields: [warehouseId], references: [id])
-  createdBy Staff          @relation(fields: [createdById], references: [id])
-
-  @@index([warehouseId, createdAt])
-  @@index([variantId, createdAt])
-  @@map("stock_movements")
 }
 
 /**

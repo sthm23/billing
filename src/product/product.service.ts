@@ -1,7 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateProductDto, CreateProductVariantDto } from './dto/create-product.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { Prisma, ProductVariant, Staff, UserRole } from '@generated/client';
+import { Prisma, Product, ProductVariant, Staff, StockMovementReason, StockMovementType, User, UserRole } from '@generated/client';
 import { buildSku } from '@shared/helper/sku-generator.helper';
 import { generateEan13 } from '@shared/helper/bar-code-generator.helper';
 import { UserAuth } from '@auth/models/auth.model';
@@ -42,53 +42,49 @@ export class ProductService {
     }
   }
 
-  async createProductVariant(dto: CreateProductVariantDto): Promise<ProductVariant> {
-    const product = await this.prisma.product.findUnique({ where: { id: dto.productId } });
-    if (!product) throw new NotFoundException("Product not found");
-
+  async createProductVariant(dto: CreateProductVariantDto, user: User & { staff: Staff }): Promise<Product> {
     try {
-      const baseSku = dto.sku?.trim()
-        ? dto.sku.trim().toUpperCase()
-        : buildSku(product.name, dto.color.value, dto.size.value);
+      const product = await this.prisma.product.findUnique({ where: { id: dto.productId } });
+      if (!product) throw new NotFoundException("Product not found");
+      const store = await this.prisma.store.findUnique({ where: { id: product.storeId } });
+      if (!store) throw new NotFoundException("Store not found");
 
-      for (let attempt = 0; attempt < 10; attempt++) {
-        const sku = attempt === 0 ? baseSku : `${baseSku}-${attempt + 1}`;
-        const barCode = dto.barCode?.trim() ? dto.barCode.trim() : generateEan13();
-
-        try {
-          return await this.prisma.$transaction(async (tx) => {
-            // (опционально) если хочешь избежать дублей barCode даже без unique в БД:
-            const existing = await tx.productVariant.findFirst({ where: { barCode } });
-            if (existing) throw new Error("BARCODE_COLLISION");
-
-            const variant = await tx.productVariant.create({
-              data: {
-                productId: product.id,
-                storeId: product.storeId, // важно: берем из product, не из dto
-                sku,
-                barCode,
-                price: new Prisma.Decimal(dto.price),
+      await this.prisma.$transaction(async (tx) => {
+        for (const variant of dto.variants) {
+          await tx.productVariant.create({
+            data: {
+              productId: product.id,
+              storeId: product.storeId, // важно: берем из product, не из dto
+              sku: buildSku(product.name, dto.category, variant.attributes.map(a => a.value)),
+              barCode: variant.barCode?.trim() ? variant.barCode.trim() : generateEan13(),
+              price: new Prisma.Decimal(variant.retailPrice),
+              attributes: {
+                createMany: {
+                  data: variant.attributes.map(attr => ({ attributeValueId: attr.attributeValueId }))
+                }
               },
-            });
+              inventory: {
+                create: {
+                  quantity: variant.quantity,
+                  warehouse: { connect: { id: dto.warehouseId } },
+                }
+              },
+              stockMovements: {
+                create: {
+                  type: StockMovementType.IN,
+                  reason: StockMovementReason.PURCHASE,
+                  quantity: variant.quantity,
+                  warehouse: { connect: { id: dto.warehouseId } },
+                  createdBy: { connect: { id: user.staff.id } },
+                  unitCost: new Prisma.Decimal(variant.costPrice),
+                }
+              },
 
-            // await tx.variantAttributeValue.createMany({
-            //   data: [
-            //     { variantId: variant.id, attributeId: dto.color.attributeId, valueString: dto.color.value },
-            //     { variantId: variant.id, attributeId: dto.size.attributeId, valueString: dto.size.value },
-            //   ],
-            // });
-
-            return variant;
-          });
-        } catch (e: any) {
-          // уникальность SKU (storeId+sku)
-          if (e?.code === "P2002") continue;
-          if (e?.message === "BARCODE_COLLISION") continue;
-          throw new BadRequestException(e?.message ?? "Create variant failed");
+            }
+          })
         }
-      }
-
-      throw new BadRequestException("Failed to generate unique SKU/barCode after retries");
+      })
+      return Promise.resolve(product);
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }
@@ -112,9 +108,14 @@ export class ProductService {
           },
           category: true,
           brand: true,
-          _count: { select: { variants: true } },
+          variants: {
+            include: {
+              inventory: true,
+            }
+          }
         }
       });
+
 
       return {
         currentPage,
@@ -123,7 +124,11 @@ export class ProductService {
         data: result.map(product => ({
           brand: product.brand?.name,
           category: product.category?.name,
-          variants: product._count.variants,
+          variants: product.variants.map(v => ({
+            id: v.id,
+            price: v.price,
+            quantity: v.inventory.reduce((acc, curr) => acc + curr.quantity, 0) || 0,
+          })),
           name: product.name,
           id: product.id,
           images: product.images,
@@ -156,11 +161,36 @@ export class ProductService {
               attribute: true
             }
           },
-          variants: true,
+          variants: {
+            include: {
+              attributes: {
+                include: {
+                  value: true,
+                }
+              },
+              inventory: true,
+            }
+          },
         }
       });
       if (!product) throw new NotFoundException('Product not found');
+      const variants = product.variants.map(variant => {
 
+        return {
+          id: variant.id,
+          sku: variant.sku,
+          barCode: variant.barCode,
+          price: variant.price,
+          attributes: variant.attributes.map(a => ({
+            id: a.value.id,
+            value: a.value.valueString !== null ? a.value.valueString
+              : a.value.valueBool !== null ? Boolean(a.value.valueBool)
+                : a.value.valueNumber !== null ? Number(a.value.valueNumber) : null,
+            attributeId: a.value.attributeId,
+          })),
+          quantity: variant.inventory.reduce((acc, curr) => acc + curr.quantity, 0) || 0,
+        }
+      })
       return {
         id: product.id,
         name: product.name,
@@ -168,10 +198,10 @@ export class ProductService {
         category: product.category?.name,
         images: product.images,
         attributes: product.attributes.map(a => ({ ...a.attribute })),
-        variants: product.variants,
         isArchived: product.isArchived,
         createdAt: product.createdAt,
         storeId: product.storeId,
+        variants,
       };
     } catch (error: any) {
       throw new ForbiddenException('Product not found: ' + error?.message);

@@ -4,6 +4,10 @@ import { CreateWarehouseDto } from './dto/create-warehouse.dto';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { AdminGuard } from '@shared/guards/admin.guard';
 import { PaginationParams } from '@shared/dto/pagination-params.dto';
+import { CurrentUser } from '@shared/decorators/user.decorator';
+import { UserAuth } from '@auth/models/auth.model';
+import { Staff } from '@generated/client';
+import { StockInDto } from './dto/stock-in.dto';
 @UseGuards(AuthJWTGuard, AdminGuard)
 @Controller('warehouse')
 export class WarehouseController {
@@ -14,6 +18,15 @@ export class WarehouseController {
     @Body() dto: CreateWarehouseDto
   ) {
     return this.warehouseService.createWarehouse(dto);
+  }
+
+  @Post(':id/stock-in')
+  stockIn(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) warehouseId: string,
+    @Body() dto: StockInDto,
+    @CurrentUser() user: UserAuth & { staff: Staff },
+  ) {
+    return this.warehouseService.stockIn(warehouseId, dto, user);
   }
 
   @Get()

@@ -1,10 +1,11 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateWarehouseDto, CreateWarehouseStaffDto } from './dto/create-warehouse.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { StaffRole, StockMovementReason, StockMovementType, UserType } from '@generated/enums';
 import { HashingHelper } from '@shared/helper/hash.helper';
-import { Prisma, User } from '@generated/client';
+import { Prisma, Staff, User } from '@generated/client';
 import { StockInDto } from './dto/stock-in.dto';
+import { UserAuth } from '@auth/models/auth.model';
 
 @Injectable()
 export class WarehouseService {
@@ -68,43 +69,52 @@ export class WarehouseService {
     }
   }
 
+  /**
+  * Приход новой партии: НЕ создаём варианты заново, а увеличиваем остаток + пишем IN движение.
+  */
+  async stockIn(warehouseId: string, dto: StockInDto, user: UserAuth & { staff: Staff }) {
+    if (!user?.staff?.id) throw new ForbiddenException('Only staff can receive stock');
 
-  async stockIn(dto: StockInDto, createdById: string) {
     try {
-      return await this.prisma.$transaction(async (tx) => {
-        const movement = await tx.stockMovement.create({
-          data: {
-            warehouseId: dto.warehouseId,
-            variantId: dto.variantId,
-            type: StockMovementType.IN,
-            reason: StockMovementReason.PURCHASE,
-            quantity: dto.quantity,
-            unitCost: new Prisma.Decimal(dto.unitCost),
-            createdById,
-          },
-        });
-
-        const inventory = await tx.inventory.upsert({
-          where: {
-            warehouseId_variantId: {
-              warehouseId: dto.warehouseId,
-              variantId: dto.variantId,
+      await this.prisma.$transaction(async (tx) => {
+        for (const item of dto.items) {
+          // 1) Обновляем/создаём остаток
+          await tx.inventory.upsert({
+            where: {
+              warehouseId_variantId: {
+                warehouseId: warehouseId,
+                variantId: item.variantId,
+              },
             },
-          },
-          create: {
-            warehouseId: dto.warehouseId,
-            variantId: dto.variantId,
-            quantity: dto.quantity,
-          },
-          update: {
-            quantity: { increment: dto.quantity },
-          },
-        });
+            create: {
+              quantity: item.quantity,
+              warehouse: { connect: { id: warehouseId } },
+              variant: { connect: { id: item.variantId } },
+            },
+            update: {
+              quantity: { increment: item.quantity },
+            },
+          });
 
-        return { movement, inventory };
+          // 2) Пишем складское движение прихода (партия)
+          await tx.stockMovement.create({
+            data: {
+              type: StockMovementType.IN,
+              reason: StockMovementReason.PURCHASE,
+              quantity: item.quantity,
+              unitCost: new Prisma.Decimal(item.unitCost),
+              warehouse: { connect: { id: warehouseId } },
+              createdBy: { connect: { id: user.staff.id } },
+              variant: { connect: { id: item.variantId } }, // если у тебя связь называется иначе — поправь
+            },
+          });
+        }
       });
-    } catch (e: any) {
-      throw new BadRequestException(e?.message ?? "Stock in failed");
+
+      return { ok: true };
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message);
     }
   }
+
 }
