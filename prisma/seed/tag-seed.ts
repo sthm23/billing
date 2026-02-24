@@ -18,7 +18,11 @@ export async function seedTags(prisma: PrismaClient) {
             update: {},
             create: {
                 name: tag.name,
-                values: tag.values,
+                values: {
+                    createMany: {
+                        data: tag.values.map(value => ({ value }))
+                    }
+                },
             },
         });
     }

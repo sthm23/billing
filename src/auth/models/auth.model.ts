@@ -17,3 +17,5 @@ export interface LoginResponse {
 }
 
 export type UserAuth = User & { auth: AuthAccount }
+
+export type CurrentUser = User & { auth: AuthAccount, staff: Staff }

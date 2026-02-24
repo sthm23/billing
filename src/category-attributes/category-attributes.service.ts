@@ -45,7 +45,11 @@ export class CategoryAttributesService {
 
   async findTags() {
     try {
-      return this.prisma.tag.findMany();
+      return this.prisma.tag.findMany({
+        include: {
+          values: true
+        }
+      });
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }

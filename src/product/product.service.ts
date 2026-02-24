@@ -4,7 +4,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma, Product, Staff, StockMovementReason, StockMovementType, User, UserRole } from '@generated/client';
 import { buildSku } from '@shared/helper/sku-generator.helper';
 import { generateEan13 } from '@shared/helper/bar-code-generator.helper';
-import { UserAuth } from '@auth/models/auth.model';
+import { CurrentUser } from '@auth/models/auth.model';
 
 @Injectable()
 export class ProductService {
@@ -37,7 +37,7 @@ export class ProductService {
           },
           tags: {
             createMany: {
-              data: dto.tagIds.map(id => ({ tagId: id }))
+              data: dto.tagIds.map(id => ({ tagValueId: id }))
             }
           }
         }
@@ -48,7 +48,7 @@ export class ProductService {
     }
   }
 
-  async createProductVariant(dto: CreateProductVariantDto, user: User & { staff: Staff }): Promise<Product> {
+  async createProductVariant(dto: CreateProductVariantDto, user: CurrentUser): Promise<Product> {
     try {
       const product = await this.prisma.product.findUnique({ where: { id: dto.productId } });
       if (!product) throw new NotFoundException("Product not found");
@@ -96,7 +96,7 @@ export class ProductService {
     }
   }
 
-  async findAll(pageSize = 10, currentPage = 1, user: UserAuth & { staff: Staff }) {
+  async findAll(pageSize = 10, currentPage = 1, user: CurrentUser) {
     const skip = (currentPage - 1) * pageSize;
     try {
       const count = await this.prisma.product.count({
@@ -117,6 +117,15 @@ export class ProductService {
           },
           category: true,
           brand: true,
+          tags: {
+            include: {
+              value: {
+                include: {
+                  tag: true
+                }
+              }
+            }
+          },
           variants: {
             include: {
               inventory: true,
@@ -152,6 +161,7 @@ export class ProductService {
             createdAt: product.createdAt,
             storeId: product.storeId,
             isArchived: product.isArchived,
+            tags: product.tags.map(t => t.value),
             priceRange: {
               min: minPrice,
               max: maxPrice,
@@ -181,6 +191,15 @@ export class ProductService {
           attributes: {
             include: {
               attribute: true
+            }
+          },
+          tags: {
+            include: {
+              value: {
+                include: {
+                  tag: true
+                }
+              }
             }
           },
           variants: {
@@ -223,6 +242,7 @@ export class ProductService {
         isArchived: product.isArchived,
         createdAt: product.createdAt,
         storeId: product.storeId,
+        tags: product.tags.map(t => t.value),
         variants,
       };
     } catch (error: any) {

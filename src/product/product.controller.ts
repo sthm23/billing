@@ -16,8 +16,7 @@ import { RolesGuard } from '@shared/guards/role.guard';
 import { CurrentUser } from '@shared/decorators/user.decorator';
 import { PaginationParams } from '@shared/dto/pagination-params.dto';
 import { StaffRole, UserRole } from '@generated/enums';
-import type { UserAuth } from '@auth/models/auth.model';
-import { Staff } from '@generated/client';
+import { type CurrentUser as CurrentUserType } from '@auth/models/auth.model';
 @UseGuards(AuthJWTGuard)
 @Controller('product')
 export class ProductController {
@@ -37,7 +36,7 @@ export class ProductController {
   @Post('variants')
   createVariant(
     @Body() dto: CreateProductVariantDto,
-    @CurrentUser() user: UserAuth & { staff: Staff }
+    @CurrentUser() user: CurrentUserType
 
   ) {
     return this.productService.createProductVariant(dto, user);
@@ -46,7 +45,7 @@ export class ProductController {
   @Get()
   findAll(
     @Query() { pageSize, currentPage }: PaginationParams,
-    @CurrentUser() user: UserAuth & { staff: Staff }
+    @CurrentUser() user: CurrentUserType
   ) {
     return this.productService.findAll(pageSize, currentPage, user);
   }

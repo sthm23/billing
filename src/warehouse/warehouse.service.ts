@@ -5,7 +5,7 @@ import { StaffRole, StockMovementReason, StockMovementType, UserType } from '@ge
 import { HashingHelper } from '@shared/helper/hash.helper';
 import { Prisma, Staff, User } from '@generated/client';
 import { StockInDto } from './dto/stock-in.dto';
-import { UserAuth } from '@auth/models/auth.model';
+import { CurrentUser } from '@auth/models/auth.model';
 
 @Injectable()
 export class WarehouseService {
@@ -72,7 +72,7 @@ export class WarehouseService {
   /**
   * Приход новой партии: НЕ создаём варианты заново, а увеличиваем остаток + пишем IN движение.
   */
-  async stockIn(warehouseId: string, dto: StockInDto, user: UserAuth & { staff: Staff }) {
+  async stockIn(warehouseId: string, dto: StockInDto, user: CurrentUser) {
     if (!user?.staff?.id) throw new ForbiddenException('Only staff can receive stock');
 
     try {

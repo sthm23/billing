@@ -1,5 +1,4 @@
-import { UserAuth } from '@auth/models/auth.model';
-import { Staff } from '@generated/client';
+import { CurrentUser } from '@auth/models/auth.model';
 import { StaffRole, UserRole, UserType } from '@generated/enums';
 import { Injectable, CanActivate, ExecutionContext, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
@@ -21,7 +20,7 @@ export class RolesGuard implements CanActivate {
         if (!requiredRoles) {
             return true;
         }
-        const user = context.switchToHttp().getRequest().user as UserAuth & { staff: Staff };
+        const user = context.switchToHttp().getRequest().user as CurrentUser;
         if (!user) {
             throw new NotFoundException('User not found');
         }

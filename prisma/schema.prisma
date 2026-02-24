@@ -237,24 +237,35 @@ model ProductImage {
 }
 
 model Tag {
-  id     String   @id @default(uuid())
+  id     String     @id @default(uuid())
   name   String
-  values String[] // например "latex", "cotton" для тега "material"
-
-  products ProductOnTag[]
+  values TagValue[] // например "latex", "cotton" для тега "material"
 
   @@unique([name])
   @@map("tags")
 }
 
-model ProductOnTag {
-  product   Product @relation(fields: [productId], references: [id])
-  productId String
-  tag       Tag     @relation(fields: [tagId], references: [id])
-  tagId     String
+model TagValue {
+  id    String @id @default(uuid())
+  tagId String
+  value String
 
-  @@id([productId, tagId])
-  @@map("products_on_tags")
+  tag     Tag               @relation(fields: [tagId], references: [id])
+  product ProductTagValue[]
+
+  @@unique([tagId, value])
+  @@map("tag_values")
+}
+
+model ProductTagValue {
+  productId  String
+  tagValueId String
+
+  product Product  @relation(fields: [productId], references: [id])
+  value   TagValue @relation(fields: [tagValueId], references: [id])
+
+  @@id([productId, tagValueId])
+  @@map("product_tag_values")
 }
 
 model Product {
@@ -273,7 +284,7 @@ model Product {
   images     ProductImage[]
   variants   ProductVariant[]
   attributes ProductAttribute[]
-  tags       ProductOnTag[]
+  tags       ProductTagValue[]
 
   @@index([storeId])
   @@index([categoryId])

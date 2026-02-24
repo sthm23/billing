@@ -8,9 +8,7 @@ import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { UserRole } from '@generated/enums';
 import { PaginationParams } from '@shared/dto/pagination-params.dto';
 import { CurrentUser } from '@shared/decorators/user.decorator';
-import { UserAuth } from '@auth/models/auth.model';
-import { Staff } from '@generated/client';
-
+import { type CurrentUser as CurrentUserType } from '@auth/models/auth.model';
 
 @Controller('users')
 export class UserController {
@@ -26,7 +24,7 @@ export class UserController {
   @Get('owners')
   findOwners(
     @Query() { pageSize, currentPage }: PaginationParams,
-    @CurrentUser() user: UserAuth & { staff: Staff }
+    @CurrentUser() user: CurrentUserType
   ) {
     return this.userService.findAllOwners(pageSize, currentPage, user);
   }
@@ -45,7 +43,7 @@ export class UserController {
   @Get()
   findAll(
     @Query() { pageSize, currentPage }: PaginationParams,
-    @CurrentUser() user: UserAuth & { staff: Staff }
+    @CurrentUser() user: CurrentUserType
   ) {
     return this.userService.findAll(pageSize, currentPage, user);
   }

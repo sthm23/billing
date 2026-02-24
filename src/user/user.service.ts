@@ -5,7 +5,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma, Staff, StaffRole, User, UserRole, UserType } from '@generated/client';
 import { CreateUserDto } from './dto/create-user.dto';
 import { HashingHelper } from '@shared/helper/hash.helper';
-import { UserAuth } from '@auth/models/auth.model';
+import { CurrentUser } from '@auth/models/auth.model';
 
 @Injectable()
 export class UserService {
@@ -33,7 +33,7 @@ export class UserService {
     }
   }
 
-  async findAllOwners(pageSize = 10, currentPage = 1, user: UserAuth & { staff: Staff }) {
+  async findAllOwners(pageSize = 10, currentPage = 1, user: CurrentUser) {
     const skip = (currentPage - 1) * pageSize;
     const param = {
       role: UserRole.OWNER,
@@ -62,7 +62,7 @@ export class UserService {
     }
   }
 
-  async findAll(pageSize = 10, currentPage = 1, user: UserAuth & { staff: Staff }) {
+  async findAll(pageSize = 10, currentPage = 1, user: CurrentUser) {
     const skip = (currentPage - 1) * pageSize;
     const param = {
       staff: user.role === UserRole.ADMIN ? undefined : { storeId: user.staff!.storeId }

@@ -61,7 +61,7 @@ export class FileController {
   // removePhoto(
   //   @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
   //   @Body() body: any,
-  //   @CurrentUser() user: UserAuth & { staff: Staff }
+  //   @CurrentUser() user: CurrentUser
   // ) {
   //   return this.fileService.remove(id, body, user.staff.storeId)
   // }
