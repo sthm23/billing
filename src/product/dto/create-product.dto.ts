@@ -78,6 +78,10 @@ export class CreateProductDto {
     name!: string;
 
     @IsOptional()
+    @IsString()
+    description?: string;
+
+    @IsOptional()
     @IsArray()
     images!: string[];
 
@@ -86,4 +90,9 @@ export class CreateProductDto {
     @IsArray()
     @IsUUID('4', { each: true })
     attributeIds: string[] = [];
+
+    @IsNotEmpty()
+    @IsArray()
+    @IsUUID('4', { each: true })
+    tagIds: string[] = [];
 }

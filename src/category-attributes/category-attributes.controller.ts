@@ -26,6 +26,11 @@ export class CategoryAttributesController {
     return this.categoryAttributesService.findStoreBrands(storeId);
   }
 
+  @Get('tag')
+  findTags() {
+    return this.categoryAttributesService.findTags();
+  }
+
 
   @Get('attributes')
   getAttributes() {

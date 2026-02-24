@@ -1,7 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateProductDto, CreateProductVariantDto } from './dto/create-product.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { Prisma, Product, ProductVariant, Staff, StockMovementReason, StockMovementType, User, UserRole } from '@generated/client';
+import { Prisma, Product, Staff, StockMovementReason, StockMovementType, User, UserRole } from '@generated/client';
 import { buildSku } from '@shared/helper/sku-generator.helper';
 import { generateEan13 } from '@shared/helper/bar-code-generator.helper';
 import { UserAuth } from '@auth/models/auth.model';
@@ -21,6 +21,7 @@ export class ProductService {
           storeId: dto.storeId,
           brandId: dto.brandId ?? null,
           categoryId: dto.categoryId ?? null,
+          description: dto.description ?? null,
           images: {
             createMany: {
               data: dto.images.map((url, index) => ({
@@ -32,6 +33,11 @@ export class ProductService {
           attributes: {
             createMany: {
               data: dto.attributeIds.map(id => ({ attributeId: id }))
+            }
+          },
+          tags: {
+            createMany: {
+              data: dto.tagIds.map(id => ({ tagId: id }))
             }
           }
         }

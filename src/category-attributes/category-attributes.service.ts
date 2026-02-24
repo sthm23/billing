@@ -43,6 +43,14 @@ export class CategoryAttributesService {
     }
   }
 
+  async findTags() {
+    try {
+      return this.prisma.tag.findMany();
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
+
   findCategories() {
     return this.prisma.category.findMany({
       where: {
