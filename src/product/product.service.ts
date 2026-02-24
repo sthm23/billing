@@ -93,11 +93,14 @@ export class ProductService {
   async findAll(pageSize = 10, currentPage = 1, user: UserAuth & { staff: Staff }) {
     const skip = (currentPage - 1) * pageSize;
     try {
-      const count = await this.prisma.product.count();
+      const count = await this.prisma.product.count({
+        where: { isArchived: false }
+      });
+      const where = user.role === UserRole.ADMIN ? { isArchived: false } : { storeId: user.staff.storeId, isArchived: false }
       const result = await this.prisma.product.findMany({
         skip: skip,
         take: +pageSize,
-        where: user.role === UserRole.ADMIN ? {} : { storeId: user.staff.storeId },
+        where,
         include: {
           images: {
             select: {
@@ -121,21 +124,34 @@ export class ProductService {
         currentPage,
         pageSize,
         total: count,
-        data: result.map(product => ({
-          brand: product.brand?.name,
-          category: product.category?.name,
-          variants: product.variants.map(v => ({
-            id: v.id,
-            price: v.price,
-            quantity: v.inventory.reduce((acc, curr) => acc + curr.quantity, 0) || 0,
-          })),
-          name: product.name,
-          id: product.id,
-          images: product.images,
-          createdAt: product.createdAt,
-          storeId: product.storeId,
-          isArchived: product.isArchived,
-        }))
+        data: result.map(product => {
+          let minPrice: Prisma.Decimal | null = null;
+          let maxPrice: Prisma.Decimal | null = null;
+          for (const v of product.variants) {
+            const p = v.price;
+            if (!minPrice || p.lt(minPrice)) minPrice = p;
+            if (!maxPrice || p.gt(maxPrice)) maxPrice = p;
+          }
+          return {
+            brand: product.brand?.name,
+            category: product.category?.name,
+            variants: product.variants.map(v => ({
+              id: v.id,
+              price: v.price,
+              quantity: v.inventory.reduce((acc, curr) => acc + curr.quantity, 0) || 0,
+            })),
+            name: product.name,
+            id: product.id,
+            images: product.images,
+            createdAt: product.createdAt,
+            storeId: product.storeId,
+            isArchived: product.isArchived,
+            priceRange: {
+              min: minPrice,
+              max: maxPrice,
+            }
+          }
+        })
       };
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)

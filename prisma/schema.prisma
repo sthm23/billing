@@ -236,14 +236,36 @@ model ProductImage {
   @@map("product_images")
 }
 
+model Tag {
+  id     String   @id @default(uuid())
+  name   String
+  values String[] // например "latex", "cotton" для тега "material"
+
+  products ProductOnTag[]
+
+  @@unique([name])
+  @@map("tags")
+}
+
+model ProductOnTag {
+  product   Product @relation(fields: [productId], references: [id])
+  productId String
+  tag       Tag     @relation(fields: [tagId], references: [id])
+  tagId     String
+
+  @@id([productId, tagId])
+  @@map("products_on_tags")
+}
+
 model Product {
-  id         String   @id @default(uuid())
-  storeId    String
-  name       String
-  categoryId String?
-  brandId    String?
-  isArchived Boolean  @default(false)
-  createdAt  DateTime @default(now())
+  id          String   @id @default(uuid())
+  storeId     String
+  name        String
+  categoryId  String?
+  brandId     String?
+  description String?
+  isArchived  Boolean  @default(false)
+  createdAt   DateTime @default(now())
 
   store      Store              @relation(fields: [storeId], references: [id])
   category   Category?          @relation(fields: [categoryId], references: [id])
@@ -251,6 +273,7 @@ model Product {
   images     ProductImage[]
   variants   ProductVariant[]
   attributes ProductAttribute[]
+  tags       ProductOnTag[]
 
   @@index([storeId])
   @@index([categoryId])

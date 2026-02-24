@@ -22,7 +22,8 @@ export async function seedBrands(prisma: PrismaClient) {
         'Reebok',
         'Under Armour',
         'New Balance',
-        'Asics'
+        'Asics',
+        'Other'
     ]
 
     await prisma.brand.createMany({
