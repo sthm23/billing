@@ -34,6 +34,11 @@ export class WarehouseController {
     return this.warehouseService.findAll(pageSize, currentPage);
   }
 
+  @Get('/inventory/:id')
+  findStockMovement(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
+    return this.warehouseService.findStockMovement(id);
+  }
+
   @Get(':id')
   findOne(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
     return this.warehouseService.findOne(id);

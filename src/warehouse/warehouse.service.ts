@@ -53,14 +53,27 @@ export class WarehouseService {
       return this.prisma.warehouse.findUnique({
         where: { id },
         include: {
-          _count: {
-            select: {
-              inventory: true,
-              orders: true,
-              staffs: true,
-              stockMovements: true
+          inventory: {
+            include: {
+              variant: {
+                include: {
+                  product: true,
+
+                }
+              }
             }
-          }
+          },
+          stockMovements: true,
+          staffs: true,
+          orders: true
+          // _count: {
+          //   select: {
+          //     inventory: true,
+          //     orders: true,
+          //     staffs: true,
+          //     stockMovements: true
+          //   }
+          // }
 
         }
       })
@@ -112,6 +125,19 @@ export class WarehouseService {
       });
 
       return { ok: true };
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message);
+    }
+  }
+
+  async findStockMovement(productId: string) {
+    try {
+      const movements = await this.prisma.stockMovement.findMany({
+        where: { variant: { productId } },
+        include: {
+
+        }
+      })
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message);
     }

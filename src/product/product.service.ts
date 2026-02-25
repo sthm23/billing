@@ -161,7 +161,13 @@ export class ProductService {
             createdAt: product.createdAt,
             storeId: product.storeId,
             isArchived: product.isArchived,
-            tags: product.tags.map(t => t.value),
+            description: product.description,
+            tags: product.tags.map(t => ({
+              id: t.value.id,
+              value: t.value.value,
+              tagId: t.value.tag.id,
+              tagName: t.value.tag.name,
+            })),
             priceRange: {
               min: minPrice,
               max: maxPrice,
@@ -210,6 +216,15 @@ export class ProductService {
                 }
               },
               inventory: true,
+              stockMovements: {
+                include: {
+                  createdBy: {
+                    include: {
+                      user: true
+                    },
+                  }
+                },
+              }
             }
           },
         }
@@ -230,6 +245,20 @@ export class ProductService {
             attributeId: a.value.attributeId,
           })),
           quantity: variant.inventory.reduce((acc, curr) => acc + curr.quantity, 0) || 0,
+          stockMovements: variant.stockMovements.map(movement => ({
+            id: movement.id,
+            type: movement.type,
+            reason: movement.reason,
+            warehouseId: movement.warehouseId,
+            quantity: movement.quantity,
+            unitCost: movement.unitCost,
+            createdAt: movement.createdAt,
+            createdBy: movement.createdBy ? {
+              role: movement.createdBy.role,
+              isActive: movement.createdBy.isActive,
+              user: movement.createdBy.user ? movement.createdBy.user : null,
+            } : null,
+          }))
         }
       })
       return {
@@ -237,16 +266,42 @@ export class ProductService {
         name: product.name,
         brand: product.brand?.name,
         category: product.category?.name,
+        description: product.description,
         images: product.images,
         attributes: product.attributes.map(a => ({ ...a.attribute })),
         isArchived: product.isArchived,
         createdAt: product.createdAt,
         storeId: product.storeId,
-        tags: product.tags.map(t => t.value),
+        tags: product.tags.map(t => ({
+          id: t.value.id,
+          value: t.value.value,
+          tagId: t.value.tag.id,
+          tagName: t.value.tag.name,
+        })),
         variants,
       };
     } catch (error: any) {
       throw new ForbiddenException('Product not found: ' + error?.message);
+    }
+  }
+
+  async findProductVariants(productId: string) {
+    try {
+      const product = await this.prisma.product.findUnique({
+        where: { id: productId },
+        include: {
+          variants: true,
+        }
+      })
+      if (!product) throw new NotFoundException('Product not found');
+      return {
+        ...product,
+        variants: product.variants.map(v => ({
+
+        }))
+      };
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
     }
   }
 
