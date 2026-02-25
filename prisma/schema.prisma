@@ -105,6 +105,8 @@ model User {
   orders          Order[]          @relation("CustomerOrders")
   refreshSessions RefreshSession[]
   stores          Store[] //created stores by this auth account
+  staffOrders     Order[]          @relation("StaffOrders")
+  payments        Payment[]        @relation("StaffOrders")
 
   @@map("users")
 }
@@ -176,9 +178,9 @@ model Staff {
   user  User  @relation(fields: [userId], references: [id])
   store Store @relation(fields: [storeId], references: [id])
 
-  warehouse   Warehouse?      @relation(fields: [warehouseId], references: [id])
-  stockMoves  StockMovement[]
-  orders      Order[]
+  warehouse  Warehouse?      @relation(fields: [warehouseId], references: [id])
+  stockMoves StockMovement[]
+
   warehouseId String?
 
   @@index([storeId])
@@ -473,16 +475,17 @@ model Order {
   id          String       @id @default(uuid())
   storeId     String
   warehouseId String
-  cashierId   String?
+  cashierId   String
   customerId  String?
   channel     OrderChannel
   status      OrderStatus
   totalAmount Decimal
+  paidAmount  Decimal      @default(0)
   createdAt   DateTime     @default(now())
 
   store     Store     @relation(fields: [storeId], references: [id])
   warehouse Warehouse @relation(fields: [warehouseId], references: [id])
-  cashier   Staff?    @relation(fields: [cashierId], references: [id])
+  cashier   User      @relation("StaffOrders", fields: [cashierId], references: [id])
   customer  User?     @relation("CustomerOrders", fields: [customerId], references: [id])
 
   items    OrderItem[]
@@ -517,13 +520,16 @@ model OrderItem {
  */
 
 model Payment {
-  id      String      @id @default(uuid())
-  orderId String
-  type    PaymentType
-  amount  Decimal
-  paidAt  DateTime?
+  id        String      @id @default(uuid())
+  orderId   String
+  type      PaymentType
+  amount    Decimal
+  paidAt    DateTime?
+  createdAt DateTime    @default(now())
+  createdBy String
 
-  order Order @relation(fields: [orderId], references: [id])
+  cashier User  @relation("StaffOrders", fields: [createdBy], references: [id])
+  order   Order @relation(fields: [orderId], references: [id])
 
   @@index([orderId])
   @@map("payments")

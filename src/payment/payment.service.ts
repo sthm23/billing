@@ -2,14 +2,42 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
 import { PrismaService } from '@prisma/prisma.service';
+import { CurrentUser } from '@auth/models/auth.model';
 
 @Injectable()
 export class PaymentService {
   constructor(
     private readonly prisma: PrismaService,
   ) { }
-  create(createPaymentDto: CreatePaymentDto) {
-    return 'This action adds a new payment';
+  async create(dto: CreatePaymentDto, user: CurrentUser) {
+    try {
+      const order = await this.prisma.order.findUnique({
+        where: { id: dto.orderId },
+        include: { payments: true }
+      });
+      if (!order) {
+        throw new BadRequestException('Order not found');
+      }
+      if (order.status !== 'CREATED') {
+        throw new BadRequestException('Cannot add payment to an order that is not in CREATED status');
+      }
+      const totalPaid = order.payments.reduce((sum, payment) => (sum + +payment.amount), 0);
+      if (totalPaid + dto.amount > +order.totalAmount) {
+        throw new BadRequestException('Payment amount exceeds order total');
+      }
+      const payment = await this.prisma.payment.create({
+        data: {
+          orderId: dto.orderId,
+          type: dto.type,
+          amount: dto.amount,
+          paidAt: dto?.paidAt ?? null,
+          createdBy: user.id
+        },
+      });
+      return payment;
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
   }
 
   async findAll(pageSize = 10, currentPage = 1) {
