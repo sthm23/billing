@@ -57,12 +57,42 @@ export class ProductService {
 
       await this.prisma.$transaction(async (tx) => {
         for (const variant of dto.variants) {
+
+          const existingVariant = await tx.productVariant.findFirst({
+            where: {
+              productId: dto.productId,
+              attributes: {
+                some: {
+                  attributeValueId: { in: variant.attributes.map(a => a.attributeValueId) }
+                }
+              }
+            },
+            include: {
+              attributes: true,
+            }
+          });
+          if (existingVariant) {
+            this.prisma.productVariant.update({
+              where: { id: existingVariant.id },
+              data: {
+                price: new Prisma.Decimal(variant.retailPrice),
+                inventory: {
+                  updateMany: {
+                    where: { variantId: existingVariant.id },
+                    data: { quantity: { increment: variant.quantity } }
+                  }
+                }
+              }
+            })
+            continue; // пропускаем создание этого варианта и переходим к следующему
+          }
+          const barCode = await this.generateBarCode(tx, dto.productId, variant.barCode);
           await tx.productVariant.create({
             data: {
               productId: product.id,
               storeId: product.storeId, // важно: берем из product, не из dto
               sku: buildSku(product.name, dto.category, variant.attributes.map(a => a.value)),
-              barCode: variant.barCode?.trim() ? variant.barCode.trim() : generateEan13(),
+              barCode,
               price: new Prisma.Decimal(variant.retailPrice),
               attributes: {
                 createMany: {
@@ -88,12 +118,29 @@ export class ProductService {
 
             }
           })
+
         }
       })
+
       return Promise.resolve(product);
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }
+  }
+
+  private async generateBarCode(tx: any, productId: string, barCode?: string): Promise<string> {
+    const newBarcode = barCode?.trim() ? barCode.trim() : generateEan13();
+    const existingBarCode = await tx.productVariant.findFirst({
+      where: {
+        productId: productId,
+        barCode: newBarcode,
+      }
+    });
+    if (existingBarCode) {
+      // рекурсивно генерируем новый штрихкод, пока не найдем уникальный
+      return this.generateBarCode(tx, productId);
+    }
+    return Promise.resolve(newBarcode);
   }
 
   async findAll(pageSize = 10, currentPage = 1, user: CurrentUser) {
@@ -299,6 +346,46 @@ export class ProductService {
         variants: product.variants.map(v => ({
 
         }))
+      };
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
+
+  async findAllVariants(pageSize = 10, currentPage = 1, user: CurrentUser) {
+    try {
+      const skip = (currentPage - 1) * pageSize;
+      const where = user.role === UserRole.ADMIN ? {} : { storeId: user.staff.storeId }
+      const count = await this.prisma.productVariant.count({ where });
+      const variants = await this.prisma.productVariant.findMany({
+        where,
+        skip,
+        take: pageSize,
+        include: {
+          inventory: true,
+          stockMovements: true
+        }
+      });
+      return {
+        count,
+        currentPage,
+        pageSize,
+        data: variants.map(v => ({
+          id: v.id,
+          barCode: v.barCode,
+          price: v.price,
+          sku: v.sku,
+          stockMovements: v.stockMovements.map(movement => ({
+            id: movement.id,
+            type: movement.type,
+            reason: movement.reason,
+            warehouseId: movement.warehouseId,
+            quantity: movement.quantity,
+            unitCost: movement.unitCost,
+            createdAt: movement.createdAt,
+          })),
+          quantity: v.inventory.reduce((acc, curr) => acc + curr.quantity, 0) || 0,
+        })),
       };
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)

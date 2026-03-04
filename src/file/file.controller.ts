@@ -18,6 +18,13 @@ export class FileController {
     return this.fileService.createProductImage(body);
   }
 
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OWNER, StaffRole.MANAGER)
+  @Post('upload-existing')
+  requestUpload2(@Body() body: CreateProductImageResponseDto) {
+    return this.fileService.uploadExistingFile(body);
+  }
+
   // @UseGuards(RolesGuard)
   // @Roles(UserRole.OWNER, StaffRole.MANAGER)
   // @Post('img/upload')

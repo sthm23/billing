@@ -8,7 +8,7 @@ import { CurrentUser } from '@shared/decorators/user.decorator';
 import { type CurrentUser as CurrentUserType } from '@auth/models/auth.model';
 
 @UseGuards(AuthJWTGuard)
-@Controller('order')
+@Controller('orders')
 export class OrderController {
   constructor(private readonly orderService: OrderService) { }
 
@@ -37,13 +37,19 @@ export class OrderController {
   }
 
   @Get()
-  findAll(@Query() { pageSize, currentPage }: PaginationParams) {
-    return this.orderService.findAll(pageSize, currentPage);
+  findAll(
+    @Query() { pageSize, currentPage }: PaginationParams,
+    @CurrentUser() user: CurrentUserType
+  ) {
+    return this.orderService.findAll(pageSize, currentPage, user);
   }
 
   @Get(':id')
-  findOne(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
-    return this.orderService.findOne(id);
+  findOne(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: CurrentUserType
+  ) {
+    return this.orderService.findOne(id, user);
   }
 
   @Patch(':id')
@@ -52,7 +58,10 @@ export class OrderController {
   }
 
   @Delete(':id')
-  remove(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
-    return this.orderService.remove(id);
+  remove(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: CurrentUserType
+  ) {
+    return this.orderService.remove(id, user);
   }
 }

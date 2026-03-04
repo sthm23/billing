@@ -51,6 +51,23 @@ export class FileService {
   //   }
   // }
 
+  uploadExistingFile(dto: CreateProductImageResponseDto) {
+    const arr: Promise<PresignedUrlResult>[] = []
+    for (let i = 0; i < dto.files.length; i++) {
+      const file = dto.files[i];
+      const param = {
+        imgName: file.fileName,
+        mimetype: file.mimeType,
+        pathName: 'product',
+        storeId: file.storeId
+      } as UploadFileParam;
+
+      const url = this.s3Service.uploadFile(param);
+      arr.push(url);
+    }
+    return Promise.all(arr);
+  }
+
   findAll() {
     return `This action returns all file`;
   }

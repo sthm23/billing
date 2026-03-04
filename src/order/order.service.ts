@@ -3,8 +3,8 @@ import { CreateOrderDto, CreateOrderItemDto, CreateOrderPaymentDto } from './dto
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { CurrentUser } from '@auth/models/auth.model';
-import { OrderStatus, StockMovementReason, StockMovementType } from '@generated/enums';
-import { stat } from 'fs';
+import { OrderStatus, StockMovementReason, StockMovementType, UserRole } from '@generated/enums';
+
 
 @Injectable()
 export class OrderService {
@@ -12,17 +12,14 @@ export class OrderService {
     private readonly prisma: PrismaService,
   ) { }
   async create(createOrderDto: CreateOrderDto, user: CurrentUser) {
-    const userRecord = await this.prisma.user.findUnique({
-      where: { id: user.id },
-      include: { staff: true, auth: true }
-    });
-    if (!userRecord || !userRecord.staff) {
+
+    if (!user || !user.staff) {
       throw new BadRequestException('Staff not found');
     }
-    if (userRecord.staff.storeId !== createOrderDto.storeId || userRecord.staff.warehouseId !== createOrderDto.warehouseId) {
+    if (user.staff.storeId !== createOrderDto.storeId || user.staff.warehouseId !== createOrderDto.warehouseId) {
       throw new BadRequestException('Staff does not belong to the store or warehouse');
     }
-    if (userRecord.auth && !userRecord.auth.isActive) {
+    if (user.auth && !user.auth.isActive) {
       throw new BadRequestException('User is not active');
     }
     try {
@@ -30,7 +27,7 @@ export class OrderService {
         data: {
           storeId: createOrderDto.storeId,
           warehouseId: createOrderDto.warehouseId,
-          cashierId: userRecord.id,
+          cashierId: user.id,
           customerId: createOrderDto?.customerId ?? null,
           channel: createOrderDto.channel,
           status: OrderStatus.CREATED,
@@ -64,25 +61,26 @@ export class OrderService {
           if (!variant) {
             throw new BadRequestException(`Product variant not found: ${item.variantId}`);
           }
-          const quantityInventory = variant.inventory.reduce((sum, inv) => sum + inv.quantity, 0);;
+          const quantityInventory = variant.inventory.reduce((sum, inv) => sum + inv.quantity, 0);
           if (quantityInventory < item.quantity) {
             throw new BadRequestException(`Insufficient stock for variant: ${item.variantId}`);
           }
-
-          totalAmount += item.priceAtSale * item.quantity;
+          const priceAtSale = item.sale > 0 ? item.retailPrice - item.sale : item.retailPrice;
+          totalAmount += priceAtSale * item.quantity;
           await prisma.orderItem.create({
             data: {
               orderId: dto.orderId,
               variantId: item.variantId,
               quantity: item.quantity,
-              priceAtSale: item.priceAtSale,
+              retailPrice: item.retailPrice,
+              sale: item.sale,
               costAtSale: item.costAtSale
             }
           });
         }
         await prisma.order.update({
           where: { id: dto.orderId },
-          data: { totalAmount: { increment: totalAmount }, customerId: dto.customerId ?? null }
+          data: { totalAmount: { increment: totalAmount }, customerId: dto.customerId ?? null, status: OrderStatus.HOLD }
         });
       });
       return Promise.resolve({ message: 'Order items created successfully' });
@@ -168,34 +166,117 @@ export class OrderService {
     }
   }
 
-  async findAll(pageSize = 10, currentPage = 1) {
+  async findAll(pageSize = 10, currentPage = 1, user: CurrentUser) {
     const skip = (currentPage - 1) * pageSize;
     try {
-      const result = await this.prisma.order.findMany({
+      const orders = await this.prisma.order.findMany({
+        where: {
+          storeId: user.role !== UserRole.ADMIN ? user.staff.storeId : undefined,
+          cashierId: user.role === UserRole.USER ? user.id : undefined
+        },
+        include: {
+          _count: {
+            select: { items: true, payments: true }
+          },
+          cashier: true,
+          customer: true,
+          store: true,
+          warehouse: true
+        },
         skip: skip,
         take: +pageSize,
-      });
-      const count = await this.prisma.order.count();
+      })
+      const totalOrders = await this.prisma.order.count({
+        where: {
+          storeId: user.role !== UserRole.ADMIN ? user.staff.storeId : undefined,
+          cashierId: user.role === UserRole.USER ? user.id : undefined
+        }
+      })
       return {
         currentPage,
         pageSize,
-        total: count,
-        data: result
+        total: totalOrders,
+        data: orders.map(order => ({
+          id: order.id,
+          store: order.store,
+          warehouse: order.warehouse,
+          cashier: order.cashier,
+          customer: order.customer,
+          channel: order.channel,
+          status: order.status,
+          totalAmount: order.totalAmount,
+          paidAmount: order.paidAmount,
+          createdAt: order.createdAt,
+          itemsCount: order._count.items,
+          paymentsCount: order._count.payments,
+        }))
       };
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }
   }
 
-  findOne(id: string) {
-    return `This action returns a #${id} order`;
+  async findOne(id: string, user: CurrentUser) {
+    try {
+      const order = await this.prisma.order.findUnique({
+        where: {
+          id,
+          storeId: user.role !== UserRole.ADMIN ? user.staff.storeId : undefined,
+          cashierId: user.role === UserRole.USER ? user.id : undefined
+        },
+        include: {
+          items: {
+            include: {
+              variant: true,
+            }
+          },
+          payments: true,
+        }
+      });
+      if (!order) {
+        throw new BadRequestException('Order not found');
+      }
+      return order;
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
   }
 
   update(id: string, updateOrderDto: UpdateOrderDto) {
     return `This action updates a #${id} order`;
   }
 
-  remove(id: string) {
-    return `This action removes a #${id} order`;
+  async remove(id: string, user: CurrentUser) {
+    try {
+      const order = await this.prisma.order.findUnique({
+        where: {
+          id,
+          storeId: user.role !== UserRole.ADMIN ? user.staff.storeId : undefined,
+          cashierId: user.role === UserRole.USER ? user.id : undefined
+        },
+        include: { items: true, payments: true }
+      });
+      if (!order) {
+        throw new BadRequestException('Order not found');
+      }
+      if (order.status === OrderStatus.COMPLETED || order.status === OrderStatus.DEBT) {
+        throw new BadRequestException('Cannot cancel a completed or debt order');
+      }
+      if (order.payments.length > 0) {
+        throw new BadRequestException('Cannot cancel an order with payments');
+      }
+      if (order.status === OrderStatus.CANCELLED) {
+        throw new BadRequestException('Order is already cancelled');
+      }
+      if (order.items.length > 0) {
+        throw new BadRequestException('Cannot cancel an order with items');
+      }
+      return this.prisma.order.update({
+        where: { id },
+        data: { status: OrderStatus.CANCELLED }
+      });
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
   }
 }

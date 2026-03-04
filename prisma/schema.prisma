@@ -54,6 +54,7 @@ enum OrderStatus {
   COMPLETED
   DEBT
   CANCELLED
+  HOLD
 }
 
 enum PaymentType {
@@ -502,7 +503,8 @@ model OrderItem {
   orderId     String
   variantId   String
   quantity    Int
-  priceAtSale Decimal // За сколько продали
+  retailPrice Decimal // Розничная цена на момент продажи, может отличаться от текущей цены в каталоге
+  sale        Decimal @default(0) // Скидка на момент продажи
   costAtSale  Decimal // За сколько закупили
 
   order   Order          @relation(fields: [orderId], references: [id])

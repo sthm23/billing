@@ -7,14 +7,22 @@ class OrderItemDto {
     variantId!: string
 
     @IsNotEmpty()
+    @IsNumber()
     @Min(0)
     quantity: number = 0
 
     @IsNotEmpty()
+    @IsNumber()
     @Min(0)
-    priceAtSale: number = 0
+    retailPrice: number = 0
 
     @IsNotEmpty()
+    @IsNumber()
+    @Min(0)
+    sale: number = 0
+
+    @IsNotEmpty()
+    @IsNumber()
     @Min(0)
     costAtSale: number = 0
 }
