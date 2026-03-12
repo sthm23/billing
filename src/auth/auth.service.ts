@@ -160,6 +160,9 @@ export class AuthService {
   }
 
   async getMe(userId: string) {
+    if (!userId) {
+      throw new UnauthorizedException();
+    }
     try {
       return this.prisma.user.findUnique({
         where: { id: userId },

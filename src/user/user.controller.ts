@@ -29,6 +29,16 @@ export class UserController {
     return this.userService.findAllOwners(pageSize, currentPage, user);
   }
 
+  @Post('customers')
+  createCustomers(@Body(new ValidationPipe()) createUserDto: CreateUserDto) {
+    return this.userService.createCustomers(createUserDto);
+  }
+
+  @Get('customers')
+  getCustomers() {
+    return this.userService.getCustomers()
+  }
+
   @Get(':id')
   async findOne(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
     const user = await this.userService.findOneById(id);

@@ -12,17 +12,17 @@ export class OrderService {
     private readonly prisma: PrismaService,
   ) { }
   async create(createOrderDto: CreateOrderDto, user: CurrentUser) {
-
-    if (!user || !user.staff) {
-      throw new BadRequestException('Staff not found');
-    }
-    if (user.staff.storeId !== createOrderDto.storeId || user.staff.warehouseId !== createOrderDto.warehouseId) {
-      throw new BadRequestException('Staff does not belong to the store or warehouse');
-    }
-    if (user.auth && !user.auth.isActive) {
-      throw new BadRequestException('User is not active');
-    }
     try {
+      if (!user || !user.staff) {
+        throw new BadRequestException('Staff not found');
+      }
+      if (user.staff.storeId !== createOrderDto.storeId || user.staff.warehouseId !== createOrderDto.warehouseId) {
+        throw new BadRequestException('Staff does not belong to the store or warehouse');
+      }
+      if (user.auth && !user.auth.isActive) {
+        throw new BadRequestException('User is not active');
+      }
+
       return this.prisma.order.create({
         data: {
           storeId: createOrderDto.storeId,
@@ -39,53 +39,183 @@ export class OrderService {
     }
   }
 
+  // async createOrderItems(dto: CreateOrderItemDto) {
+  //   try {
+  //     const order = await this.prisma.order.findUnique({
+  //       where: { id: dto.orderId },
+  //       include: { items: true }
+  //     });
+  //     if (!order) {
+  //       throw new BadRequestException('Order not found');
+  //     }
+  //     if (order.status !== OrderStatus.CREATED) {
+  //       throw new BadRequestException('Cannot add items to an order that is not in CREATED status');
+  //     }
+  //     await this.prisma.$transaction(async (prisma) => {
+  //       let totalAmount = 0;
+  //       for (const item of dto.items) {
+  //         const variant = await prisma.productVariant.findUnique({
+  //           where: { id: item.variantId },
+  //           include: { inventory: true }
+  //         });
+  //         if (!variant) {
+  //           throw new BadRequestException(`Product variant not found: ${item.variantId}`);
+  //         }
+  //         const quantityInventory = variant.inventory.reduce((sum, inv) => sum + inv.quantity, 0);
+  //         if (quantityInventory < item.quantity) {
+  //           throw new BadRequestException(`Insufficient stock for variant: ${item.variantId}`);
+  //         }
+  //         const priceAtSale = item.sale > 0 ? item.retailPrice - item.sale : item.retailPrice;
+  //         totalAmount += priceAtSale * item.quantity;
+  //         await prisma.orderItem.create({
+  //           data: {
+  //             orderId: dto.orderId,
+  //             variantId: item.variantId,
+  //             quantity: item.quantity,
+  //             retailPrice: item.retailPrice,
+  //             sale: item.sale,
+  //             costAtSale: item.costAtSale
+  //           }
+  //         });
+  //       }
+  //       await prisma.order.update({
+  //         where: { id: dto.orderId },
+  //         data: { totalAmount: { increment: totalAmount }, customerId: dto.customerId ?? null, status: OrderStatus.HOLD }
+  //       });
+  //     });
+  //     return Promise.resolve({ message: 'Order items created successfully' });
+  //   } catch (error: any) {
+  //     throw new BadRequestException(error.response || error.message)
+  //   }
+  // }
+
   async createOrderItems(dto: CreateOrderItemDto) {
     try {
-      const order = await this.prisma.order.findUnique({
-        where: { id: dto.orderId },
-        include: { items: true }
-      });
-      if (!order) {
-        throw new BadRequestException('Order not found');
-      }
-      if (order.status !== OrderStatus.CREATED) {
-        throw new BadRequestException('Cannot add items to an order that is not in CREATED status');
-      }
       await this.prisma.$transaction(async (prisma) => {
-        let totalAmount = 0;
-        for (const item of dto.items) {
-          const variant = await prisma.productVariant.findUnique({
-            where: { id: item.variantId },
-            include: { inventory: true }
-          });
-          if (!variant) {
-            throw new BadRequestException(`Product variant not found: ${item.variantId}`);
-          }
-          const quantityInventory = variant.inventory.reduce((sum, inv) => sum + inv.quantity, 0);
-          if (quantityInventory < item.quantity) {
-            throw new BadRequestException(`Insufficient stock for variant: ${item.variantId}`);
-          }
-          const priceAtSale = item.sale > 0 ? item.retailPrice - item.sale : item.retailPrice;
-          totalAmount += priceAtSale * item.quantity;
-          await prisma.orderItem.create({
-            data: {
-              orderId: dto.orderId,
-              variantId: item.variantId,
-              quantity: item.quantity,
-              retailPrice: item.retailPrice,
-              sale: item.sale,
-              costAtSale: item.costAtSale
-            }
-          });
+        const order = await prisma.order.findUnique({
+          where: { id: dto.orderId },
+          include: { items: true },
+        });
+
+        if (!order) throw new BadRequestException('Order not found');
+        if (order.status !== OrderStatus.CREATED && order.status !== OrderStatus.HOLD) {
+          throw new BadRequestException('Cannot add items to an order that is not in CREATED or HOLD status');
         }
+
+        // 1) Суммируем входящие количества по variantId
+        const incomingQuantityByVariant = new Map<string, number>();
+        const variantIds: string[] = [];
+
+        for (const item of dto.items) {
+          if (item.quantity <= 0) throw new BadRequestException(`Invalid quantity for variant: ${item.variantId}`);
+          const stock = incomingQuantityByVariant.get(item.variantId) ?? 0;
+          incomingQuantityByVariant.set(item.variantId, stock + item.quantity);
+          variantIds.push(item.variantId);
+        }
+
+        // 2) Проверяем, что варианты существуют и принадлежат магазину заказа
+        const variants = await prisma.productVariant.findMany({
+          where: { id: { in: Array.from(new Set(variantIds)) } },
+          select: { id: true, storeId: true },
+        });
+
+        const variantById = new Map(variants.map(v => [v.id, v]));
+        for (const variantId of incomingQuantityByVariant.keys()) {
+          const variant = variantById.get(variantId);
+          if (!variant) throw new BadRequestException(`Product variant not found: ${variantId}`);
+          if (variant.storeId !== order.storeId) {
+            throw new BadRequestException(`Variant ${variantId} does not belong to this store`);
+          }
+        }
+
+        // 3) Берем остатки ТОЛЬКО по складу заказа
+        const inventories = await prisma.inventory.findMany({
+          where: {
+            warehouseId: order.warehouseId,
+            variantId: { in: Array.from(incomingQuantityByVariant.keys()) },
+          },
+          select: { variantId: true, quantity: true },
+        });
+
+        const invQtyByVariant = new Map(inventories.map(i => [i.variantId, i.quantity]));
+
+        // 4) Валидация: после добавления позиций в заказ, не превышаем остаток на складе
+        for (const [variantId, incomingQty] of incomingQuantityByVariant.entries()) {
+          const invQty = invQtyByVariant.get(variantId);
+          if (invQty === undefined) {
+            throw new BadRequestException(`Inventory row not found for variant: ${variantId}`);
+          }
+
+          if (invQty < incomingQty) {
+            throw new BadRequestException(
+              `Insufficient stock for variant: ${variantId} (available: ${invQty}, requested total in order: ${incomingQty})`,
+            );
+          }
+        }
+
+        // 5) Создаем позиции и пересчитываем сумму добавления
+        let totalAmountToAdd = 0;
+
+        for (const item of dto.items) {
+          const retailPrice = +item.retailPrice;
+          const sale = +item.sale;
+          const priceAtSale = sale > 0 ? retailPrice - sale : retailPrice;
+
+          totalAmountToAdd += priceAtSale * item.quantity;
+
+          if (item.itemId) {
+            const existingItem = await prisma.orderItem.findUnique({ where: { id: item.itemId } });
+
+            if (!existingItem) {
+              await prisma.orderItem.create({
+                data: {
+                  orderId: dto.orderId,
+                  variantId: item.variantId,
+                  quantity: item.quantity,
+                  retailPrice: item.retailPrice,
+                  sale: item.sale,
+                  costAtSale: item.costAtSale,
+                },
+              });
+            } else {
+              await prisma.orderItem.update({
+                where: { id: item.itemId },
+                data: {
+                  variantId: item.variantId,
+                  quantity: item.quantity,
+                  retailPrice: item.retailPrice,
+                  sale: item.sale,
+                  costAtSale: item.costAtSale
+                }
+              });
+            }
+          } else {
+            await prisma.orderItem.create({
+              data: {
+                orderId: dto.orderId,
+                variantId: item.variantId,
+                quantity: item.quantity,
+                retailPrice: item.retailPrice,
+                sale: item.sale,
+                costAtSale: item.costAtSale,
+              },
+            });
+          }
+        }
+
         await prisma.order.update({
           where: { id: dto.orderId },
-          data: { totalAmount: { increment: totalAmount }, customerId: dto.customerId ?? null, status: OrderStatus.HOLD }
+          data: {
+            totalAmount: totalAmountToAdd,
+            customerId: dto.customerId ?? null,
+            status: OrderStatus.HOLD,
+          },
         });
       });
+
       return Promise.resolve({ message: 'Order items created successfully' });
     } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
+      throw new BadRequestException(error.response || error.message);
     }
   }
 
@@ -98,8 +228,8 @@ export class OrderService {
       if (!order) {
         throw new BadRequestException('Order not found');
       }
-      if (order.status !== OrderStatus.CREATED) {
-        throw new BadRequestException('Cannot add payment to an order that is not in CREATED status');
+      if (order.status !== OrderStatus.HOLD && order.status !== OrderStatus.DEBT) {
+        throw new BadRequestException('Cannot add payment to an order that is not in HOLD or DEBT status');
       }
 
       const totalPaidBefore = order.payments.reduce((sum, payment) => (sum + +payment.amount), 0);
@@ -122,44 +252,58 @@ export class OrderService {
           });
         }
 
+        // Суммируем количество по variantId, чтобы списывать один раз на вариант
+        const qtyByVariantId = new Map<string, number>();
         for (const item of order.items) {
-          const variant = await prisma.productVariant.findUnique({
-            where: { id: item.variantId }
-          });
-          if (variant) {
-            await prisma.stockMovement.create({
-              data: {
-                variantId: item.variantId,
-                quantity: item.quantity,
-                reason: StockMovementReason.SALE,
-                type: StockMovementType.OUT,
-                createdById: user.staff.id,
-                warehouseId: order.warehouseId,
-                unitCost: item.costAtSale
-              }
-            });
+          qtyByVariantId.set(item.variantId, (qtyByVariantId.get(item.variantId) ?? 0) + item.quantity);
+        }
 
-            await prisma.inventory.updateMany({
-              where: {
-                warehouseId: order.warehouseId,
-                variantId: item.variantId
-              },
-              data: {
-                quantity: { decrement: item.quantity }
-              }
-            });
+        for (const item of order.items) {
+          // stock movement пишем по каждой позиции как у вас было
+          await prisma.stockMovement.create({
+            data: {
+              variantId: item.variantId,
+              quantity: item.quantity,
+              reason: StockMovementReason.SALE,
+              type: StockMovementType.OUT,
+              createdById: user.staff.id,
+              warehouseId: order.warehouseId,
+              unitCost: item.costAtSale
+            }
+          });
+        }
+
+        // А списание делаем атомарно и с валидацией "не уйти в минус"
+        for (const [variantId, needQty] of qtyByVariantId.entries()) {
+          const updated = await prisma.inventory.updateMany({
+            where: {
+              warehouseId: order.warehouseId,
+              variantId,
+              quantity: { gte: needQty },
+            },
+            data: {
+              quantity: { decrement: needQty },
+            }
+          });
+
+          // если 0 — значит либо нет строки инвентаря, либо остатка не хватает
+          if (updated.count !== 1) {
+            throw new BadRequestException(`Insufficient stock for variant: ${variantId}`);
           }
         }
+
         const status = totalPaid >= +order.totalAmount ? OrderStatus.COMPLETED : OrderStatus.DEBT;
+        const customer = dto.customerId ? await prisma.customer.findUnique({ where: { id: dto.customerId } }) : null;
         await prisma.order.update({
           where: { id: orderId },
           data: {
             status,
-            customerId: order.customerId ?? null,
+            customerId: customer?.id ?? null,
             paidAmount: status === OrderStatus.COMPLETED ? +order.totalAmount : totalPaid
           }
         });
       });
+
       return Promise.resolve({ message: 'Payment created successfully' });
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
@@ -227,7 +371,16 @@ export class OrderService {
         include: {
           items: {
             include: {
-              variant: true,
+              variant: {
+                include: {
+                  inventory: true,
+                }
+              },
+            }
+          },
+          customer: {
+            include: {
+              user: true,
             }
           },
           payments: true,
@@ -236,7 +389,13 @@ export class OrderService {
       if (!order) {
         throw new BadRequestException('Order not found');
       }
-      return order;
+      return Promise.resolve({
+        ...order,
+        items: order.items.map(item => ({
+          ...item,
+          variant: { ...item.variant, quantity: item.variant.inventory.reduce((sum, inv) => sum + inv.quantity, 0) }
+        }))
+      });
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }

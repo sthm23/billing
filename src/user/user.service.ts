@@ -33,6 +33,37 @@ export class UserService {
     }
   }
 
+  async createCustomers(createUserDto: CreateUserDto): Promise<User> {
+    try {
+      const user = await this.prismaService.user.findFirst({
+        where: {
+          phone: createUserDto.phone
+        },
+        include: {
+          customer: true
+        }
+      })
+      if (user) throw new ConflictException('Phone already existing');
+      const userEntity = new CreateUserDto(createUserDto);
+      return await this.prismaService.$transaction(async (tx) => {
+        const newUser = await tx.user.create({
+          data: userEntity,
+          include: {
+            customer: true,
+          }
+        })
+        const customer = await tx.customer.create({
+          data: {
+            userId: newUser.id
+          }
+        })
+        return Promise.resolve({ ...newUser, customer });
+      })
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
+
   async findAllOwners(pageSize = 10, currentPage = 1, user: CurrentUser) {
     const skip = (currentPage - 1) * pageSize;
     const param = {
@@ -128,6 +159,25 @@ export class UserService {
       throw new BadRequestException(error.response || error.message)
     }
 
+  }
+
+  async getCustomers() {
+    try {
+      const count = await this.prismaService.user.count({
+        where: {
+          type: UserType.CUSTOMER
+        }
+      })
+      const data = await this.prismaService.customer.findMany({
+        include: {
+          user: true,
+          stores: true,
+        }
+      })
+      return { count, data }
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
   }
 
   async update(id: string, dto: UpdateUserDto) {

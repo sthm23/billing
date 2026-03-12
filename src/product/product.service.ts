@@ -57,35 +57,6 @@ export class ProductService {
 
       await this.prisma.$transaction(async (tx) => {
         for (const variant of dto.variants) {
-
-          const existingVariant = await tx.productVariant.findFirst({
-            where: {
-              productId: dto.productId,
-              attributes: {
-                some: {
-                  attributeValueId: { in: variant.attributes.map(a => a.attributeValueId) }
-                }
-              }
-            },
-            include: {
-              attributes: true,
-            }
-          });
-          if (existingVariant) {
-            this.prisma.productVariant.update({
-              where: { id: existingVariant.id },
-              data: {
-                price: new Prisma.Decimal(variant.retailPrice),
-                inventory: {
-                  updateMany: {
-                    where: { variantId: existingVariant.id },
-                    data: { quantity: { increment: variant.quantity } }
-                  }
-                }
-              }
-            })
-            continue; // пропускаем создание этого варианта и переходим к следующему
-          }
           const barCode = await this.generateBarCode(tx, dto.productId, variant.barCode);
           await tx.productVariant.create({
             data: {

@@ -101,9 +101,10 @@ model User {
   type      UserType
   createdAt DateTime @default(now())
 
-  auth            AuthAccount?
-  staff           Staff?
-  orders          Order[]          @relation("CustomerOrders")
+  auth     AuthAccount?
+  customer Customer?
+  staff    Staff?
+
   refreshSessions RefreshSession[]
   stores          Store[] //created stores by this auth account
   staffOrders     Order[]          @relation("StaffOrders")
@@ -158,6 +159,7 @@ model Store {
 
   warehouse Warehouse?
   staff     Staff[]
+  customers Customer[] @relation("CustomerStores")
   products  Product[]
   orders    Order[]
 
@@ -166,6 +168,18 @@ model Store {
   attributes AttributeOnStore[]
 
   @@map("stores")
+}
+
+model Customer {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  createdAt DateTime @default(now())
+
+  user   User    @relation(fields: [userId], references: [id])
+  stores Store[] @relation("CustomerStores")
+  orders Order[] @relation("CustomerOrders")
+
+  @@map("customers")
 }
 
 model Staff {
@@ -487,7 +501,7 @@ model Order {
   store     Store     @relation(fields: [storeId], references: [id])
   warehouse Warehouse @relation(fields: [warehouseId], references: [id])
   cashier   User      @relation("StaffOrders", fields: [cashierId], references: [id])
-  customer  User?     @relation("CustomerOrders", fields: [customerId], references: [id])
+  customer  Customer? @relation("CustomerOrders", fields: [customerId], references: [id])
 
   items    OrderItem[]
   payments Payment[]

@@ -1,6 +1,6 @@
 import { UserType } from "@generated/enums"
 import { UserCreateInput } from "@generated/models";
-import { IsEnum, IsNotEmpty, IsOptional } from "class-validator"
+import { IsEnum, IsNotEmpty } from "class-validator"
 
 export class CreateUserDto {
     @IsNotEmpty()

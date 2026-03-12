@@ -1,11 +1,8 @@
-import { IsDateString, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Min } from "class-validator"
+import { ArrayMinSize, IsArray, IsDateString, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Min, ValidateNested } from "class-validator"
 import { PaymentType } from "@generated/enums"
-export class CreatePaymentDto {
+import { Type } from "class-transformer"
 
-    @IsString()
-    @IsUUID('4')
-    orderId!: string
-
+export class CreatePaymentItemDto {
     @IsNotEmpty()
     @IsEnum(PaymentType)
     type: PaymentType = PaymentType.CASH
@@ -17,4 +14,20 @@ export class CreatePaymentDto {
     @IsOptional()
     @IsDateString()
     paidAt: Date | null = null
+}
+export class CreatePaymentDto {
+
+    @IsString()
+    @IsUUID('4')
+    orderId!: string
+
+    @IsOptional()
+    @IsUUID('4')
+    customerId?: string
+
+    @IsArray()
+    @ArrayMinSize(1, { message: "At least one payment is required" })
+    @ValidateNested({ each: true })
+    @Type(() => CreatePaymentItemDto)
+    payments: CreatePaymentItemDto[] = []
 }

@@ -2,6 +2,10 @@ import { OrderChannel, PaymentType } from "@generated/enums";
 import { IsArray, IsEnum, IsNotEmpty, IsOptional, IsNumber, IsDateString, IsString, IsUUID, Min, ArrayMinSize, ValidateNested, } from "class-validator";
 import { Type } from "class-transformer";
 class OrderItemDto {
+    @IsOptional()
+    @IsUUID('4')
+    itemId?: string
+
     @IsString()
     @IsUUID('4')
     variantId!: string
@@ -73,9 +77,13 @@ class OrderPaymentDto {
     paidAt: Date | null = null
 }
 export class CreateOrderPaymentDto {
-    @IsString()
+    @IsNotEmpty()
     @IsUUID('4')
-    orderid!: string
+    orderId!: string
+
+    @IsOptional()
+    @IsUUID('4')
+    customerId?: string
 
 
     @IsArray()
