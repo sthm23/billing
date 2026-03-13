@@ -7,6 +7,7 @@ import {
   UseGuards,
   Query,
   ParseUUIDPipe,
+  Delete,
 } from '@nestjs/common';
 import { ProductService } from './product.service';
 import { CreateProductDto, CreateProductVariantDto } from './dto/create-product.dto';
@@ -63,5 +64,14 @@ export class ProductController {
     @Param('id', ParseUUIDPipe) id: string
   ) {
     return this.productService.findOne(id);
+  }
+
+  @Delete(':id')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OWNER, StaffRole.MANAGER)
+  remove(
+    @Param('id', ParseUUIDPipe) id: string
+  ) {
+    return this.productService.remove(id);
   }
 }

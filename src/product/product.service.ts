@@ -364,6 +364,18 @@ export class ProductService {
   }
 
   async remove(id: string) {
-
+    try {
+      const product = await this.prisma.product.findUnique({ where: { id } });
+      if (!product) throw new NotFoundException('Product not found');
+      await this.prisma.product.update({
+        where: { id },
+        data: {
+          isArchived: true,
+        }
+      })
+      return { message: 'Product archived successfully' };
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
   }
 }
