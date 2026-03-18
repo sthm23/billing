@@ -363,6 +363,58 @@ export class ProductService {
     }
   }
 
+  async search(pageSize = 20, currentPage = 1, text: string, user: CurrentUser) {
+    try {
+      const skip = (currentPage - 1) * pageSize;
+      const where = user.role === UserRole.ADMIN ? {} : { storeId: user.staff.storeId }
+      const count = await this.prisma.productVariant.count({ where });
+      const variants = await this.prisma.productVariant.findMany({
+        where: {
+          OR: [
+            { barCode: { contains: text, mode: 'insensitive' } },
+            { sku: { contains: text, mode: 'insensitive' } },
+            {
+              product: {
+                name: { contains: text, mode: 'insensitive' }
+              }
+            }
+          ],
+          ...where
+        },
+        skip,
+        take: pageSize,
+        include: {
+          inventory: true,
+          stockMovements: true
+        }
+      })
+      return {
+        count,
+        currentPage,
+        pageSize,
+        data: variants.map(v => ({
+          id: v.id,
+          barCode: v.barCode,
+          price: v.price,
+          sku: v.sku,
+          stockMovements: v.stockMovements.map(movement => ({
+            id: movement.id,
+            type: movement.type,
+            reason: movement.reason,
+            warehouseId: movement.warehouseId,
+            quantity: movement.quantity,
+            unitCost: movement.unitCost,
+            createdAt: movement.createdAt,
+          })),
+          quantity: v.inventory.reduce((acc, curr) => acc + curr.quantity, 0) || 0,
+        })),
+      };
+
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
+
   async remove(id: string) {
     try {
       const product = await this.prisma.product.findUnique({ where: { id } });

@@ -4,6 +4,7 @@ import { UpdateOrderDto } from './dto/update-order.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { CurrentUser } from '@auth/models/auth.model';
 import { OrderStatus, StockMovementReason, StockMovementType, UserRole } from '@generated/enums';
+import { Prisma } from '@generated/client';
 
 
 @Injectable()
@@ -39,56 +40,6 @@ export class OrderService {
     }
   }
 
-  // async createOrderItems(dto: CreateOrderItemDto) {
-  //   try {
-  //     const order = await this.prisma.order.findUnique({
-  //       where: { id: dto.orderId },
-  //       include: { items: true }
-  //     });
-  //     if (!order) {
-  //       throw new BadRequestException('Order not found');
-  //     }
-  //     if (order.status !== OrderStatus.CREATED) {
-  //       throw new BadRequestException('Cannot add items to an order that is not in CREATED status');
-  //     }
-  //     await this.prisma.$transaction(async (prisma) => {
-  //       let totalAmount = 0;
-  //       for (const item of dto.items) {
-  //         const variant = await prisma.productVariant.findUnique({
-  //           where: { id: item.variantId },
-  //           include: { inventory: true }
-  //         });
-  //         if (!variant) {
-  //           throw new BadRequestException(`Product variant not found: ${item.variantId}`);
-  //         }
-  //         const quantityInventory = variant.inventory.reduce((sum, inv) => sum + inv.quantity, 0);
-  //         if (quantityInventory < item.quantity) {
-  //           throw new BadRequestException(`Insufficient stock for variant: ${item.variantId}`);
-  //         }
-  //         const priceAtSale = item.sale > 0 ? item.retailPrice - item.sale : item.retailPrice;
-  //         totalAmount += priceAtSale * item.quantity;
-  //         await prisma.orderItem.create({
-  //           data: {
-  //             orderId: dto.orderId,
-  //             variantId: item.variantId,
-  //             quantity: item.quantity,
-  //             retailPrice: item.retailPrice,
-  //             sale: item.sale,
-  //             costAtSale: item.costAtSale
-  //           }
-  //         });
-  //       }
-  //       await prisma.order.update({
-  //         where: { id: dto.orderId },
-  //         data: { totalAmount: { increment: totalAmount }, customerId: dto.customerId ?? null, status: OrderStatus.HOLD }
-  //       });
-  //     });
-  //     return Promise.resolve({ message: 'Order items created successfully' });
-  //   } catch (error: any) {
-  //     throw new BadRequestException(error.response || error.message)
-  //   }
-  // }
-
   async createOrderItems(dto: CreateOrderItemDto) {
     try {
       await this.prisma.$transaction(async (prisma) => {
@@ -107,10 +58,12 @@ export class OrderService {
         const variantIds: string[] = [];
 
         for (const item of dto.items) {
-          if (item.quantity <= 0) throw new BadRequestException(`Invalid quantity for variant: ${item.variantId}`);
-          const stock = incomingQuantityByVariant.get(item.variantId) ?? 0;
-          incomingQuantityByVariant.set(item.variantId, stock + item.quantity);
-          variantIds.push(item.variantId);
+          if (item.quantity >= 1) {
+            // if (item.quantity <= 0) throw new BadRequestException(`Invalid quantity for variant: ${item.variantId}`);
+            const stock = incomingQuantityByVariant.get(item.variantId) ?? 0;
+            incomingQuantityByVariant.set(item.variantId, stock + item.quantity);
+            variantIds.push(item.variantId);
+          }
         }
 
         // 2) Проверяем, что варианты существуют и принадлежат магазину заказа
@@ -202,13 +155,20 @@ export class OrderService {
             });
           }
         }
+        const existingItemIds = dto.items.filter(i => i.itemId).map(i => i.itemId) as string[];
+        const removedItemIds = order.items.filter(existingItem => !existingItemIds.includes(existingItem.id)).map(i => i.id);
+        if (removedItemIds.length > 0) {
+          await prisma.orderItem.deleteMany({
+            where: { id: { in: removedItemIds } },
+          });
+        }
 
         await prisma.order.update({
           where: { id: dto.orderId },
           data: {
             totalAmount: totalAmountToAdd,
             customerId: dto.customerId ?? null,
-            status: OrderStatus.HOLD,
+            status: OrderStatus.HOLD
           },
         });
       });
@@ -313,11 +273,13 @@ export class OrderService {
   async findAll(pageSize = 10, currentPage = 1, user: CurrentUser) {
     const skip = (currentPage - 1) * pageSize;
     try {
+      const params = {
+        storeId: user.role !== UserRole.ADMIN ? user.staff.storeId : undefined,
+        cashierId: user.role === UserRole.USER ? user.id : undefined
+      } as Prisma.OrderWhereInput;
+
       const orders = await this.prisma.order.findMany({
-        where: {
-          storeId: user.role !== UserRole.ADMIN ? user.staff.storeId : undefined,
-          cashierId: user.role === UserRole.USER ? user.id : undefined
-        },
+        where: params,
         include: {
           _count: {
             select: { items: true, payments: true }
@@ -331,10 +293,7 @@ export class OrderService {
         take: +pageSize,
       })
       const totalOrders = await this.prisma.order.count({
-        where: {
-          storeId: user.role !== UserRole.ADMIN ? user.staff.storeId : undefined,
-          cashierId: user.role === UserRole.USER ? user.id : undefined
-        }
+        where: params
       })
       return {
         currentPage,
@@ -362,12 +321,14 @@ export class OrderService {
 
   async findOne(id: string, user: CurrentUser) {
     try {
+      const params = {
+        id,
+        storeId: user.role !== UserRole.ADMIN ? user.staff.storeId : undefined,
+        cashierId: user.role === UserRole.USER ? user.id : undefined
+      } as Prisma.OrderFindUniqueArgs['where'];
+
       const order = await this.prisma.order.findUnique({
-        where: {
-          id,
-          storeId: user.role !== UserRole.ADMIN ? user.staff.storeId : undefined,
-          cashierId: user.role === UserRole.USER ? user.id : undefined
-        },
+        where: params,
         include: {
           items: {
             include: {
@@ -401,10 +362,6 @@ export class OrderService {
     }
   }
 
-  update(id: string, updateOrderDto: UpdateOrderDto) {
-    return `This action updates a #${id} order`;
-  }
-
   async remove(id: string, user: CurrentUser) {
     try {
       const order = await this.prisma.order.findUnique({
@@ -426,9 +383,6 @@ export class OrderService {
       }
       if (order.status === OrderStatus.CANCELLED) {
         throw new BadRequestException('Order is already cancelled');
-      }
-      if (order.items.length > 0) {
-        throw new BadRequestException('Cannot cancel an order with items');
       }
       return this.prisma.order.update({
         where: { id },

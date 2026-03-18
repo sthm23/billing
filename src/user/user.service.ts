@@ -1,17 +1,13 @@
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
-import { UpdateUserDto } from './dto/update-user.dto';
-import { ConfigService } from '@nestjs/config';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { Prisma, Staff, StaffRole, User, UserRole, UserType } from '@generated/client';
+import { Prisma, User, UserRole, UserType } from '@generated/client';
 import { CreateUserDto } from './dto/create-user.dto';
-import { HashingHelper } from '@shared/helper/hash.helper';
 import { CurrentUser } from '@auth/models/auth.model';
 
 @Injectable()
 export class UserService {
 
   constructor(
-    private configService: ConfigService,
     private prismaService: PrismaService,
   ) { }
 
@@ -47,10 +43,7 @@ export class UserService {
       const userEntity = new CreateUserDto(createUserDto);
       return await this.prismaService.$transaction(async (tx) => {
         const newUser = await tx.user.create({
-          data: userEntity,
-          include: {
-            customer: true,
-          }
+          data: userEntity
         })
         const customer = await tx.customer.create({
           data: {
@@ -161,37 +154,55 @@ export class UserService {
 
   }
 
-  async getCustomers() {
+  async getCustomers(
+    pageSize = 10,
+    currentPage = 1,
+    search: string,
+  ) {
+    const skip = (currentPage - 1) * pageSize;
+    const param = {
+      type: UserType.CUSTOMER,
+      OR: [
+        { phone: search ? { contains: search, mode: 'insensitive' } : undefined },
+        { fullName: search ? { contains: search, mode: 'insensitive' } : undefined },
+      ]
+    } as Prisma.UserWhereInput;
+
     try {
       const count = await this.prismaService.user.count({
-        where: {
-          type: UserType.CUSTOMER
-        }
-      })
-      const data = await this.prismaService.customer.findMany({
-        include: {
-          user: true,
-          stores: true,
-        }
-      })
-      return { count, data }
-    } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
-    }
-  }
-
-  async update(id: string, dto: UpdateUserDto) {
-    try {
-      return this.prismaService.user.update({
-        where: { id },
-        data: dto,
+        where: param
       });
+      const data = await this.prismaService.user.findMany({
+        skip,
+        take: +pageSize,
+        where: param,
+        include: {
+          customer: true,
+        }
+      })
+      return {
+        currentPage,
+        pageSize,
+        total: count,
+        data
+      }
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }
   }
 
-  async remove(id: string) {
+  // async update(id: string, dto: UpdateUserDto) {
+  //   try {
+  //     return this.prismaService.user.update({
+  //       where: { id },
+  //       data: dto,
+  //     });
+  //   } catch (error: any) {
+  //     throw new BadRequestException(error.response || error.message)
+  //   }
+  // }
+
+  async deactivate(id: string) {
     try {
       const result = await this.prismaService.user.findUnique({
         where: { id }, include: {

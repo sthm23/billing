@@ -1,7 +1,6 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Delete, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
 import { OrderService } from './order.service';
 import { CreateOrderDto, CreateOrderItemDto, CreateOrderPaymentDto } from './dto/create-order.dto';
-import { UpdateOrderDto } from './dto/update-order.dto';
 import { PaginationParams } from '@shared/dto/pagination-params.dto';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { CurrentUser } from '@shared/decorators/user.decorator';
@@ -50,11 +49,6 @@ export class OrderController {
     @CurrentUser() user: CurrentUserType
   ) {
     return this.orderService.findOne(id, user);
-  }
-
-  @Patch(':id')
-  update(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string, @Body() updateOrderDto: UpdateOrderDto) {
-    return this.orderService.update(id, updateOrderDto);
   }
 
   @Delete(':id')

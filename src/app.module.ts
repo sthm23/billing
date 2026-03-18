@@ -7,7 +7,6 @@ import { AdminModule } from './admin/admin.module';
 import { WarehouseModule } from './warehouse/warehouse.module';
 import { OrderModule } from './order/order.module';
 import { PaymentModule } from './payment/payment.module';
-import { ReportModule } from './report/report.module';
 import { SharedModule } from './shared/shared.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { StoreModule } from './store/store.module';
@@ -25,7 +24,6 @@ import { FileModule } from './file/file.module';
     WarehouseModule,
     OrderModule,
     PaymentModule,
-    ReportModule,
     SharedModule,
     StoreModule,
     CategoryAttributesModule,

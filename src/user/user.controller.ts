@@ -35,8 +35,11 @@ export class UserController {
   }
 
   @Get('customers')
-  getCustomers() {
-    return this.userService.getCustomers()
+  getCustomers(
+    @Query() { pageSize, currentPage }: PaginationParams,
+    @Query('search') search: string,
+  ) {
+    return this.userService.getCustomers(pageSize, currentPage, search);
   }
 
   @Get(':id')
@@ -58,20 +61,20 @@ export class UserController {
     return this.userService.findAll(pageSize, currentPage, user);
   }
 
-  @UseGuards(AuthJWTGuard, RolesGuard)
-  @Put(':id')
-  @Roles(UserRole.OWNER)
-  update(
-    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @Body(new ValidationPipe()) updateUserDto: UpdateUserDto
-  ) {
-    return this.userService.update(id, updateUserDto);
-  }
+  // @UseGuards(AuthJWTGuard, RolesGuard)
+  // @Put(':id')
+  // @Roles(UserRole.OWNER)
+  // update(
+  //   @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+  //   @Body(new ValidationPipe()) updateUserDto: UpdateUserDto
+  // ) {
+  //   return this.userService.update(id, updateUserDto);
+  // }
 
   @UseGuards(AuthJWTGuard, RolesGuard)
   @Delete(':id')
   @Roles(UserRole.OWNER)
-  remove(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
-    return this.userService.remove(id);
+  deactivate(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
+    return this.userService.deactivate(id);
   }
 }

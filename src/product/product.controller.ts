@@ -43,6 +43,15 @@ export class ProductController {
     return this.productService.createProductVariant(dto, user);
   }
 
+  @Get('search')
+  search(
+    @Query() { pageSize, currentPage }: PaginationParams,
+    @Query('text') text: string,
+    @CurrentUser() user: CurrentUserType
+  ) {
+    return this.productService.search(pageSize, currentPage, text, user);
+  }
+
   @Get('variants')
   findAllVariants(
     @Query() { pageSize, currentPage }: PaginationParams,
