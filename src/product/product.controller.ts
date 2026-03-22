@@ -28,8 +28,9 @@ export class ProductController {
   @Post()
   create(
     @Body() createProductDto: CreateProductDto,
+    @CurrentUser() user: CurrentUserType
   ) {
-    return this.productService.createProduct(createProductDto);
+    return this.productService.createProduct(createProductDto, user);
   }
 
   @UseGuards(RolesGuard)

@@ -71,7 +71,7 @@ export class CreateProductDto {
 
     @IsNotEmpty()
     @IsUUID('4')
-    storeId!: string;
+    warehouseId!: string;
 
     @IsString()
     @IsNotEmpty()

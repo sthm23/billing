@@ -66,14 +66,6 @@ export class WarehouseService {
           stockMovements: true,
           staffs: true,
           orders: true
-          // _count: {
-          //   select: {
-          //     inventory: true,
-          //     orders: true,
-          //     staffs: true,
-          //     stockMovements: true
-          //   }
-          // }
 
         }
       })

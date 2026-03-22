@@ -2,7 +2,7 @@ import { Controller, Get, Post, Body, Param, UseGuards, ParseUUIDPipe, Query } f
 import { StoreService } from './store.service';
 import { CreateOwnerDto, CreateStaffDto, CreateStoreDto } from './dto/create-store.dto';
 import { CurrentUser } from '@shared/decorators/user.decorator';
-import type { UserAuth } from '@auth/models/auth.model';
+import type { CurrentUser as UserInfo, UserAuth } from '@auth/models/auth.model';
 import { AdminGuard } from '@shared/guards/admin.guard';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { RolesGuard } from '@shared/guards/role.guard';
@@ -43,14 +43,16 @@ export class StoreController {
   @UseGuards(AdminGuard)
   @Get()
   findAll(
-    @Query() { pageSize, currentPage }: PaginationParams
+    @Query() { pageSize, currentPage }: PaginationParams,
+    @CurrentUser() user: UserInfo
   ) {
-    return this.storeService.findAll(pageSize, currentPage);
+    return this.storeService.findAll(pageSize, currentPage, user);
   }
 
   @Get(':id')
-  findStoreById(@Param('id', ParseUUIDPipe) id: string) {
-    return this.storeService.findStoreById(id);
+  findStoreById(@Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: UserInfo) {
+    return this.storeService.findStoreById(id, user);
   }
 
   @Get(':id/stock-movements')

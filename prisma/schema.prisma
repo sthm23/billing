@@ -73,10 +73,9 @@ model Store {
   createdBy String // admin auth account id
   creator   User   @relation(fields: [createdBy], references: [id])
 
-  warehouse Warehouse?
+  warehouse Warehouse[]
   staff     Staff[]
-  customers Customer[] @relation("CustomerStores")
-  products  Product[]
+  customers Customer[]  @relation("CustomerStores")
   orders    Order[]
 
   categories CategoriesOnStore[]
@@ -133,6 +132,7 @@ model Warehouse {
   orders         Order[]
   staffs         Staff[]
   stockMovements StockMovement[]
+  products       Product[]
   store          Store           @relation(fields: [storeId], references: [id])
 
   @@map("warehouses")
@@ -196,7 +196,7 @@ model ProductTagValue {
 
 model Product {
   id          String   @id @default(uuid())
-  storeId     String
+  warehouseId String
   name        String
   categoryId  String?
   brandId     String?
@@ -204,7 +204,7 @@ model Product {
   isArchived  Boolean  @default(false)
   createdAt   DateTime @default(now())
 
-  store      Store              @relation(fields: [storeId], references: [id])
+  warehouse  Warehouse          @relation(fields: [warehouseId], references: [id])
   category   Category?          @relation(fields: [categoryId], references: [id])
   brand      Brand?             @relation(fields: [brandId], references: [id])
   images     ProductImage[]
@@ -212,7 +212,7 @@ model Product {
   attributes ProductAttribute[]
   tags       ProductTagValue[]
 
-  @@index([storeId])
+  @@index([warehouseId])
   @@index([categoryId])
   @@index([brandId])
   @@map("products")
@@ -225,6 +225,7 @@ model ProductVariant {
   barCode        String?
   price          Decimal
   storeId        String // это для быстрого поиска уникального SKU в пределах магазина
+  warehouseId    String // это для быстрого доступа к складу, на котором лежит товар
   inventory      Inventory[]
   orderItems     OrderItem[]
   product        Product                 @relation(fields: [productId], references: [id])

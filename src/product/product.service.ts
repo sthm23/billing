@@ -13,12 +13,15 @@ export class ProductService {
     private prisma: PrismaService,
   ) { }
 
-  async createProduct(dto: CreateProductDto) {
+  async createProduct(dto: CreateProductDto, user: CurrentUser): Promise<Product> {
     try {
-      const product = await this.prisma.product.create({
+      const warehouse = await this.prisma.warehouse.findUnique({ where: { id: dto.warehouseId } });
+      if (!warehouse) throw new NotFoundException("Warehouse not found");
+
+      return await this.prisma.product.create({
         data: {
           name: dto.name,
-          storeId: dto.storeId,
+          warehouseId: dto.warehouseId,
           brandId: dto.brandId ?? null,
           categoryId: dto.categoryId ?? null,
           description: dto.description ?? null,
@@ -42,7 +45,6 @@ export class ProductService {
           }
         }
       });
-      return product;
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }
@@ -52,8 +54,8 @@ export class ProductService {
     try {
       const product = await this.prisma.product.findUnique({ where: { id: dto.productId } });
       if (!product) throw new NotFoundException("Product not found");
-      const store = await this.prisma.store.findUnique({ where: { id: product.storeId } });
-      if (!store) throw new NotFoundException("Store not found");
+      const warehouse = await this.prisma.warehouse.findUnique({ where: { id: product.warehouseId } });
+      if (!warehouse) throw new NotFoundException("Warehouse not found");
 
       await this.prisma.$transaction(async (tx) => {
         for (const variant of dto.variants) {
@@ -61,7 +63,8 @@ export class ProductService {
           await tx.productVariant.create({
             data: {
               productId: product.id,
-              storeId: product.storeId, // важно: берем из product, не из dto
+              warehouseId: product.warehouseId, // важно: берем из product, не из dto
+              storeId: warehouse.storeId, // важно: берем из warehouse, не из dto
               sku: buildSku(product.name, dto.category, variant.attributes.map(a => a.value)),
               barCode,
               price: new Prisma.Decimal(variant.retailPrice),
@@ -73,7 +76,7 @@ export class ProductService {
               inventory: {
                 create: {
                   quantity: variant.quantity,
-                  warehouse: { connect: { id: dto.warehouseId } },
+                  warehouse: { connect: { id: warehouse.id } },
                 }
               },
               stockMovements: {
@@ -81,7 +84,7 @@ export class ProductService {
                   type: StockMovementType.IN,
                   reason: StockMovementReason.PURCHASE,
                   quantity: variant.quantity,
-                  warehouse: { connect: { id: dto.warehouseId } },
+                  warehouse: { connect: { id: warehouse.id } },
                   createdBy: { connect: { id: user.staff.id } },
                   unitCost: new Prisma.Decimal(variant.costPrice),
                 }
@@ -177,7 +180,7 @@ export class ProductService {
             id: product.id,
             images: product.images,
             createdAt: product.createdAt,
-            storeId: product.storeId,
+            warehouseId: product.warehouseId,
             isArchived: product.isArchived,
             description: product.description,
             tags: product.tags.map(t => ({
@@ -289,7 +292,7 @@ export class ProductService {
         attributes: product.attributes.map(a => ({ ...a.attribute })),
         isArchived: product.isArchived,
         createdAt: product.createdAt,
-        storeId: product.storeId,
+        warehouseId: product.warehouseId,
         tags: product.tags.map(t => ({
           id: t.value.id,
           value: t.value.value,

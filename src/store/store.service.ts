@@ -1,10 +1,9 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateOwnerDto, CreateStaffDto, CreateStoreDto } from './dto/create-store.dto';
-import { UpdateStoreDto } from './dto/update-store.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { StaffRole, UserRole, UserType } from '@generated/enums';
 import { HashingHelper } from '@shared/helper/hash.helper';
-import { UserAuth } from '@auth/models/auth.model';
+import { CurrentUser } from '@auth/models/auth.model';
 
 @Injectable()
 export class StoreService {
@@ -29,10 +28,8 @@ export class StoreService {
         throw new NotFoundException('Category not found');
       }
 
-      let store;
-
-      await this.prisma.$transaction(async (tx) => {
-        store = await tx.store.create({
+      return this.prisma.$transaction(async (tx) => {
+        const store = await tx.store.create({
           data: {
             name: dto.name,
             createdBy: creatorId,
@@ -44,11 +41,7 @@ export class StoreService {
                 }
               }
             },
-            warehouse: {
-              create: {
-                name: dto.warehouseName,
-              }
-            },
+
             brands: {
               createMany: {
                 data: dto.brandIds.map(brandId => ({ brandId }))
@@ -64,16 +57,23 @@ export class StoreService {
             warehouse: true
           }
         })
+        const warehouse = await tx.warehouse.create({
+          data: {
+            name: dto.warehouseName,
+            storeId: store.id,
+          }
+        })
         await tx.staff.create({
           data: {
             userId: owner.id,
             storeId: store.id,
             role: StaffRole.OWNER,
-            warehouseId: store?.warehouse?.id ?? null
+            warehouseId: warehouse.id
           }
         })
+
+        return store;
       })
-      return Promise.resolve(store);
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }
@@ -164,7 +164,7 @@ export class StoreService {
     }
   }
 
-  async findAll(pageSize: number = 10, currentPage: number = 1) {
+  async findAll(pageSize: number = 10, currentPage: number = 1, user: CurrentUser) {
     const skip = (currentPage - 1) * pageSize;
     try {
       const result = await this.prisma.store.findMany({
@@ -192,14 +192,17 @@ export class StoreService {
     }
   }
 
-  async findStoreById(id: string) {
+  async findStoreById(id: string, user: CurrentUser) {
     try {
+      if (user.role === UserRole.OWNER && user.staff.storeId !== id) {
+        throw new NotFoundException('Store not found');
+      }
+
       const store = await this.prisma.store.findUnique({
         where: { id },
         include: {
           _count: {
             select: {
-              products: true,
               orders: true
             }
           },
