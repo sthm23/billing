@@ -135,6 +135,26 @@ export class UserService {
 
   }
 
+  async findOneInfo(id: string): Promise<any | null> {
+    try {
+      const user = await this.prismaService.user.findUnique({
+        where: { id },
+        include: {
+          auth: true,
+          staff: {
+            include: {
+              payments: true,
+              orders: true,
+            }
+          },
+        }
+      });
+      return user;
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
+
   async findByLogin(email: string) {
     try {
       return this.prismaService.user.findFirst({

@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, NotFoundException, Injectable } from '@nestjs/common';
 import { CreateOrderDto, CreateOrderItemDto, CreateOrderPaymentDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { CurrentUser } from '@auth/models/auth.model';
-import { OrderStatus, StockMovementReason, StockMovementType, UserRole } from '@generated/enums';
+import { OrderStatus, StockMovementReason, StockMovementType, UserRole, UserType } from '@generated/enums';
 import { Prisma } from '@generated/client';
+import { CreateReturnOrderDto } from './dto/create-return.dto';
 
 
 @Injectable()
@@ -28,13 +29,100 @@ export class OrderService {
         data: {
           storeId: createOrderDto.storeId,
           warehouseId: createOrderDto.warehouseId,
-          cashierId: user.id,
+          cashierId: user.staff.id,
           customerId: createOrderDto?.customerId ?? null,
           channel: createOrderDto.channel,
           status: OrderStatus.CREATED,
           totalAmount: 0,
         }
       })
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
+
+  async createReturn(createOrderDto: CreateReturnOrderDto, user: CurrentUser) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: createOrderDto.orderId },
+      include: { items: true, payments: true }
+    });
+
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    if (order.status !== OrderStatus.COMPLETED && order.status !== OrderStatus.DEBT) {
+      throw new BadRequestException('Only completed or debt orders can be returned');
+    }
+
+    if (order.payments.length === 0) {
+      throw new BadRequestException('Cannot return an order without payments');
+    }
+
+    try {
+      return await this.prisma.$transaction(async (prisma) => {
+        const returnOrder = await prisma.returnedOrder.create({
+          data: {
+            orderId: createOrderDto.orderId,
+            createdBy: user.staff.id,
+          }
+        });
+
+        const orderItemsById = new Map(order.items.map(item => [item.id, item]));
+
+        const returnItemsData = createOrderDto.items.map(item => ({
+          returnId: returnOrder.id,
+          orderItemId: item.orderItemId,
+          quantity: item.quantity,
+        }));
+        await prisma.returnItem.createMany({
+          data: returnItemsData
+        });
+
+        for (let i = 0; i < createOrderDto.items.length; i++) {
+          const returnedItem = createOrderDto.items[i];
+          const orderItem = orderItemsById.get(returnedItem.orderItemId);
+          if (!orderItem) {
+            throw new BadRequestException(`Order item not found: ${returnedItem.orderItemId}`);
+          }
+          if (returnedItem.quantity > orderItem.quantity) {
+            throw new BadRequestException(`Return quantity exceeds purchased quantity for item: ${returnedItem.orderItemId}`);
+          }
+          await prisma.stockMovement.create({
+            data: {
+              type: StockMovementType.IN,
+              reason: StockMovementReason.RETURN,
+              quantity: returnedItem.quantity,
+              unitCost: new Prisma.Decimal(returnedItem.unitCost),
+              variantId: orderItem.variantId,
+              warehouseId: order.warehouseId,
+              createdById: user.staff.id,
+            }
+          });
+        }
+
+
+        let returnPayments = 0
+        const createdPayments = createOrderDto.returnPayments.map(payment => {
+          returnPayments += +payment.amount
+          return {
+            returnOrderId: returnOrder.id,
+            type: payment.type,
+            amount: payment.amount,
+            createdBy: user.staff.id
+          }
+        })
+
+        if (+returnPayments > +order.totalAmount) {
+          throw new BadRequestException(`Return amount exceeds order total`);
+        }
+
+        await prisma.returnPayment.createMany({
+          data: createdPayments
+        });
+
+        return Promise.resolve({ message: 'Order returned successfully' });
+      });
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }
@@ -207,7 +295,7 @@ export class OrderService {
               orderId: orderId,
               amount: paymentDto.amount,
               type: paymentDto.type,
-              createdBy: user.id
+              createdBy: user.staff.id
             }
           });
         }
@@ -218,20 +306,20 @@ export class OrderService {
           qtyByVariantId.set(item.variantId, (qtyByVariantId.get(item.variantId) ?? 0) + item.quantity);
         }
 
-        for (const item of order.items) {
-          // stock movement пишем по каждой позиции как у вас было
-          await prisma.stockMovement.create({
-            data: {
-              variantId: item.variantId,
-              quantity: item.quantity,
-              reason: StockMovementReason.SALE,
-              type: StockMovementType.OUT,
-              createdById: user.staff.id,
-              warehouseId: order.warehouseId,
-              unitCost: item.costAtSale
-            }
-          });
-        }
+        const stockMovementsData = order.items.map(item => ({
+          variantId: item.variantId,
+          quantity: item.quantity,
+          reason: StockMovementReason.SALE,
+          type: StockMovementType.OUT,
+          createdById: user.staff.id,
+          warehouseId: order.warehouseId,
+          unitCost: item.costAtSale
+        })
+        );
+        await prisma.stockMovement.createMany({
+          data: stockMovementsData
+        })
+
 
         // А списание делаем атомарно и с валидацией "не уйти в минус"
         for (const [variantId, needQty] of qtyByVariantId.entries()) {
@@ -275,7 +363,7 @@ export class OrderService {
     try {
       const params = {
         storeId: user.role !== UserRole.ADMIN ? user.staff.storeId : undefined,
-        cashierId: user.role === UserRole.USER ? user.id : undefined
+        cashierId: user.type === UserType.STAFF ? user.staff.id : undefined
       } as Prisma.OrderWhereInput;
 
       const orders = await this.prisma.order.findMany({
@@ -324,7 +412,7 @@ export class OrderService {
       const params = {
         id,
         storeId: user.role !== UserRole.ADMIN ? user.staff.storeId : undefined,
-        cashierId: user.role === UserRole.USER ? user.id : undefined
+        cashierId: user.type === UserType.STAFF ? user.staff.id : undefined
       } as Prisma.OrderFindUniqueArgs['where'];
 
       const order = await this.prisma.order.findUnique({
@@ -368,7 +456,7 @@ export class OrderService {
         where: {
           id,
           storeId: user.role !== UserRole.ADMIN ? user.staff.storeId : undefined,
-          cashierId: user.role === UserRole.USER ? user.id : undefined
+          cashierId: user.type === UserType.STAFF ? user.staff.id : undefined
         },
         include: { items: true, payments: true }
       });

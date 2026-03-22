@@ -216,4 +216,20 @@ export class StoreService {
       throw new BadRequestException(error.response || error.message)
     }
   }
+
+  async findStaffStockMovements(userId: string) {
+    try {
+      const movements = await this.prisma.stockMovement.findMany({
+        where: {
+          createdById: userId,
+        },
+        include: {
+          variant: true
+        }
+      });
+      return movements;
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
 }

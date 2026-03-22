@@ -118,7 +118,7 @@ export class WarehouseService {
               unitCost: new Prisma.Decimal(item.unitCost),
               warehouse: { connect: { id: warehouseId } },
               createdBy: { connect: { id: user.staff.id } },
-              variant: { connect: { id: item.variantId } }, // если у тебя связь называется иначе — поправь
+              variant: { connect: { id: item.variantId } },
             },
           });
         }

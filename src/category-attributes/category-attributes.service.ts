@@ -103,19 +103,23 @@ export class CategoryAttributesService {
   async findAttributeItem(attrId: string) {
 
     try {
-      const attributes = await this.prisma.attributeValue.findMany({
+      const attributes = await this.prisma.attribute.findUnique({
         where: {
-          attributeId: attrId
+          id: attrId
+        },
+        include: {
+          values: true
         }
       });
-      return attributes.map(el => {
-        const value = el.valueString !== null ? el.valueString
-          : el.valueBool !== null ? Boolean(el.valueBool)
-            : el.valueNumber !== null ? Number(el.valueNumber) : null;
-        return {
+      return Promise.resolve({
+        ...attributes,
+        values: attributes?.values.map(el => ({
           id: el.id,
-          value: value
-        }
+          attributeId: el.attributeId,
+          value: el.valueString !== null ? el.valueString
+            : el.valueBool !== null ? Boolean(el.valueBool)
+              : el.valueNumber !== null ? Number(el.valueNumber) : null
+        })) ?? []
       });
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)

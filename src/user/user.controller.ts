@@ -51,6 +51,15 @@ export class UserController {
     return user;
   }
 
+  @Get(':id/info')
+  async findOneInfo(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
+    const user = await this.userService.findOneInfo(id);
+    if (!user) {
+      return new NotFoundException('User not found');
+    }
+    return user;
+  }
+
   @Roles(UserRole.OWNER)
   @UseGuards(AuthJWTGuard, RolesGuard)
   @Get()

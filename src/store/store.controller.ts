@@ -52,4 +52,9 @@ export class StoreController {
   findStoreById(@Param('id', ParseUUIDPipe) id: string) {
     return this.storeService.findStoreById(id);
   }
+
+  @Get(':id/stock-movements')
+  findStockMovements(@Param('id', ParseUUIDPipe) userId: string) {
+    return this.storeService.findStaffStockMovements(userId);
+  }
 }

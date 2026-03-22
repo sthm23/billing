@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Body, Param, Delete, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
 import { OrderService } from './order.service';
 import { CreateOrderDto, CreateOrderItemDto, CreateOrderPaymentDto } from './dto/create-order.dto';
+import { CreateReturnOrderDto } from './dto/create-return.dto';
 import { PaginationParams } from '@shared/dto/pagination-params.dto';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { CurrentUser } from '@shared/decorators/user.decorator';
@@ -17,6 +18,14 @@ export class OrderController {
     @CurrentUser() user: CurrentUserType
   ) {
     return this.orderService.create(dto, user);
+  }
+
+  @Post('return')
+  createReturn(
+    @Body() dto: CreateReturnOrderDto,
+    @CurrentUser() user: CurrentUserType
+  ) {
+    return this.orderService.createReturn(dto, user);
   }
 
   @Post('items')
