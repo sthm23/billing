@@ -1,4 +1,4 @@
-import { User, AuthAccount, Staff } from "@generated/client"
+import { User, AuthAccount, Staff, Warehouse } from "@generated/client"
 
 export interface AccessTokenPayload {
     sub: string // userId
@@ -17,5 +17,5 @@ export interface LoginResponse {
 }
 
 export type UserAuth = User & { auth: AuthAccount }
-
-export type CurrentUser = User & { auth: AuthAccount, staff: Staff }
+type StaffWarehouse = Staff & { warehouse: { warehouseId: string }[] }
+export type CurrentUser = User & { auth: AuthAccount, staff: StaffWarehouse }

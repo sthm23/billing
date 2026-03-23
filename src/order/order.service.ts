@@ -18,7 +18,9 @@ export class OrderService {
       if (!user || !user.staff) {
         throw new BadRequestException('Staff not found');
       }
-      if (user.staff.storeId !== createOrderDto.storeId || user.staff.warehouseId !== createOrderDto.warehouseId) {
+
+      const warehouseIds = user.staff.warehouse.map(w => w.warehouseId);
+      if (user.staff.storeId !== createOrderDto.storeId || !warehouseIds.includes(createOrderDto.warehouseId)) {
         throw new BadRequestException('Staff does not belong to the store or warehouse');
       }
       if (user.auth && !user.auth.isActive) {
@@ -361,10 +363,15 @@ export class OrderService {
   async findAll(pageSize = 10, currentPage = 1, user: CurrentUser) {
     const skip = (currentPage - 1) * pageSize;
     try {
-      const params = {
-        storeId: user.role !== UserRole.ADMIN ? user.staff.storeId : undefined,
-        cashierId: user.type === UserType.STAFF ? user.staff.id : undefined
-      } as Prisma.OrderWhereInput;
+      const params = {}
+
+      if (user.type === UserType.STAFF) {
+        params['storeId'] = user.staff.storeId
+      }
+
+      if (user.type === UserType.STAFF && user.role !== UserRole.OWNER) {
+        params['cashierId'] = user.staff.id
+      }
 
       const orders = await this.prisma.order.findMany({
         where: params,
@@ -381,7 +388,7 @@ export class OrderService {
         take: +pageSize,
       })
       const totalOrders = await this.prisma.order.count({
-        where: params
+        where: params,
       })
       return {
         currentPage,
@@ -452,11 +459,17 @@ export class OrderService {
 
   async remove(id: string, user: CurrentUser) {
     try {
+      const params = {}
+      if (user.type === UserType.STAFF) {
+        params['storeId'] = user.staff.storeId
+      }
+      if (user.type === UserType.STAFF && user.role !== UserRole.OWNER) {
+        params['cashierId'] = user.staff.id
+      }
       const order = await this.prisma.order.findUnique({
         where: {
           id,
-          storeId: user.role !== UserRole.ADMIN ? user.staff.storeId : undefined,
-          cashierId: user.type === UserType.STAFF ? user.staff.id : undefined
+          ...params
         },
         include: { items: true, payments: true }
       });

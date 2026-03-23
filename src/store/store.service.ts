@@ -68,7 +68,11 @@ export class StoreService {
             userId: owner.id,
             storeId: store.id,
             role: StaffRole.OWNER,
-            warehouseId: warehouse.id
+            warehouse: {
+              create: {
+                warehouseId: warehouse.id
+              }
+            }
           }
         })
 
@@ -149,7 +153,11 @@ export class StoreService {
             create: {
               role: dto.role,
               storeId: dto.storeId,
-              warehouseId: dto.warehouseId
+              warehouse: {
+                create: {
+                  warehouseId: dto.warehouseId
+                }
+              }
             }
           }
         },

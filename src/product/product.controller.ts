@@ -44,13 +44,14 @@ export class ProductController {
     return this.productService.createProductVariant(dto, user);
   }
 
-  @Get('search')
+  @Get('search/:id')
   search(
     @Query() { pageSize, currentPage }: PaginationParams,
     @Query('text') text: string,
+    @Param('id', ParseUUIDPipe) warehouseId: string,
     @CurrentUser() user: CurrentUserType
   ) {
-    return this.productService.search(pageSize, currentPage, text, user);
+    return this.productService.search(pageSize, currentPage, text, warehouseId, user);
   }
 
   @Get('variants')

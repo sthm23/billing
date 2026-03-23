@@ -35,7 +35,7 @@ export class AuthService {
               role: true,
               isActive: true,
               storeId: true,
-              warehouseId: true,
+              warehouse: true,
             }
           }
         },
@@ -171,7 +171,11 @@ export class AuthService {
           staff: {
             include: {
               store: true,
-              warehouse: true
+              warehouse: {
+                include: {
+                  warehouse: true
+                }
+              }
             }
           }
         }

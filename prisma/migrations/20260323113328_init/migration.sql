@@ -98,9 +98,16 @@ CREATE TABLE "staff" (
     "role" "StaffRole" NOT NULL,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "warehouseId" TEXT,
 
     CONSTRAINT "staff_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "staff_on_warehouses" (
+    "staffId" TEXT NOT NULL,
+    "warehouseId" TEXT NOT NULL,
+
+    CONSTRAINT "staff_on_warehouses_pkey" PRIMARY KEY ("staffId","warehouseId")
 );
 
 -- CreateTable
@@ -161,6 +168,7 @@ CREATE TABLE "product_tag_values" (
 -- CreateTable
 CREATE TABLE "products" (
     "id" TEXT NOT NULL,
+    "warehouseId" TEXT NOT NULL,
     "storeId" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "categoryId" TEXT,
@@ -180,6 +188,7 @@ CREATE TABLE "product_variants" (
     "barCode" TEXT,
     "price" DECIMAL(65,30) NOT NULL,
     "storeId" TEXT NOT NULL,
+    "warehouseId" TEXT NOT NULL,
 
     CONSTRAINT "product_variants_pkey" PRIMARY KEY ("id")
 );
@@ -397,7 +406,7 @@ CREATE UNIQUE INDEX "staff_userId_key" ON "staff"("userId");
 CREATE INDEX "staff_storeId_idx" ON "staff"("storeId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "warehouses_storeId_key" ON "warehouses"("storeId");
+CREATE INDEX "warehouses_storeId_idx" ON "warehouses"("storeId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "brands_name_key" ON "brands"("name");
@@ -412,7 +421,7 @@ CREATE UNIQUE INDEX "tags_name_key" ON "tags"("name");
 CREATE UNIQUE INDEX "tag_values_tagId_value_key" ON "tag_values"("tagId", "value");
 
 -- CreateIndex
-CREATE INDEX "products_storeId_idx" ON "products"("storeId");
+CREATE INDEX "products_warehouseId_idx" ON "products"("warehouseId");
 
 -- CreateIndex
 CREATE INDEX "products_categoryId_idx" ON "products"("categoryId");
@@ -496,7 +505,10 @@ ALTER TABLE "staff" ADD CONSTRAINT "staff_storeId_fkey" FOREIGN KEY ("storeId") 
 ALTER TABLE "staff" ADD CONSTRAINT "staff_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "staff" ADD CONSTRAINT "staff_warehouseId_fkey" FOREIGN KEY ("warehouseId") REFERENCES "warehouses"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "staff_on_warehouses" ADD CONSTRAINT "staff_on_warehouses_staffId_fkey" FOREIGN KEY ("staffId") REFERENCES "staff"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "staff_on_warehouses" ADD CONSTRAINT "staff_on_warehouses_warehouseId_fkey" FOREIGN KEY ("warehouseId") REFERENCES "warehouses"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "warehouses" ADD CONSTRAINT "warehouses_storeId_fkey" FOREIGN KEY ("storeId") REFERENCES "stores"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -514,7 +526,7 @@ ALTER TABLE "product_tag_values" ADD CONSTRAINT "product_tag_values_productId_fk
 ALTER TABLE "product_tag_values" ADD CONSTRAINT "product_tag_values_tagValueId_fkey" FOREIGN KEY ("tagValueId") REFERENCES "tag_values"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "products" ADD CONSTRAINT "products_storeId_fkey" FOREIGN KEY ("storeId") REFERENCES "stores"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "products" ADD CONSTRAINT "products_warehouseId_fkey" FOREIGN KEY ("warehouseId") REFERENCES "warehouses"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "products" ADD CONSTRAINT "products_categoryId_fkey" FOREIGN KEY ("categoryId") REFERENCES "categories"("id") ON DELETE SET NULL ON UPDATE CASCADE;

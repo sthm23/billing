@@ -19,7 +19,12 @@ export class WarehouseService {
       const warehouse = await this.prisma.warehouse.create({
         data: {
           name: dto.name,
-          storeId: dto.storeId
+          storeId: dto.storeId,
+          staffs: {
+            create: {
+              staffId: dto.ownerId
+            }
+          }
         }
       });
 

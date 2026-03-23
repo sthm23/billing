@@ -128,7 +128,7 @@ export class ProductService {
         param['storeId'] = user.staff.storeId;
       }
       if (user.staff && user.staff.role !== StaffRole.OWNER) {
-        param['warehouseId'] = user.staff.warehouseId;
+        param['warehouseId'] = { in: user.staff.warehouse.map(w => w.warehouseId) };
       }
 
       const count = await this.prisma.product.count({
@@ -153,6 +153,7 @@ export class ProductService {
           },
           category: true,
           brand: true,
+          warehouse: true,
           tags: {
             include: {
               value: {
@@ -196,6 +197,7 @@ export class ProductService {
             images: product.images,
             createdAt: product.createdAt,
             warehouseId: product.warehouseId,
+            warehouse: product.warehouse,
             isArchived: product.isArchived,
             description: product.description,
             tags: product.tags.map(t => ({
@@ -244,6 +246,7 @@ export class ProductService {
               }
             }
           },
+          warehouse: true,
           variants: {
             include: {
               attributes: {
@@ -308,6 +311,7 @@ export class ProductService {
         isArchived: product.isArchived,
         createdAt: product.createdAt,
         warehouseId: product.warehouseId,
+        warehouse: product.warehouse,
         tags: product.tags.map(t => ({
           id: t.value.id,
           value: t.value.value,
@@ -381,11 +385,17 @@ export class ProductService {
     }
   }
 
-  async search(pageSize = 20, currentPage = 1, text: string, user: CurrentUser) {
+  async search(pageSize = 20, currentPage = 1, text: string, warehouseId: string, user: CurrentUser) {
     try {
       const skip = (currentPage - 1) * pageSize;
-      const where = user.role === UserRole.ADMIN ? {} : { storeId: user.staff.storeId }
-      const count = await this.prisma.productVariant.count({ where });
+      const params = {};
+      const ids = user.staff ? user.staff.warehouse.map(w => w.warehouseId) : [];
+      if (user.staff && ids.includes(warehouseId)) {
+        params['storeId'] = user.staff.storeId
+        params['warehouseId'] = warehouseId
+      }
+
+      const count = await this.prisma.productVariant.count({ where: { ...params } });
       const variants = await this.prisma.productVariant.findMany({
         where: {
           OR: [
@@ -397,7 +407,7 @@ export class ProductService {
               }
             }
           ],
-          ...where
+          ...params
         },
         skip,
         take: pageSize,

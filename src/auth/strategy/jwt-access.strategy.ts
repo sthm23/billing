@@ -27,7 +27,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt-access') {
                         isActive: true,
                         role: true,
                         storeId: true,
-                        warehouseId: true
+                        warehouse: true
                     }
                 },
                 auth: {

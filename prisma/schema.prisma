@@ -97,23 +97,33 @@ model Customer {
 }
 
 model Staff {
-  id             String          @id @default(uuid())
-  userId         String          @unique
-  storeId        String
-  role           StaffRole
-  isActive       Boolean         @default(true)
-  createdAt      DateTime        @default(now())
-  warehouseId    String?
-  returnPayments ReturnPayment[] @relation("ReturnPayments")
-  orders         Order[]         @relation("StaffOrders")
-  payments       Payment[]       @relation("StaffPayments")
-  store          Store           @relation(fields: [storeId], references: [id])
-  user           User            @relation(fields: [userId], references: [id])
-  warehouse      Warehouse?      @relation(fields: [warehouseId], references: [id])
+  id        String    @id @default(uuid())
+  userId    String    @unique
+  storeId   String
+  role      StaffRole
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+
+  returnPayments ReturnPayment[]    @relation("ReturnPayments")
+  orders         Order[]            @relation("StaffOrders")
+  payments       Payment[]          @relation("StaffPayments")
+  store          Store              @relation(fields: [storeId], references: [id])
+  user           User               @relation(fields: [userId], references: [id])
+  warehouse      StaffOnWarehouse[]
   stockMoves     StockMovement[]
 
   @@index([storeId])
   @@map("staff")
+}
+
+model StaffOnWarehouse {
+  staffId     String
+  warehouseId String
+  staff       Staff     @relation(fields: [staffId], references: [id])
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id])
+
+  @@id([staffId, warehouseId])
+  @@map("staff_on_warehouses")
 }
 
 /**
@@ -123,17 +133,17 @@ model Staff {
  */
 
 model Warehouse {
-  id             String          @id @default(uuid())
+  id             String             @id @default(uuid())
   storeId        String
   name           String
-  isActive       Boolean         @default(true)
-  createdAt      DateTime        @default(now())
+  isActive       Boolean            @default(true)
+  createdAt      DateTime           @default(now())
   inventory      Inventory[]
   orders         Order[]
-  staffs         Staff[]
+  staffs         StaffOnWarehouse[]
   stockMovements StockMovement[]
   products       Product[]
-  store          Store           @relation(fields: [storeId], references: [id])
+  store          Store              @relation(fields: [storeId], references: [id])
 
   @@index([storeId])
   @@map("warehouses")
