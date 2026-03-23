@@ -124,7 +124,7 @@ model Staff {
 
 model Warehouse {
   id             String          @id @default(uuid())
-  storeId        String          @unique
+  storeId        String
   name           String
   isActive       Boolean         @default(true)
   createdAt      DateTime        @default(now())
@@ -135,6 +135,7 @@ model Warehouse {
   products       Product[]
   store          Store           @relation(fields: [storeId], references: [id])
 
+  @@index([storeId])
   @@map("warehouses")
 }
 
@@ -197,6 +198,7 @@ model ProductTagValue {
 model Product {
   id          String   @id @default(uuid())
   warehouseId String
+  storeId     String // для быстрого доступа к магазину, которому принадлежит товар
   name        String
   categoryId  String?
   brandId     String?

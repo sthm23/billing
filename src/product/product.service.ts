@@ -1,7 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateProductDto, CreateProductVariantDto } from './dto/create-product.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { Prisma, Product, Staff, StockMovementReason, StockMovementType, User, UserRole } from '@generated/client';
+import { Prisma, Product, Staff, StaffRole, StockMovementReason, StockMovementType, User, UserRole } from '@generated/client';
 import { buildSku } from '@shared/helper/sku-generator.helper';
 import { generateEan13 } from '@shared/helper/bar-code-generator.helper';
 import { CurrentUser } from '@auth/models/auth.model';
@@ -22,6 +22,7 @@ export class ProductService {
         data: {
           name: dto.name,
           warehouseId: dto.warehouseId,
+          storeId: warehouse.storeId, // важно: берем из warehouse, не из dto
           brandId: dto.brandId ?? null,
           categoryId: dto.categoryId ?? null,
           description: dto.description ?? null,
@@ -120,14 +121,28 @@ export class ProductService {
   async findAll(pageSize = 10, currentPage = 1, user: CurrentUser) {
     const skip = (currentPage - 1) * pageSize;
     try {
+      const param = {
+        isArchived: false,
+      };
+      if (user.role === UserRole.OWNER) {
+        param['storeId'] = user.staff.storeId;
+      }
+      if (user.staff && user.staff.role !== StaffRole.OWNER) {
+        param['warehouseId'] = user.staff.warehouseId;
+      }
+
       const count = await this.prisma.product.count({
-        where: { isArchived: false }
+        where: {
+          ...param,
+        }
       });
-      const where = user.role === UserRole.ADMIN ? { isArchived: false } : { storeId: user.staff.storeId, isArchived: false }
+
       const result = await this.prisma.product.findMany({
         skip: skip,
         take: +pageSize,
-        where,
+        where: {
+          ...param,
+        },
         include: {
           images: {
             select: {
