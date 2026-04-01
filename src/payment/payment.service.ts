@@ -35,20 +35,20 @@ export class PaymentService {
               type: paymentDto.type,
               amount: paymentDto.amount,
               paidAt: paymentDto?.paidAt ?? null,
-              createdBy: user.id
+              createdBy: user.staff.id,
             },
           });
         }
         const status = totalPaid + newTotalAmount === +order.totalAmount ? OrderStatus.COMPLETED : OrderStatus.DEBT;
-                const customer = dto.customerId ? await prisma.customer.findUnique({ where: { id: dto.customerId } }) : null;
- 
-        
+        const customer = dto.customerId ? await prisma.customer.findUnique({ where: { id: dto.customerId } }) : null;
+
         await prisma.order.update({
           where: { id: dto.orderId },
-          data: { 
-            status, 
-            paidAmount: totalPaid + newTotalAmount, 
-          customerId: customer?.id ?? null,}
+          data: {
+            status,
+            paidAmount: totalPaid + newTotalAmount,
+            customerId: customer?.id ?? null,
+          }
         });
       })
       return { message: 'Payment(s) added successfully' };

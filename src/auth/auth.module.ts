@@ -20,7 +20,7 @@ import { TokenService } from './token.service';
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => {
         return {
-          secret: configService.get<string>('JWT_ACCESS'),
+          secret: configService.get<string>('JWT_ACCESS_SECRET'),
           signOptions: {
             expiresIn: configService.get<any>('JWT_ACCESS_EXPIRE'),
           },

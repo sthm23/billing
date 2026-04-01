@@ -228,11 +228,15 @@ export class StoreService {
     }
   }
 
-  async findStaffStockMovements(userId: string) {
+  async findStaffStockMovements(userId: string, user: CurrentUser) {
+
     try {
       const movements = await this.prisma.stockMovement.findMany({
         where: {
           createdById: userId,
+        },
+        omit: {
+          unitCost: user.role !== UserRole.OWNER
         },
         include: {
           variant: true

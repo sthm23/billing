@@ -9,7 +9,7 @@ import { PrismaService } from '@prisma/prisma.service';
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt-access') {
     constructor(config: ConfigService, private prisma: PrismaService) {
-        const secretOrKey = config.get('JWT_ACCESS')
+        const secretOrKey = config.get('JWT_ACCESS_SECRET')
         super({
             jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
             ignoreExpiration: false,

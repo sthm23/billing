@@ -11,12 +11,12 @@ import { UserRole } from '@generated/enums';
 import { PaginationParams } from '@shared/dto/pagination-params.dto';
 
 @UseGuards(AuthJWTGuard, RolesGuard)
-@Roles(UserRole.OWNER)
 @Controller('store')
 export class StoreController {
   constructor(private readonly storeService: StoreService) { }
 
 
+  @Roles(UserRole.OWNER)
   @Post()
   createStore(
     @CurrentUser() user: UserAuth,
@@ -25,6 +25,7 @@ export class StoreController {
     return this.storeService.createStore(createStoreDto, user.id);
   }
 
+  @Roles(UserRole.OWNER)
   @UseGuards(AdminGuard)
   @Post('owner')
   createOwner(
@@ -33,6 +34,7 @@ export class StoreController {
     return this.storeService.createOwner(createStoreDto);
   }
 
+  @Roles(UserRole.OWNER)
   @Post('staff')
   createStaff(
     @Body() createStoreDto: CreateStaffDto
@@ -40,6 +42,7 @@ export class StoreController {
     return this.storeService.createStaff(createStoreDto);
   }
 
+  @Roles(UserRole.OWNER)
   @UseGuards(AdminGuard)
   @Get()
   findAll(
@@ -49,6 +52,7 @@ export class StoreController {
     return this.storeService.findAll(pageSize, currentPage, user);
   }
 
+  @Roles(UserRole.OWNER)
   @Get(':id')
   findStoreById(@Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: UserInfo) {
@@ -56,7 +60,7 @@ export class StoreController {
   }
 
   @Get(':id/stock-movements')
-  findStockMovements(@Param('id', ParseUUIDPipe) userId: string) {
-    return this.storeService.findStaffStockMovements(userId);
+  findStockMovements(@Param('id', ParseUUIDPipe) userId: string, @CurrentUser() user: UserInfo) {
+    return this.storeService.findStaffStockMovements(userId, user);
   }
 }

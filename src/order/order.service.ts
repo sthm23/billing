@@ -419,7 +419,7 @@ export class OrderService {
       const params = {
         id,
         storeId: user.role !== UserRole.ADMIN ? user.staff.storeId : undefined,
-        cashierId: user.type === UserType.STAFF ? user.staff.id : undefined
+        cashierId: user.type === UserType.STAFF && user.role !== UserRole.OWNER ? user.staff.id : undefined
       } as Prisma.OrderFindUniqueArgs['where'];
 
       const order = await this.prisma.order.findUnique({

@@ -49,7 +49,7 @@ export class TokenService {
                 secret: this.accessTokenSecret,
                 expiresIn: this.accessTokenExpire,
             });
-            return { accessToken, refreshToken };
+            return { accessToken, refreshToken: newRefreshToken };
         } catch (error: any) {
             throw new UnauthorizedException(error.response || error.message)
         }

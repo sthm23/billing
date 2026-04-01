@@ -89,7 +89,8 @@ export class UserService {
   async findAll(pageSize = 10, currentPage = 1, user: CurrentUser) {
     const skip = (currentPage - 1) * pageSize;
     const param = {
-      staff: user.role === UserRole.ADMIN ? undefined : { storeId: user.staff!.storeId }
+      type: { not: UserType.CUSTOMER },
+      staff: user.role === UserRole.ADMIN ? undefined : { storeId: user.staff!.storeId },
     } as Prisma.UserWhereInput;
 
     try {
