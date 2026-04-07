@@ -398,7 +398,7 @@ model AttributeOnStore {
  */
 
 model Order {
-  id          String         @id @default(uuid())
+  id          String       @id @default(uuid())
   storeId     String
   warehouseId String
   cashierId   String
@@ -406,16 +406,21 @@ model Order {
   channel     OrderChannel
   status      OrderStatus
   totalAmount Decimal
-  paidAmount  Decimal        @default(0)
-  createdAt   DateTime       @default(now())
-  returns     ReturnedOrder?
-  store       Store          @relation(fields: [storeId], references: [id])
-  warehouse   Warehouse      @relation(fields: [warehouseId], references: [id])
-  cashier     Staff          @relation("StaffOrders", fields: [cashierId], references: [id])
-  customer    Customer?      @relation("CustomerOrders", fields: [customerId], references: [id])
-  items       OrderItem[]
-  payments    Payment[]
-  delivery    Delivery?
+  paidAmount  Decimal      @default(0)
+  createdAt   DateTime     @default(now())
+
+  isReturned     Boolean        @default(false)
+  returnedAt     DateTime?
+  returnedAmount Decimal        @default(0)
+  returns        ReturnedOrder?
+
+  store     Store       @relation(fields: [storeId], references: [id])
+  warehouse Warehouse   @relation(fields: [warehouseId], references: [id])
+  cashier   Staff       @relation("StaffOrders", fields: [cashierId], references: [id])
+  customer  Customer?   @relation("CustomerOrders", fields: [customerId], references: [id])
+  items     OrderItem[]
+  payments  Payment[]
+  // delivery  Delivery?
 
   @@index([storeId, createdAt])
   @@index([warehouseId, createdAt])
@@ -445,22 +450,24 @@ model OrderItem {
  * =======================
  */
 model ReturnedOrder {
-  id        String          @id @default(uuid())
-  orderId   String          @unique
-  createdAt DateTime        @default(now())
-  createdBy String
-  items     ReturnItem[]
-  payments  ReturnPayment[]
-  order     Order           @relation(fields: [orderId], references: [id])
+  id          String            @id @default(uuid())
+  orderId     String            @unique
+  createdAt   DateTime          @default(now())
+  createdBy   String
+  status      ReturnOrderStatus
+  totalAmount Decimal           @default(0)
+  items       ReturnItem[]
+  payments    ReturnPayment[]
+  order       Order             @relation(fields: [orderId], references: [id])
 }
 
 model ReturnItem {
-  id          String        @id @default(uuid())
-  returnId    String
-  orderItemId String        @unique
-  quantity    Int
-  orderItem   OrderItem     @relation(fields: [orderItemId], references: [id])
-  return      ReturnedOrder @relation(fields: [returnId], references: [id])
+  id        String        @id @default(uuid())
+  returnId  String
+  itemId    String        @unique
+  quantity  Int
+  orderItem OrderItem     @relation(fields: [itemId], references: [id])
+  return    ReturnedOrder @relation(fields: [returnId], references: [id])
 }
 
 model ReturnPayment {
@@ -501,20 +508,20 @@ model Payment {
  * =======================
  */
 
-model Delivery {
-  id          String         @id @default(uuid())
-  orderId     String         @unique
-  type        DeliveryType   @default(PICKUP)
-  address     String?
-  phone       String?
-  fee         Decimal        @default(0)
-  status      DeliveryStatus @default(PENDING)
-  shippedAt   DateTime?
-  deliveredAt DateTime?
-  order       Order          @relation(fields: [orderId], references: [id])
+// model Delivery {
+//   id          String         @id @default(uuid())
+//   orderId     String         @unique
+//   type        DeliveryType   @default(PICKUP)
+//   address     String?
+//   phone       String?
+//   fee         Decimal        @default(0)
+//   status      DeliveryStatus @default(PENDING)
+//   shippedAt   DateTime?
+//   deliveredAt DateTime?
+//   order       Order          @relation(fields: [orderId], references: [id])
 
-  @@map("deliveries")
-}
+//   @@map("deliveries")
+// }
 
 /**
  * =======================
@@ -559,6 +566,13 @@ enum OrderStatus {
   DEBT
   CANCELLED
   HOLD
+  REFUNDED
+}
+
+enum ReturnOrderStatus {
+  DEBT
+  CREDIT
+  COMPLETED
 }
 
 enum PaymentType {

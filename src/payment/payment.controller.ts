@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
 import { PaymentService } from './payment.service';
-import { CreatePaymentDto } from './dto/create-payment.dto';
+import { CreatePaymentDto, CreateReturnPaymentDto } from './dto/create-payment.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
 import { PaginationParams } from '@shared/dto/pagination-params.dto';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
@@ -17,6 +17,15 @@ export class PaymentController {
     @CurrentUser() user: CurrentUserType
   ) {
     return this.paymentService.create(createPaymentDto, user);
+  }
+
+  @Post('return/:id')
+  createReturnPayment(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() createPaymentDto: CreateReturnPaymentDto,
+    @CurrentUser() user: CurrentUserType
+  ) {
+    return this.paymentService.createPaymentForReturnOrder(id, createPaymentDto, user);
   }
 
   @Get()

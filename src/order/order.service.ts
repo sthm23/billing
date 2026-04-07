@@ -3,9 +3,9 @@ import { CreateOrderDto, CreateOrderItemDto, CreateOrderPaymentDto } from './dto
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { CurrentUser } from '@auth/models/auth.model';
-import { OrderStatus, StockMovementReason, StockMovementType, UserRole, UserType } from '@generated/enums';
-import { Prisma } from '@generated/client';
-import { CreateReturnOrderDto } from './dto/create-return.dto';
+import { OrderStatus, ReturnOrderStatus, StockMovementReason, StockMovementType, UserRole, UserType } from '@generated/enums';
+import { OrderItem, Prisma } from '@generated/client';
+import { CreateReturnOrderDto, ReturnItemDto } from './dto/create-return.dto';
 
 
 @Injectable()
@@ -43,6 +43,141 @@ export class OrderService {
     }
   }
 
+  private validateReturnItems(returnItems: ReturnItemDto[], orderItemsById: Map<string, OrderItem>) {
+    for (const returnItem of returnItems) {
+      const orderItem = orderItemsById.get(returnItem.itemId);
+      if (!orderItem) {
+        throw new BadRequestException(`Order item not found: ${returnItem.itemId}`);
+      }
+      if (returnItem.quantity > orderItem.quantity) {
+        throw new BadRequestException(`Return quantity exceeds purchased quantity for item: ${returnItem.itemId}`);
+      }
+    }
+  }
+
+  private validateReturnPayments(
+    orderStatus: OrderStatus,
+    refundAmount: number, // полная сумма возврата
+    cashierTotalPayment: number, // сумма возврата который внес кассир
+    orderTotalAmount: number, //обшая сумма заказа
+    customerTotalPaid: number // общая оплата клиента,
+  ): ReturnOrderStatus {
+
+    if (refundAmount > orderTotalAmount) {
+      throw new BadRequestException(`Total return amount cannot exceed original order total amount`);
+    }
+    if (cashierTotalPayment > refundAmount) {
+      throw new BadRequestException(`Total amount returned by cashier cannot be more than total return amount`);
+    }
+
+    if (refundAmount === orderTotalAmount && customerTotalPaid > 0) {
+      throw new BadRequestException(`Total return amount cannot be equal to original order total amount for DEBT orders, because the order is not fully paid`);
+    }
+
+    switch (orderStatus) {
+      case OrderStatus.COMPLETED:
+        if (refundAmount === orderTotalAmount) {
+          if (cashierTotalPayment === refundAmount) {
+            return ReturnOrderStatus.COMPLETED
+          } else if (cashierTotalPayment < refundAmount) {
+            return ReturnOrderStatus.CREDIT
+          } else {
+            throw new BadRequestException(`Total amount returned by cashier cannot be more than total return amount for COMPLETED orders`);
+          }
+        } else if (refundAmount < orderTotalAmount) {
+          if (refundAmount > cashierTotalPayment) {
+            return ReturnOrderStatus.CREDIT
+          } else if (refundAmount === cashierTotalPayment) {
+            return ReturnOrderStatus.COMPLETED
+          } else {
+            throw new BadRequestException(`Total amount returned by cashier cannot be more than total return amount for COMPLETED orders`);
+          }
+        } else {
+          throw new BadRequestException('Total amount returned by cashier cannot be more than total return amount for COMPLETED orders');
+        }
+      case OrderStatus.DEBT:
+        const newTotalAmount = orderTotalAmount - refundAmount;
+
+        if (newTotalAmount === 0) {
+          if (customerTotalPaid > 0) {
+            if (cashierTotalPayment < customerTotalPaid) {
+              return ReturnOrderStatus.CREDIT
+            } else if (cashierTotalPayment === customerTotalPaid) {
+              return ReturnOrderStatus.COMPLETED
+            } else {
+              throw new BadRequestException(`Total amount returned by cashier cannot be more than total return amount for DEBT orders`);
+            }
+          } else if (customerTotalPaid === 0) {
+            if (cashierTotalPayment === 0) {
+              return ReturnOrderStatus.COMPLETED
+            } else {
+              throw new BadRequestException(`Total amount returned by cashier cannot be more than total return amount for DEBT orders`);
+            }
+          } else {
+            throw new BadRequestException(`Customer total paid cannot be more than zero for DEBT orders with full return amount`);
+          }
+        } else if (newTotalAmount > 0) {
+          if (newTotalAmount === customerTotalPaid) {
+            // ReturnOrderStatus.COMPLETED
+            if (cashierTotalPayment > 0) {
+              throw new BadRequestException('Total amount equal to original order total amount for DEBT orders cannot have cashier payments');
+            } else {
+              return ReturnOrderStatus.COMPLETED
+            }
+          } else if (newTotalAmount < customerTotalPaid) {
+            const credit = newTotalAmount - customerTotalPaid
+            // ReturnOrderStatus.CREDIT
+            if (cashierTotalPayment > credit) {
+              throw new BadRequestException('Total amount less than original order total amount for DEBT orders cannot have cashier payments');
+            } else if (cashierTotalPayment === credit) {
+              return ReturnOrderStatus.COMPLETED
+            } else {
+              return ReturnOrderStatus.CREDIT
+            }
+          } else if (newTotalAmount > customerTotalPaid) {
+            // ReturnOrderStatus.DEBT
+            if (cashierTotalPayment > 0) {
+              throw new BadRequestException('Total amount less than original order total amount for DEBT orders cannot have cashier payments');
+            } else {
+              return ReturnOrderStatus.DEBT
+            }
+
+          }
+        } else {
+          throw new BadRequestException(`Total return amount cannot be more than original order total amount for DEBT orders`);
+        }
+
+      default:
+        throw new BadRequestException('Only completed or debt orders can be returned');
+    }
+  }
+
+  private returnInitialStatus(
+    orderStatus: OrderStatus,
+    orderTotalAmount: number,
+    refundAmount: number,
+    customerTotalPaid: number
+  ): ReturnOrderStatus {
+    switch (orderStatus) {
+      case OrderStatus.COMPLETED:
+        return ReturnOrderStatus.CREDIT
+
+      case OrderStatus.DEBT:
+        const newTotalAmount = orderTotalAmount - refundAmount;
+        const result = newTotalAmount - customerTotalPaid;
+        if (result > 0) {
+          return ReturnOrderStatus.DEBT
+        } else if (result === 0) {
+          return ReturnOrderStatus.COMPLETED
+        } else {
+          return ReturnOrderStatus.CREDIT
+        }
+      default:
+        throw new BadRequestException('Only completed or debt orders can be returned');
+    }
+  }
+
+
   async createReturn(createOrderDto: CreateReturnOrderDto, user: CurrentUser) {
     const order = await this.prisma.order.findUnique({
       where: { id: createOrderDto.orderId },
@@ -53,13 +188,18 @@ export class OrderService {
       throw new NotFoundException('Order not found');
     }
 
+    if (order.isReturned) {
+      throw new BadRequestException('Order is already returned');
+    }
+
     if (order.status !== OrderStatus.COMPLETED && order.status !== OrderStatus.DEBT) {
       throw new BadRequestException('Only completed or debt orders can be returned');
     }
+    const customerPayments = order.payments.reduce((sum, p) => sum + +p.amount, 0);
+    const refundAmount = createOrderDto.items.reduce((sum, item) => sum + (item.retailPrice - item.sale) * item.quantity, 0);
+    const cashierPayments = createOrderDto.returnPayments.reduce((sum, p) => sum + +p.amount, 0);
 
-    if (order.payments.length === 0) {
-      throw new BadRequestException('Cannot return an order without payments');
-    }
+    const initialReturnStatus = this.returnInitialStatus(order.status, +order.totalAmount, refundAmount, customerPayments);
 
     try {
       return await this.prisma.$transaction(async (prisma) => {
@@ -67,46 +207,43 @@ export class OrderService {
           data: {
             orderId: createOrderDto.orderId,
             createdBy: user.staff.id,
+            status: initialReturnStatus,
+            totalAmount: refundAmount,
           }
         });
 
         const orderItemsById = new Map(order.items.map(item => [item.id, item]));
 
-        const returnItemsData = createOrderDto.items.map(item => ({
-          returnId: returnOrder.id,
-          orderItemId: item.orderItemId,
-          quantity: item.quantity,
-        }));
+        const returnItemsData = createOrderDto.items.map(item => {
+          return {
+            returnId: returnOrder.id,
+            itemId: item.itemId,
+            quantity: item.quantity,
+          }
+        });
+
+        this.validateReturnItems(createOrderDto.items, orderItemsById);
+
         await prisma.returnItem.createMany({
           data: returnItemsData
         });
 
-        for (let i = 0; i < createOrderDto.items.length; i++) {
-          const returnedItem = createOrderDto.items[i];
-          const orderItem = orderItemsById.get(returnedItem.orderItemId);
-          if (!orderItem) {
-            throw new BadRequestException(`Order item not found: ${returnedItem.orderItemId}`);
-          }
-          if (returnedItem.quantity > orderItem.quantity) {
-            throw new BadRequestException(`Return quantity exceeds purchased quantity for item: ${returnedItem.orderItemId}`);
-          }
-          await prisma.stockMovement.create({
-            data: {
+        await prisma.stockMovement.createMany({
+          data: createOrderDto.items.map(returnedItem => {
+            const orderItem = orderItemsById.get(returnedItem.itemId)!;
+            return {
               type: StockMovementType.IN,
               reason: StockMovementReason.RETURN,
               quantity: returnedItem.quantity,
-              unitCost: new Prisma.Decimal(returnedItem.unitCost),
+              unitCost: new Prisma.Decimal(returnedItem.costAtSale),
               variantId: orderItem.variantId,
               warehouseId: order.warehouseId,
-              createdById: user.staff.id,
+              createdById: user.staff.id
             }
-          });
-        }
+          })
+        });
 
-
-        let returnPayments = 0
         const createdPayments = createOrderDto.returnPayments.map(payment => {
-          returnPayments += +payment.amount
           return {
             returnOrderId: returnOrder.id,
             type: payment.type,
@@ -115,12 +252,33 @@ export class OrderService {
           }
         })
 
-        if (+returnPayments > +order.totalAmount) {
-          throw new BadRequestException(`Return amount exceeds order total`);
-        }
+        const returnStatus = this.validateReturnPayments(
+          order.status, // статус заказа
+          refundAmount, // полная сумма возврата, которая считается на основе возвращаемых товаров
+          cashierPayments, // сумма возврата который внес кассир
+          +order.totalAmount, //обшая сумма заказа
+          customerPayments // общая оплата клиента
+        );
 
         await prisma.returnPayment.createMany({
           data: createdPayments
+        });
+
+        await prisma.order.update({
+          where: { id: order.id },
+          data: {
+            status: returnStatus === ReturnOrderStatus.DEBT ? OrderStatus.DEBT : OrderStatus.REFUNDED,
+            returnedAmount: cashierPayments,
+            returnedAt: new Date().toISOString(),
+            isReturned: true,
+          }
+        });
+
+        await prisma.returnedOrder.update({
+          where: { id: returnOrder.id },
+          data: {
+            status: returnStatus
+          }
         });
 
         return Promise.resolve({ message: 'Order returned successfully' });

@@ -31,3 +31,12 @@ export class CreatePaymentDto {
     @Type(() => CreatePaymentItemDto)
     payments: CreatePaymentItemDto[] = []
 }
+
+export class CreateReturnPaymentDto {
+
+    @IsArray()
+    @ArrayMinSize(1, { message: "At least one payment is required" })
+    @ValidateNested({ each: true })
+    @Type(() => CreatePaymentItemDto)
+    payments: CreatePaymentItemDto[] = []
+}

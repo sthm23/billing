@@ -6,7 +6,7 @@ import { ArrayMinSize, IsArray, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsStri
 export class ReturnItemDto {
     @IsString()
     @IsUUID('4')
-    orderItemId!: string
+    itemId!: string
 
     @IsNumber()
     @Min(1)
@@ -14,8 +14,15 @@ export class ReturnItemDto {
 
     @IsNumber()
     @Min(0)
-    unitCost!: number
+    retailPrice!: number
 
+    @IsNumber()
+    @Min(0)
+    sale!: number
+
+    @IsNumber()
+    @Min(0)
+    costAtSale!: number
 }
 
 class ReturnOrderPaymentDto {

@@ -1,9 +1,9 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { CreatePaymentDto } from './dto/create-payment.dto';
+import { CreatePaymentDto, CreateReturnPaymentDto } from './dto/create-payment.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { CurrentUser } from '@auth/models/auth.model';
-import { OrderStatus, PaymentType } from '@generated/enums';
+import { OrderStatus, PaymentType, ReturnOrderStatus } from '@generated/enums';
 
 @Injectable()
 export class PaymentService {
@@ -42,16 +42,78 @@ export class PaymentService {
         const status = totalPaid + newTotalAmount === +order.totalAmount ? OrderStatus.COMPLETED : OrderStatus.DEBT;
         const customer = dto.customerId ? await prisma.customer.findUnique({ where: { id: dto.customerId } }) : null;
 
-        await prisma.order.update({
-          where: { id: dto.orderId },
-          data: {
-            status,
-            paidAmount: totalPaid + newTotalAmount,
-            customerId: customer?.id ?? null,
-          }
-        });
+
+        if (order.isReturned && status === OrderStatus.COMPLETED) {
+          await prisma.order.update({
+            where: { id: dto.orderId },
+            data: {
+              status: OrderStatus.REFUNDED,
+              paidAmount: totalPaid + newTotalAmount,
+              customerId: customer?.id ?? null,
+            }
+          });
+          await prisma.returnedOrder.update({
+            where: { orderId: dto.orderId },
+            data: {
+              status,
+            }
+          })
+        } else {
+          await prisma.order.update({
+            where: { id: dto.orderId },
+            data: {
+              status,
+              paidAmount: totalPaid + newTotalAmount,
+              customerId: customer?.id ?? null,
+            }
+          });
+        }
       })
       return { message: 'Payment(s) added successfully' };
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
+
+  async createPaymentForReturnOrder(id: string, dto: CreateReturnPaymentDto, user: CurrentUser) {
+    try {
+      const returnOrder = await this.prisma.returnedOrder.findUnique({
+        where: { id },
+        include: { payments: true, items: true }
+      });
+      if (!returnOrder) {
+        throw new BadRequestException('Returned order not found');
+      }
+      if (returnOrder.status !== ReturnOrderStatus.CREDIT) {
+        throw new BadRequestException('Cannot add payment to a returned order that is not in CREDIT status');
+      }
+      const totalPaid = returnOrder.payments.reduce((sum, payment) => (sum + +payment.amount), 0);
+      const newTotalAmount = dto.payments.reduce((sum, payment) => (sum + +payment.amount), 0);
+
+      if (totalPaid + newTotalAmount > +returnOrder.totalAmount) {
+        throw new BadRequestException('Payment amount exceeds returned order total');
+      }
+
+      await this.prisma.$transaction(async (prisma) => {
+        await prisma.returnPayment.createMany({
+          data: dto.payments.map(paymentDto => ({
+            returnOrderId: returnOrder.id,
+            type: paymentDto.type,
+            amount: paymentDto.amount,
+            createdBy: user.staff.id
+          })
+          )
+        })
+
+        const status = totalPaid + newTotalAmount === +returnOrder.totalAmount ? ReturnOrderStatus.COMPLETED : ReturnOrderStatus.CREDIT;
+        await prisma.returnedOrder.update({
+          where: { id: returnOrder.id },
+          data: {
+            status,
+          }
+        })
+      });
+
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }
