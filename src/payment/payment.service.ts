@@ -24,7 +24,7 @@ export class PaymentService {
       }
       const totalPaid = order.payments.reduce((sum, payment) => (sum + +payment.amount), 0);
       const newTotalAmount = dto.payments.reduce((sum, payment) => (sum + +payment.amount), 0);
-      if (totalPaid + newTotalAmount > +order.totalAmount) {
+      if (totalPaid + newTotalAmount > (+order.totalAmount - +order.returnedAmount)) {
         throw new BadRequestException('Payment amount exceeds order total');
       }
       await this.prisma.$transaction(async (prisma) => {
@@ -39,7 +39,8 @@ export class PaymentService {
             },
           });
         }
-        const status = totalPaid + newTotalAmount === +order.totalAmount ? OrderStatus.COMPLETED : OrderStatus.DEBT;
+        const status = totalPaid + newTotalAmount === +order.totalAmount - +order.returnedAmount
+          ? OrderStatus.COMPLETED : OrderStatus.DEBT;
         const customer = dto.customerId ? await prisma.customer.findUnique({ where: { id: dto.customerId } }) : null;
 
 

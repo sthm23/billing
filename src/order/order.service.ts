@@ -96,57 +96,34 @@ export class OrderService {
           throw new BadRequestException('Total amount returned by cashier cannot be more than total return amount for COMPLETED orders');
         }
       case OrderStatus.DEBT:
-        const newTotalAmount = orderTotalAmount - refundAmount;
+        const debt = orderTotalAmount - customerTotalPaid;
+        const newRefound = refundAmount - debt;
 
-        if (newTotalAmount === 0) {
-          if (customerTotalPaid > 0) {
-            if (cashierTotalPayment < customerTotalPaid) {
-              return ReturnOrderStatus.CREDIT
-            } else if (cashierTotalPayment === customerTotalPaid) {
-              return ReturnOrderStatus.COMPLETED
-            } else {
-              throw new BadRequestException(`Total amount returned by cashier cannot be more than total return amount for DEBT orders`);
-            }
-          } else if (customerTotalPaid === 0) {
-            if (cashierTotalPayment === 0) {
-              return ReturnOrderStatus.COMPLETED
-            } else {
-              throw new BadRequestException(`Total amount returned by cashier cannot be more than total return amount for DEBT orders`);
-            }
+        if (newRefound === 0) {
+          if (cashierTotalPayment > 0) {
+            throw new BadRequestException('Refund amount equal to debt for DEBT orders cannot have cashier payments');
           } else {
-            throw new BadRequestException(`Customer total paid cannot be more than zero for DEBT orders with full return amount`);
+            return ReturnOrderStatus.COMPLETED
           }
-        } else if (newTotalAmount > 0) {
-          if (newTotalAmount === customerTotalPaid) {
-            // ReturnOrderStatus.COMPLETED
-            if (cashierTotalPayment > 0) {
-              throw new BadRequestException('Total amount equal to original order total amount for DEBT orders cannot have cashier payments');
-            } else {
-              return ReturnOrderStatus.COMPLETED
-            }
-          } else if (newTotalAmount < customerTotalPaid) {
-            const credit = newTotalAmount - customerTotalPaid
-            // ReturnOrderStatus.CREDIT
-            if (cashierTotalPayment > credit) {
-              throw new BadRequestException('Total amount less than original order total amount for DEBT orders cannot have cashier payments');
-            } else if (cashierTotalPayment === credit) {
-              return ReturnOrderStatus.COMPLETED
-            } else {
-              return ReturnOrderStatus.CREDIT
-            }
-          } else if (newTotalAmount > customerTotalPaid) {
-            // ReturnOrderStatus.DEBT
-            if (cashierTotalPayment > 0) {
-              throw new BadRequestException('Total amount less than original order total amount for DEBT orders cannot have cashier payments');
-            } else {
-              return ReturnOrderStatus.DEBT
-            }
-
+        } else if (newRefound > 0) {
+          // ReturnOrderStatus.CREDIT
+          if (cashierTotalPayment - newRefound === 0) {
+            return ReturnOrderStatus.COMPLETED
+          } else if (cashierTotalPayment - newRefound < 0) {
+            return ReturnOrderStatus.CREDIT
+          } else if (cashierTotalPayment - newRefound > 0) {
+            throw new BadRequestException('Total amount returned by cashier cannot be more than total return amount for DEBT orders with refund amount more than debt');
+          } else {
+            throw new BadRequestException('Invalid return payments for DEBT orders');
           }
         } else {
-          throw new BadRequestException(`Total return amount cannot be more than original order total amount for DEBT orders`);
+          // ReturnOrderStatus.DEBT
+          if (cashierTotalPayment > 0) {
+            throw new BadRequestException('Refund amount less than or equal to debt for DEBT orders cannot have cashier payments');
+          } else {
+            return ReturnOrderStatus.DEBT
+          }
         }
-
       default:
         throw new BadRequestException('Only completed or debt orders can be returned');
     }
@@ -268,7 +245,7 @@ export class OrderService {
           where: { id: order.id },
           data: {
             status: returnStatus === ReturnOrderStatus.DEBT ? OrderStatus.DEBT : OrderStatus.REFUNDED,
-            returnedAmount: cashierPayments,
+            returnedAmount: refundAmount,
             returnedAt: new Date().toISOString(),
             isReturned: true,
           }

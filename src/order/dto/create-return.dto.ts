@@ -50,7 +50,6 @@ export class CreateReturnOrderDto {
     items: ReturnItemDto[] = []
 
     @IsArray()
-    @ArrayMinSize(1, { message: "At least one return order payment is required" })
     @ValidateNested({ each: true })
     @Type(() => ReturnOrderPaymentDto)
     returnPayments: ReturnOrderPaymentDto[] = []
