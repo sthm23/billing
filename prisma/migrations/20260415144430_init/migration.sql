@@ -14,7 +14,10 @@ CREATE TYPE "StockMovementType" AS ENUM ('IN', 'OUT');
 CREATE TYPE "StockMovementReason" AS ENUM ('PURCHASE', 'SALE', 'ADJUSTMENT', 'RETURN');
 
 -- CreateEnum
-CREATE TYPE "OrderStatus" AS ENUM ('CREATED', 'COMPLETED', 'DEBT', 'CANCELLED', 'HOLD');
+CREATE TYPE "OrderStatus" AS ENUM ('CREATED', 'COMPLETED', 'DEBT', 'CANCELLED', 'HOLD', 'REFUNDED');
+
+-- CreateEnum
+CREATE TYPE "ReturnOrderStatus" AS ENUM ('DEBT', 'CREDIT', 'COMPLETED');
 
 -- CreateEnum
 CREATE TYPE "PaymentType" AS ENUM ('CASH', 'CARD', 'DEBT', 'INSTALLMENT');
@@ -299,6 +302,9 @@ CREATE TABLE "orders" (
     "totalAmount" DECIMAL(65,30) NOT NULL,
     "paidAmount" DECIMAL(65,30) NOT NULL DEFAULT 0,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "isReturned" BOOLEAN NOT NULL DEFAULT false,
+    "returnedAt" TIMESTAMP(3),
+    "returnedAmount" DECIMAL(65,30) NOT NULL DEFAULT 0,
 
     CONSTRAINT "orders_pkey" PRIMARY KEY ("id")
 );
@@ -317,11 +323,32 @@ CREATE TABLE "order_items" (
 );
 
 -- CreateTable
+CREATE TABLE "additional_services" (
+    "id" TEXT NOT NULL,
+    "orderId" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "price" DECIMAL(65,30) NOT NULL,
+    "description" TEXT,
+
+    CONSTRAINT "additional_services_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "additional_services_on_stores" (
+    "storeId" TEXT NOT NULL,
+    "serviceId" TEXT NOT NULL,
+
+    CONSTRAINT "additional_services_on_stores_pkey" PRIMARY KEY ("storeId","serviceId")
+);
+
+-- CreateTable
 CREATE TABLE "ReturnedOrder" (
     "id" TEXT NOT NULL,
     "orderId" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "createdBy" TEXT NOT NULL,
+    "status" "ReturnOrderStatus" NOT NULL,
+    "totalAmount" DECIMAL(65,30) NOT NULL DEFAULT 0,
 
     CONSTRAINT "ReturnedOrder_pkey" PRIMARY KEY ("id")
 );
@@ -330,7 +357,7 @@ CREATE TABLE "ReturnedOrder" (
 CREATE TABLE "ReturnItem" (
     "id" TEXT NOT NULL,
     "returnId" TEXT NOT NULL,
-    "orderItemId" TEXT NOT NULL,
+    "itemId" TEXT NOT NULL,
     "quantity" INTEGER NOT NULL,
 
     CONSTRAINT "ReturnItem_pkey" PRIMARY KEY ("id")
@@ -359,21 +386,6 @@ CREATE TABLE "payments" (
     "createdBy" TEXT NOT NULL,
 
     CONSTRAINT "payments_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "deliveries" (
-    "id" TEXT NOT NULL,
-    "orderId" TEXT NOT NULL,
-    "type" "DeliveryType" NOT NULL DEFAULT 'PICKUP',
-    "address" TEXT,
-    "phone" TEXT,
-    "fee" DECIMAL(65,30) NOT NULL DEFAULT 0,
-    "status" "DeliveryStatus" NOT NULL DEFAULT 'PENDING',
-    "shippedAt" TIMESTAMP(3),
-    "deliveredAt" TIMESTAMP(3),
-
-    CONSTRAINT "deliveries_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -472,16 +484,16 @@ CREATE INDEX "order_items_orderId_idx" ON "order_items"("orderId");
 CREATE INDEX "order_items_variantId_idx" ON "order_items"("variantId");
 
 -- CreateIndex
+CREATE INDEX "additional_services_orderId_idx" ON "additional_services"("orderId");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "ReturnedOrder_orderId_key" ON "ReturnedOrder"("orderId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "ReturnItem_orderItemId_key" ON "ReturnItem"("orderItemId");
+CREATE UNIQUE INDEX "ReturnItem_itemId_key" ON "ReturnItem"("itemId");
 
 -- CreateIndex
 CREATE INDEX "payments_orderId_idx" ON "payments"("orderId");
-
--- CreateIndex
-CREATE UNIQUE INDEX "deliveries_orderId_key" ON "deliveries"("orderId");
 
 -- CreateIndex
 CREATE INDEX "_CustomerStores_B_index" ON "_CustomerStores"("B");
@@ -607,10 +619,19 @@ ALTER TABLE "order_items" ADD CONSTRAINT "order_items_orderId_fkey" FOREIGN KEY 
 ALTER TABLE "order_items" ADD CONSTRAINT "order_items_variantId_fkey" FOREIGN KEY ("variantId") REFERENCES "product_variants"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "additional_services" ADD CONSTRAINT "additional_services_orderId_fkey" FOREIGN KEY ("orderId") REFERENCES "orders"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "additional_services_on_stores" ADD CONSTRAINT "additional_services_on_stores_serviceId_fkey" FOREIGN KEY ("serviceId") REFERENCES "additional_services"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "additional_services_on_stores" ADD CONSTRAINT "additional_services_on_stores_storeId_fkey" FOREIGN KEY ("storeId") REFERENCES "stores"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "ReturnedOrder" ADD CONSTRAINT "ReturnedOrder_orderId_fkey" FOREIGN KEY ("orderId") REFERENCES "orders"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "ReturnItem" ADD CONSTRAINT "ReturnItem_orderItemId_fkey" FOREIGN KEY ("orderItemId") REFERENCES "order_items"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "ReturnItem" ADD CONSTRAINT "ReturnItem_itemId_fkey" FOREIGN KEY ("itemId") REFERENCES "order_items"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ReturnItem" ADD CONSTRAINT "ReturnItem_returnId_fkey" FOREIGN KEY ("returnId") REFERENCES "ReturnedOrder"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -626,9 +647,6 @@ ALTER TABLE "payments" ADD CONSTRAINT "payments_createdBy_fkey" FOREIGN KEY ("cr
 
 -- AddForeignKey
 ALTER TABLE "payments" ADD CONSTRAINT "payments_orderId_fkey" FOREIGN KEY ("orderId") REFERENCES "orders"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "deliveries" ADD CONSTRAINT "deliveries_orderId_fkey" FOREIGN KEY ("orderId") REFERENCES "orders"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "_CustomerStores" ADD CONSTRAINT "_CustomerStores_A_fkey" FOREIGN KEY ("A") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;

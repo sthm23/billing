@@ -409,10 +409,11 @@ model Order {
   paidAmount  Decimal      @default(0)
   createdAt   DateTime     @default(now())
 
-  isReturned     Boolean        @default(false)
+  isReturned     Boolean             @default(false)
   returnedAt     DateTime?
-  returnedAmount Decimal        @default(0)
+  returnedAmount Decimal             @default(0)
   returns        ReturnedOrder?
+  services       AdditionalService[]
 
   store     Store       @relation(fields: [storeId], references: [id])
   warehouse Warehouse   @relation(fields: [warehouseId], references: [id])
@@ -442,6 +443,18 @@ model OrderItem {
   @@index([orderId])
   @@index([variantId])
   @@map("order_items")
+}
+
+model AdditionalService {
+  id          String  @id @default(uuid())
+  orderId     String
+  name        String
+  price       Decimal
+  description String?
+  order       Order   @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+  @@map("additional_services")
 }
 
 /**

@@ -60,7 +60,8 @@ export class OrderService {
     refundAmount: number, // полная сумма возврата
     cashierTotalPayment: number, // сумма возврата который внес кассир
     orderTotalAmount: number, //обшая сумма заказа
-    customerTotalPaid: number // общая оплата клиента,
+    customerTotalPaid: number, // общая оплата клиента,
+    additionalServiceAmount: number, // общая сумма доп услуг,
   ): ReturnOrderStatus {
 
     if (refundAmount > orderTotalAmount) {
@@ -76,7 +77,7 @@ export class OrderService {
 
     switch (orderStatus) {
       case OrderStatus.COMPLETED:
-        if (refundAmount === orderTotalAmount) {
+        if (refundAmount === (orderTotalAmount - additionalServiceAmount)) {
           if (cashierTotalPayment === refundAmount) {
             return ReturnOrderStatus.COMPLETED
           } else if (cashierTotalPayment < refundAmount) {
@@ -84,7 +85,7 @@ export class OrderService {
           } else {
             throw new BadRequestException(`Total amount returned by cashier cannot be more than total return amount for COMPLETED orders`);
           }
-        } else if (refundAmount < orderTotalAmount) {
+        } else if (refundAmount < (orderTotalAmount - additionalServiceAmount)) {
           if (refundAmount > cashierTotalPayment) {
             return ReturnOrderStatus.CREDIT
           } else if (refundAmount === cashierTotalPayment) {
@@ -158,7 +159,7 @@ export class OrderService {
   async createReturn(createOrderDto: CreateReturnOrderDto, user: CurrentUser) {
     const order = await this.prisma.order.findUnique({
       where: { id: createOrderDto.orderId },
-      include: { items: true, payments: true }
+      include: { items: true, payments: true, services: true }
     });
 
     if (!order) {
@@ -175,6 +176,7 @@ export class OrderService {
     const customerPayments = order.payments.reduce((sum, p) => sum + +p.amount, 0);
     const refundAmount = createOrderDto.items.reduce((sum, item) => sum + (item.retailPrice - item.sale) * item.quantity, 0);
     const cashierPayments = createOrderDto.returnPayments.reduce((sum, p) => sum + +p.amount, 0);
+    const servicesAmount = order.services.reduce((sum, s) => sum + +s.price, 0);
 
     const initialReturnStatus = this.returnInitialStatus(order.status, +order.totalAmount, refundAmount, customerPayments);
 
@@ -205,19 +207,20 @@ export class OrderService {
           data: returnItemsData
         });
 
+        const stockMovementsData = createOrderDto.items.map(returnedItem => {
+          const orderItem = orderItemsById.get(returnedItem.itemId)!;
+          return {
+            type: StockMovementType.IN,
+            reason: StockMovementReason.RETURN,
+            quantity: returnedItem.quantity,
+            unitCost: new Prisma.Decimal(returnedItem.costAtSale),
+            variantId: orderItem.variantId,
+            warehouseId: order.warehouseId,
+            createdById: user.staff.id
+          }
+        });
         await prisma.stockMovement.createMany({
-          data: createOrderDto.items.map(returnedItem => {
-            const orderItem = orderItemsById.get(returnedItem.itemId)!;
-            return {
-              type: StockMovementType.IN,
-              reason: StockMovementReason.RETURN,
-              quantity: returnedItem.quantity,
-              unitCost: new Prisma.Decimal(returnedItem.costAtSale),
-              variantId: orderItem.variantId,
-              warehouseId: order.warehouseId,
-              createdById: user.staff.id
-            }
-          })
+          data: stockMovementsData
         });
 
         const createdPayments = createOrderDto.returnPayments.map(payment => {
@@ -234,7 +237,8 @@ export class OrderService {
           refundAmount, // полная сумма возврата, которая считается на основе возвращаемых товаров
           cashierPayments, // сумма возврата который внес кассир
           +order.totalAmount, //обшая сумма заказа
-          customerPayments // общая оплата клиента
+          customerPayments, // общая оплата клиента
+          servicesAmount // общая сумма доп услуг
         );
 
         await prisma.returnPayment.createMany({
@@ -380,6 +384,24 @@ export class OrderService {
             });
           }
         }
+
+        let additionalServicesAmount = 0;
+        if (dto.additionalServices.length > 0) {
+
+          const additionalServicesData = dto.additionalServices.map(service => {
+            additionalServicesAmount += +service.price;
+            return {
+              orderId: dto.orderId,
+              name: service.name,
+              price: +service.price,
+              description: service.description ?? null,
+            }
+          })
+          await prisma.additionalService.createMany({
+            data: additionalServicesData
+          });
+        }
+
         const existingItemIds = dto.items.filter(i => i.itemId).map(i => i.itemId) as string[];
         const removedItemIds = order.items.filter(existingItem => !existingItemIds.includes(existingItem.id)).map(i => i.id);
         if (removedItemIds.length > 0) {
@@ -391,7 +413,7 @@ export class OrderService {
         await prisma.order.update({
           where: { id: dto.orderId },
           data: {
-            totalAmount: totalAmountToAdd,
+            totalAmount: totalAmountToAdd + additionalServicesAmount,
             customerId: dto.customerId ?? null,
             status: OrderStatus.HOLD
           },
@@ -426,16 +448,16 @@ export class OrderService {
       }
 
       await this.prisma.$transaction(async (prisma) => {
-        for (const paymentDto of dto.payments) {
-          await prisma.payment.create({
-            data: {
-              orderId: orderId,
-              amount: paymentDto.amount,
-              type: paymentDto.type,
-              createdBy: user.staff.id
-            }
-          });
-        }
+        const paymentsData = dto.payments.map(payment => ({
+          orderId: orderId,
+          amount: payment.amount,
+          type: payment.type,
+          createdBy: user.staff.id
+        }));
+
+        await prisma.payment.createMany({
+          data: paymentsData
+        });
 
         // Суммируем количество по variantId, чтобы списывать один раз на вариант
         const qtyByVariantId = new Map<string, number>();

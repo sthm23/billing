@@ -1,5 +1,5 @@
 import { OrderChannel, PaymentType } from "@generated/enums";
-import { IsArray, IsEnum, IsNotEmpty, IsOptional, IsNumber, IsDateString, IsString, IsUUID, Min, ArrayMinSize, ValidateNested, } from "class-validator";
+import { IsArray, IsEnum, IsNotEmpty, IsOptional, IsNumber, IsDateString, IsString, IsUUID, Min, ArrayMinSize, ValidateNested, isArray, } from "class-validator";
 import { Type } from "class-transformer";
 class OrderItemDto {
     @IsOptional()
@@ -30,6 +30,21 @@ class OrderItemDto {
     @Min(0)
     costAtSale: number = 0
 }
+
+class OrderAdditionalServiceDto {
+    @IsString()
+    @IsNotEmpty()
+    name!: string
+
+    @IsNotEmpty()
+    @IsNumber()
+    @Min(0)
+    price: number = 0
+
+    @IsOptional()
+    @IsString()
+    description?: string
+}
 export class CreateOrderItemDto {
     @IsString()
     @IsUUID('4')
@@ -40,11 +55,17 @@ export class CreateOrderItemDto {
     customerId?: string
 
     @IsArray()
+    @ValidateNested({ each: true })
+    @Type(() => OrderAdditionalServiceDto)
+    additionalServices: OrderAdditionalServiceDto[] = []
+
+    @IsArray()
     @ArrayMinSize(1, { message: "At least one order item is required" })
     @ValidateNested({ each: true })
     @Type(() => OrderItemDto)
     items: OrderItemDto[] = []
 }
+
 export class CreateOrderDto {
     @IsString()
     @IsUUID('4')
