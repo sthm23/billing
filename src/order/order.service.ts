@@ -1,6 +1,5 @@
 import { BadRequestException, NotFoundException, Injectable } from '@nestjs/common';
 import { CreateOrderDto, CreateOrderItemDto, CreateOrderPaymentDto } from './dto/create-order.dto';
-import { UpdateOrderDto } from './dto/update-order.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { CurrentUser } from '@auth/models/auth.model';
 import { OrderStatus, ReturnOrderStatus, StockMovementReason, StockMovementType, UserRole, UserType } from '@generated/enums';
@@ -274,7 +273,7 @@ export class OrderService {
       await this.prisma.$transaction(async (prisma) => {
         const order = await prisma.order.findUnique({
           where: { id: dto.orderId },
-          include: { items: true },
+          include: { items: true, services: true },
         });
 
         if (!order) throw new BadRequestException('Order not found');
@@ -386,20 +385,39 @@ export class OrderService {
         }
 
         let additionalServicesAmount = 0;
-        if (dto.additionalServices.length > 0) {
 
-          const additionalServicesData = dto.additionalServices.map(service => {
+        if (dto.additionalServices.length > 0) {
+          const removedIds = order.services.filter(s => !dto.additionalServices.some(as => as.id === s.id)).map(s => s.id);
+          if (removedIds.length > 0) {
+            await prisma.additionalService.deleteMany({
+              where: { id: { in: removedIds } },
+            });
+          }
+          for (const service of dto.additionalServices) {
             additionalServicesAmount += +service.price;
-            return {
-              orderId: dto.orderId,
-              name: service.name,
-              price: +service.price,
-              description: service.description ?? null,
+            if (service.id) {
+              const existing = order.services.find(s => s.id === service.id);
+              if (existing) {
+                await prisma.additionalService.update({
+                  where: { id: service.id },
+                  data: {
+                    name: service.name,
+                    price: +service.price,
+                    description: service.description ?? null,
+                  }
+                });
+              }
+            } else {
+              await prisma.additionalService.create({
+                data: {
+                  orderId: dto.orderId,
+                  name: service.name,
+                  price: +service.price,
+                  description: service.description ?? null,
+                }
+              })
             }
-          })
-          await prisma.additionalService.createMany({
-            data: additionalServicesData
-          });
+          }
         }
 
         const existingItemIds = dto.items.filter(i => i.itemId).map(i => i.itemId) as string[];
@@ -597,6 +615,7 @@ export class OrderService {
             }
           },
           payments: true,
+          services: true,
         }
       });
       if (!order) {

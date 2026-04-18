@@ -32,6 +32,10 @@ class OrderItemDto {
 }
 
 class OrderAdditionalServiceDto {
+    @IsOptional()
+    @IsUUID('4')
+    id?: string
+
     @IsString()
     @IsNotEmpty()
     name!: string
