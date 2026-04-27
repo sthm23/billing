@@ -334,14 +334,6 @@ CREATE TABLE "additional_services" (
 );
 
 -- CreateTable
-CREATE TABLE "additional_services_on_stores" (
-    "storeId" TEXT NOT NULL,
-    "serviceId" TEXT NOT NULL,
-
-    CONSTRAINT "additional_services_on_stores_pkey" PRIMARY KEY ("storeId","serviceId")
-);
-
--- CreateTable
 CREATE TABLE "ReturnedOrder" (
     "id" TEXT NOT NULL,
     "orderId" TEXT NOT NULL,
@@ -620,12 +612,6 @@ ALTER TABLE "order_items" ADD CONSTRAINT "order_items_variantId_fkey" FOREIGN KE
 
 -- AddForeignKey
 ALTER TABLE "additional_services" ADD CONSTRAINT "additional_services_orderId_fkey" FOREIGN KEY ("orderId") REFERENCES "orders"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "additional_services_on_stores" ADD CONSTRAINT "additional_services_on_stores_serviceId_fkey" FOREIGN KEY ("serviceId") REFERENCES "additional_services"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "additional_services_on_stores" ADD CONSTRAINT "additional_services_on_stores_storeId_fkey" FOREIGN KEY ("storeId") REFERENCES "stores"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ReturnedOrder" ADD CONSTRAINT "ReturnedOrder_orderId_fkey" FOREIGN KEY ("orderId") REFERENCES "orders"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

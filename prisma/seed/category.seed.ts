@@ -8,7 +8,10 @@ type CategoryNode = {
 export enum CategoryEnum {
     LUMBER = 'Lumber',
     BEAM = 'Beam',
+    TIMBER = 'Timber',
     BATTEN = 'Batten',
+    ROOFING = 'Roofing',
+    WOOD_PANELS = 'Wood Panels',
     ELECTRONICS = 'Electronics',
     PHONES = 'Phones',
     SMARTPHONES = 'Smartphones',
@@ -38,11 +41,23 @@ const categories: CategoryNode[] = [
         name: CategoryEnum.LUMBER, // пиломатериалы древесины
         children: [
             {
-                name: CategoryEnum.BEAM, // балка брус
+                name: CategoryEnum.BEAM, // балка / Стропила / колонно 
+                children: []
+            },
+            {
+                name: CategoryEnum.TIMBER, // брус
                 children: []
             },
             {
                 name: CategoryEnum.BATTEN, // рейка
+                children: []
+            },
+            {
+                name: CategoryEnum.ROOFING, // Кровельные материалы (шифер, металлочерепица, профнастил и т.д.)
+                children: []
+            },
+            {
+                name: CategoryEnum.WOOD_PANELS, // Древесные плиты (фанера, ДСП, МДФ, OSB и т.д.)
                 children: []
             }
         ]
