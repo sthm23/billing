@@ -1,16 +1,17 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateProductDto, CreateProductVariantDto } from './dto/create-product.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { Prisma, Product, Staff, StaffRole, StockMovementReason, StockMovementType, User, UserRole } from '@generated/client';
+import { Prisma, Product, StaffRole, StockMovementReason, StockMovementType, UserRole } from '@generated/client';
 import { buildSku } from '@shared/helper/sku-generator.helper';
-import { generateEan13 } from '@shared/helper/bar-code-generator.helper';
 import { CurrentUser } from '@auth/models/auth.model';
+import { BarcodeService } from '@shared/helper/bar-code.service';
 
 @Injectable()
 export class ProductService {
 
   constructor(
     private prisma: PrismaService,
+    private barcodeService: BarcodeService,
   ) { }
 
   async createProduct(dto: CreateProductDto, user: CurrentUser): Promise<Product> {
@@ -60,7 +61,7 @@ export class ProductService {
 
       await this.prisma.$transaction(async (tx) => {
         for (const variant of dto.variants) {
-          const barCode = await this.generateBarCode(tx, dto.productId, variant.barCode);
+          const barCode = await this.barcodeService.generateUniqueBarcode();
           await tx.productVariant.create({
             data: {
               productId: product.id,
@@ -103,21 +104,6 @@ export class ProductService {
     }
   }
 
-  private async generateBarCode(tx: any, productId: string, barCode?: string): Promise<string> {
-    const newBarcode = barCode?.trim() ? barCode.trim() : generateEan13();
-    const existingBarCode = await tx.productVariant.findFirst({
-      where: {
-        productId: productId,
-        barCode: newBarcode,
-      }
-    });
-    if (existingBarCode) {
-      // рекурсивно генерируем новый штрихкод, пока не найдем уникальный
-      return this.generateBarCode(tx, productId);
-    }
-    return Promise.resolve(newBarcode);
-  }
-
   async findAll(pageSize = 10, currentPage = 1, user: CurrentUser) {
     const skip = (currentPage - 1) * pageSize;
     try {
@@ -134,7 +120,8 @@ export class ProductService {
       const count = await this.prisma.product.count({
         where: {
           ...param,
-        }
+        },
+
       });
 
       const result = await this.prisma.product.findMany({
@@ -142,6 +129,9 @@ export class ProductService {
         take: +pageSize,
         where: {
           ...param,
+        },
+        orderBy: {
+          createdAt: 'desc',
         },
         include: {
           images: {

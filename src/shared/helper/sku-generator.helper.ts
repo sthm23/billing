@@ -4,7 +4,7 @@ export function skuToken(value: string | number): string {
         .trim()
         .toUpperCase()
         .normalize("NFKD")
-        .replace(/[^A-Z0-9]+/g, ""); // убираем всё кроме A-Z/0-9
+        .replace(/[^\p{L}\p{N}]+/gu, ""); // сохраняет буквы/цифры всех алфавитов
     return t || "ITEM";
 }
 

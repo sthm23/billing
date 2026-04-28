@@ -245,7 +245,7 @@ model ProductVariant {
   attributes     VariantAttributeValue[]
 
   @@unique([storeId, sku])
-  @@unique([storeId, barCode])
+  @@unique([barCode])
   @@index([productId])
   @@map("product_variants")
 }
@@ -339,6 +339,12 @@ model AttributeValue {
   variant     VariantAttributeValue[]
 
   @@unique([attributeId, valueString, valueNumber, valueBool])
+}
+
+model BarcodeSequence {
+  id        Int      @id @default(1)
+  nextCode  BigInt   @default(200000000000)
+  updatedAt DateTime @updatedAt
 }
 
 model ProductAttribute {

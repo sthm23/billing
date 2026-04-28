@@ -9,9 +9,6 @@ export class AttributeValueDto {
     value: string | number = "";
 }
 export class ProductVariantDto {
-    @IsOptional()
-    @IsString()
-    barCode?: string;
 
     @IsNumber()
     @Type(() => Number)

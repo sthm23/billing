@@ -24,6 +24,16 @@ async function main() {
      * ======================
      */
     await seedUsers(prisma);
+
+    /* 
+    Баркод генеруется первый раз
+    */
+    await prisma.barcodeSequence.upsert({
+        where: { id: 1 },
+        update: {},
+        create: { id: 1, nextCode: 200000000000n },
+    });
+
     /**
      * ======================
      * BRANDS
