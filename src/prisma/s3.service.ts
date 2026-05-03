@@ -5,53 +5,45 @@ import {
     S3Client,
     type S3ClientConfig,
     DeleteObjectCommand,
-    CopyObjectCommand,
     CreateBucketCommandInput,
     CreateBucketCommand,
     HeadBucketCommand,
     CreateBucketConfiguration,
-    PutBucketCorsCommand
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { ConfigService } from '@nestjs/config';
 import { PresignedUrlResult, S3KeyParams, UploadFileParam } from './models/s3.model';
 
 
+
 @Injectable()
 export class S3Service implements OnModuleInit {
     private readonly s3Client: S3Client;
     private readonly bucketName: string;
-    private readonly endpointUrl: string;
     private readonly region: string;
-    private readonly forcePathStyle: boolean;
+    private readonly forcePathStyle: boolean = false;
     private readonly expiresIn = 900; // 15 minutes
 
     constructor(
         private configService: ConfigService
     ) {
         this.bucketName = this.configService.get<string>('AWS_S3_BUCKET_NAME') || '';
-        const rawEndpoint = this.configService.get<string>('AWS_S3_ENDPOINT') || '';
-        this.endpointUrl = rawEndpoint.startsWith('http://') || rawEndpoint.startsWith('https://')
-            ? rawEndpoint
-            : `http://${rawEndpoint}`;
 
-        this.region = this.configService.get<string>('AWS_REGION') || 'us-east-1';
-        this.forcePathStyle = this.configService.get<boolean>('AWS_S3_FORCE_PATH_STYLE') || false;
+        this.region = this.configService.get<string>('AWS_REGION') || 'eu-west-1';
+
         const forcePathStyleEnv = this.configService.get<string>('AWS_S3_FORCE_PATH_STYLE');
         if (forcePathStyleEnv != null) {
             this.forcePathStyle = forcePathStyleEnv === 'true';
-        } else {
-            const host = new URL(this.endpointUrl).hostname;
-            this.forcePathStyle = host.includes('localhost') || host.includes('localstack');
         }
+
         const config: S3ClientConfig = {
             region: this.region,
-            endpoint: this.endpointUrl,
             credentials: {
                 accessKeyId: this.configService.get<string>('AWS_ACCESS_KEY_ID') || '',
                 secretAccessKey: this.configService.get<string>('AWS_SECRET_ACCESS_KEY') || '',
             },
             forcePathStyle: this.forcePathStyle,
+            requestChecksumCalculation: 'WHEN_REQUIRED',
         };
         this.s3Client = new S3Client(config)
     }
@@ -61,18 +53,18 @@ export class S3Service implements OnModuleInit {
     }
 
 
-    private encodeKeyForUrl(key: string): string {
-        return key.split('/').map(encodeURIComponent).join('/');
-    }
-    private getPublicUrl(key: string): string {
-        const endpoint = new URL(this.endpointUrl);
-        const safeKey = this.encodeKeyForUrl(key);
+    // private encodeKeyForUrl(key: string): string {
+    //     return key.split('/').map(encodeURIComponent).join('/');
+    // }
+    // private getPublicUrl(key: string): string {
+    //     const endpoint = new URL(this.endpointUrl);
+    //     const safeKey = this.encodeKeyForUrl(key);
 
-        if (this.forcePathStyle) {
-            return `${endpoint.origin}/${this.bucketName}/${safeKey}`;
-        }
-        return `${endpoint.protocol}//${this.bucketName}.${endpoint.host}/${safeKey}`;
-    }
+    //     if (this.forcePathStyle) {
+    //         return `${endpoint.origin}/${this.bucketName}/${safeKey}`;
+    //     }
+    //     return `${endpoint.protocol}//${this.bucketName}.${endpoint.host}/${safeKey}`;
+    // }
 
     /* 
     * Generate S3 Key
@@ -155,7 +147,9 @@ export class S3Service implements OnModuleInit {
         try {
             await this.s3Client.send(new HeadBucketCommand({ Bucket: this.bucketName }));
             return true;
-        } catch {
+        } catch (error) {
+            console.log(error);
+
             const result = await this.createBucketCommand();
             if (!result) {
                 throw new BadRequestException('Could not create S3 bucket');
