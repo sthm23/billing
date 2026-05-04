@@ -9,8 +9,8 @@ export class BarcodeService {
      * Генерирует уникальный EAN-13 баркод
      * Использует последовательный счетчик для гарантии уникальности
      */
-    async generateUniqueBarcode(): Promise<string> {
-        const sequence = await this.prisma.barcodeSequence.upsert({
+    async generateUniqueBarcode(prisma: any): Promise<string> {
+        const sequence = await prisma.barcodeSequence.upsert({
             where: { id: 1 },
             update: { nextCode: { increment: 1 } },
             create: { id: 1, nextCode: 200000000000n },

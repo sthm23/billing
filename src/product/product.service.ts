@@ -61,8 +61,8 @@ export class ProductService {
 
       await this.prisma.$transaction(async (tx) => {
         for (const variant of dto.variants) {
-          const barCode = await this.barcodeService.generateUniqueBarcode();
-          await tx.productVariant.create({
+          const barCode = await this.barcodeService.generateUniqueBarcode(tx);
+          const newVariant = await tx.productVariant.create({
             data: {
               productId: product.id,
               warehouseId: product.warehouseId, // важно: берем из product, не из dto
@@ -70,31 +70,33 @@ export class ProductService {
               sku: buildSku(product.name, dto.category, variant.attributes.map(a => a.value)),
               barCode,
               price: new Prisma.Decimal(variant.retailPrice),
-              attributes: {
-                createMany: {
-                  data: variant.attributes.map(attr => ({ attributeValueId: attr.attributeValueId }))
-                }
-              },
-              inventory: {
-                create: {
-                  quantity: variant.quantity,
-                  warehouse: { connect: { id: warehouse.id } },
-                }
-              },
-              stockMovements: {
-                create: {
-                  type: StockMovementType.IN,
-                  reason: StockMovementReason.PURCHASE,
-                  quantity: variant.quantity,
-                  warehouse: { connect: { id: warehouse.id } },
-                  createdBy: { connect: { id: user.staff.id } },
-                  unitCost: new Prisma.Decimal(variant.costPrice),
-                }
-              },
-
             }
           })
 
+          await tx.inventory.create({
+            data: {
+              quantity: variant.quantity,
+              variantId: newVariant.id,
+              warehouseId: warehouse.id,
+            }
+          })
+          await tx.stockMovement.create({
+            data: {
+              type: StockMovementType.IN,
+              reason: StockMovementReason.PURCHASE,
+              quantity: variant.quantity,
+              variantId: newVariant.id,
+              warehouseId: warehouse.id,
+              unitCost: new Prisma.Decimal(variant.costPrice),
+              createdById: user.staff.id,
+            }
+          })
+          await tx.variantAttributeValue.createMany({
+            data: variant.attributes.map(attr => ({
+              attributeValueId: attr.attributeValueId,
+              variantId: newVariant.id,
+            }))
+          });
         }
       })
 
