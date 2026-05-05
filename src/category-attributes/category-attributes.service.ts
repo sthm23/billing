@@ -1,27 +1,11 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { CreateCategoryAttributeDto } from './dto/create-category-attribute.dto';
+import { CreateAttributeDto, CreateAttributeValueDto } from './dto/create-category-attribute.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { AttributeType } from '@generated/enums';
 
 @Injectable()
 export class CategoryAttributesService {
   constructor(private prisma: PrismaService,) { }
-
-  async create(dto: CreateCategoryAttributeDto) {
-    try {
-      const category = await this.prisma.category.upsert({
-        where: { name: dto.name },
-        update: {},
-        create: {
-          name: dto.name,
-          parentId: dto?.parentId ?? null,
-        },
-      })
-      return category;
-    } catch (error: any) {
-      throw new BadRequestException('Category could not be created: ' + error.message);
-    }
-  }
 
   async findBrands() {
     try {
@@ -170,4 +154,39 @@ export class CategoryAttributesService {
     }
   }
 
+  async createAttribute(dto: CreateAttributeDto) {
+    try {
+      return this.prisma.attribute.create({
+        data: {
+          name: dto.name,
+          type: dto.type
+        }
+      })
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
+  async createAttributeValue(dto: CreateAttributeValueDto) {
+    try {
+      let valueType = dto.name.trim().toLocaleLowerCase();
+      if (valueType === 'true' || valueType === 'false') {
+        valueType = 'boolean';
+      } else if (!isNaN(Number(valueType))) {
+        valueType = 'number';
+      } else {
+        valueType = 'string';
+      }
+
+      return await this.prisma.attributeValue.create({
+        data: {
+          attributeId: dto.attributeId,
+          valueString: valueType === 'string' ? dto.name : null,
+          valueBool: valueType === 'boolean' ? dto.name === 'true' : null,
+          valueNumber: valueType === 'number' ? Number(dto.name) : null
+        }
+      })
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
 }
