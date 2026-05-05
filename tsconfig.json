@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "strict": true,
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "resolvePackageJsonExports": true,
@@ -20,6 +21,94 @@
     "forceConsistentCasingInFileNames": true,
     "noImplicitAny": false,
     "strictBindCallApply": false,
-    "noFallthroughCasesInSwitch": false
-  }
+    "noFallthroughCasesInSwitch": false,
+    "paths": {
+      "@utils": [
+        "./src/utils"
+      ],
+      "@utils/*": [
+        "./src/utils/*"
+      ],
+      "@user": [
+        "./src/user"
+      ],
+      "@user/*": [
+        "./src/user/*"
+      ],
+      "@auth": [
+        "./src/auth"
+      ],
+      "@auth/*": [
+        "./src/auth/*"
+      ],
+      "@generated": [
+        "./generated/prisma"
+      ],
+      "@generated/*": [
+        "./generated/prisma/*"
+      ],
+      "@admin": [
+        "./src/admin"
+      ],
+      "@admin/*": [
+        "./src/admin/*"
+      ],
+      "@order": [
+        "./src/order"
+      ],
+      "@order/*": [
+        "./src/order/*"
+      ],
+      "@payment": [
+        "./src/payment"
+      ],
+      "@payment/*": [
+        "./src/payment/*"
+      ],
+      "@prisma": [
+        "./src/prisma"
+      ],
+      "@prisma/*": [
+        "./src/prisma/*"
+      ],
+      "@product": [
+        "./src/product"
+      ],
+      "@product/*": [
+        "./src/product/*"
+      ],
+      "@report": [
+        "./src/report"
+      ],
+      "@report/*": [
+        "./src/report/*"
+      ],
+      "@seller": [
+        "./src/seller"
+      ],
+      "@seller/*": [
+        "./src/seller/*"
+      ],
+      "@shared": [
+        "./src/shared"
+      ],
+      "@shared/*": [
+        "./src/shared/*"
+      ],
+      "@warehouse": [
+        "./src/warehouse"
+      ],
+      "@warehouse/*": [
+        "./src/warehouse/*"
+      ],
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
 }

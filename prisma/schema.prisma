@@ -1,0 +1,625 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/**
+ * =======================
+ * AUTH & USERS
+ * =======================
+ */
+
+model User {
+  id              String           @id @default(uuid())
+  fullName        String
+  phone           String           @unique
+  role            UserRole         @default(USER)
+  type            UserType
+  createdAt       DateTime         @default(now())
+  image           String?
+  auth            AuthAccount?
+  customer        Customer?
+  refreshSessions RefreshSession[]
+  staff           Staff?
+  stores          Store[] //created stores by this auth account
+
+  @@map("users")
+}
+
+model AuthAccount {
+  id           String   @id @default(uuid())
+  userId       String   @unique
+  login        String   @unique // e.g. email or username or phone
+  passwordHash String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id])
+
+  @@map("auth_accounts")
+}
+
+model RefreshSession {
+  id          String   @id @default(uuid())
+  userId      String
+  refreshHash String
+  userAgent   String? // браузер / устройство
+  ip          String?
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  isRevoked   Boolean  @default(false) // когда сессия была отозвана
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("refresh_sessions")
+}
+
+/**
+ * =======================
+ * STORES & STAFF
+ * =======================
+ */
+
+model Store {
+  id        String   @id @default(uuid())
+  name      String
+  ownerId   String
+  createdAt DateTime @default(now())
+
+  createdBy String // admin auth account id
+  creator   User   @relation(fields: [createdBy], references: [id])
+
+  warehouse Warehouse[]
+  staff     Staff[]
+  customers Customer[]  @relation("CustomerStores")
+  orders    Order[]
+
+  categories CategoriesOnStore[]
+  brands     BrandsOnStore[]
+  attributes AttributeOnStore[]
+
+  @@map("stores")
+}
+
+model Customer {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+  stores    Store[]  @relation("CustomerStores")
+  orders    Order[]  @relation("CustomerOrders")
+
+  @@map("customers")
+}
+
+model Staff {
+  id        String    @id @default(uuid())
+  userId    String    @unique
+  storeId   String
+  role      StaffRole
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+
+  returnPayments ReturnPayment[]    @relation("ReturnPayments")
+  orders         Order[]            @relation("StaffOrders")
+  payments       Payment[]          @relation("StaffPayments")
+  store          Store              @relation(fields: [storeId], references: [id])
+  user           User               @relation(fields: [userId], references: [id])
+  warehouse      StaffOnWarehouse[]
+  stockMoves     StockMovement[]
+
+  @@index([storeId])
+  @@map("staff")
+}
+
+model StaffOnWarehouse {
+  staffId     String
+  warehouseId String
+  staff       Staff     @relation(fields: [staffId], references: [id])
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id])
+
+  @@id([staffId, warehouseId])
+  @@map("staff_on_warehouses")
+}
+
+/**
+ * =======================
+ * WAREHOUSES
+ * =======================
+ */
+
+model Warehouse {
+  id             String             @id @default(uuid())
+  storeId        String
+  name           String
+  isActive       Boolean            @default(true)
+  createdAt      DateTime           @default(now())
+  inventory      Inventory[]
+  orders         Order[]
+  staffs         StaffOnWarehouse[]
+  stockMovements StockMovement[]
+  products       Product[]
+  store          Store              @relation(fields: [storeId], references: [id])
+
+  @@index([storeId])
+  @@map("warehouses")
+}
+
+/**
+ * =======================
+ * PRODUCTS & VARIANTS
+ * =======================
+ */
+
+model Brand {
+  id       String          @id @default(uuid())
+  name     String          @unique
+  stores   BrandsOnStore[]
+  products Product[]
+
+  @@map("brands")
+}
+
+model ProductImage {
+  id        String  @id @default(uuid())
+  productId String
+  url       String
+  isMain    Boolean @default(false)
+  order     Int     @default(0)
+  product   Product @relation(fields: [productId], references: [id])
+
+  @@index([productId, isMain])
+  @@map("product_images")
+}
+
+model Tag {
+  id     String     @id @default(uuid())
+  name   String     @unique
+  values TagValue[] // например "latex", "cotton" для тега "material"
+
+  @@map("tags")
+}
+
+model TagValue {
+  id      String            @id @default(uuid())
+  tagId   String
+  value   String
+  product ProductTagValue[]
+  tag     Tag               @relation(fields: [tagId], references: [id])
+
+  @@unique([tagId, value])
+  @@map("tag_values")
+}
+
+model ProductTagValue {
+  productId  String
+  tagValueId String
+  product    Product  @relation(fields: [productId], references: [id])
+  value      TagValue @relation(fields: [tagValueId], references: [id])
+
+  @@id([productId, tagValueId])
+  @@map("product_tag_values")
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  warehouseId String
+  storeId     String // для быстрого доступа к магазину, которому принадлежит товар
+  name        String
+  categoryId  String?
+  brandId     String?
+  description String?
+  isArchived  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  warehouse  Warehouse          @relation(fields: [warehouseId], references: [id])
+  category   Category?          @relation(fields: [categoryId], references: [id])
+  brand      Brand?             @relation(fields: [brandId], references: [id])
+  images     ProductImage[]
+  variants   ProductVariant[]
+  attributes ProductAttribute[]
+  tags       ProductTagValue[]
+
+  @@index([warehouseId])
+  @@index([categoryId])
+  @@index([brandId])
+  @@map("products")
+}
+
+model ProductVariant {
+  id             String                  @id @default(uuid())
+  productId      String
+  sku            String // ску будет уникален в пределах магазина
+  barCode        String?
+  price          Decimal
+  storeId        String // это для быстрого поиска уникального SKU в пределах магазина
+  warehouseId    String // это для быстрого доступа к складу, на котором лежит товар
+  inventory      Inventory[]
+  orderItems     OrderItem[]
+  product        Product                 @relation(fields: [productId], references: [id])
+  stockMovements StockMovement[]
+  attributes     VariantAttributeValue[]
+
+  @@unique([storeId, sku])
+  @@unique([barCode])
+  @@index([productId])
+  @@map("product_variants")
+}
+
+/**
+ * =======================
+ * INVENTORY
+ * =======================
+ */
+
+model Inventory {
+  id          String         @id @default(uuid())
+  warehouseId String
+  variantId   String
+  quantity    Int
+  variant     ProductVariant @relation(fields: [variantId], references: [id])
+  warehouse   Warehouse      @relation(fields: [warehouseId], references: [id])
+
+  @@unique([warehouseId, variantId])
+  @@map("inventories")
+}
+
+/**
+ * складские движения приход/расход
+ * =======================
+ * STOCK MOVEMENTS
+ * =======================
+ */
+model StockMovement {
+  id          String              @id @default(uuid())
+  variantId   String
+  warehouseId String
+  type        StockMovementType
+  reason      StockMovementReason
+  quantity    Int
+  unitCost    Decimal? // только для IN себестоимость
+  createdById String
+  createdAt   DateTime            @default(now())
+  variant     ProductVariant      @relation(fields: [variantId], references: [id])
+  warehouse   Warehouse           @relation(fields: [warehouseId], references: [id])
+  createdBy   Staff               @relation(fields: [createdById], references: [id])
+
+  @@index([warehouseId, createdAt])
+  @@index([variantId, createdAt])
+  @@map("stock_movements")
+}
+
+/**
+ * =======================
+ * CATALOG
+ * =======================
+ */
+
+model Category {
+  id       String              @id @default(uuid())
+  name     String              @unique
+  parentId String?
+  parent   Category?           @relation("CategoryTree", fields: [parentId], references: [id])
+  children Category[]          @relation("CategoryTree")
+  store    CategoriesOnStore[]
+  products Product[]
+
+  @@index([parentId])
+  @@map("categories")
+}
+
+/**
+ * =======================
+ * ATTRIBUTES (FILTERS)
+ * =======================
+ */
+
+model Attribute {
+  id      String             @id @default(uuid())
+  name    String             @unique
+  type    AttributeType
+  values  AttributeValue[]
+  store   AttributeOnStore[]
+  product ProductAttribute[]
+
+  @@map("attributes")
+}
+
+model AttributeValue {
+  id          String                  @id @default(uuid())
+  attributeId String
+  valueString String?
+  valueNumber Decimal?
+  valueBool   Boolean?
+  attribute   Attribute               @relation(fields: [attributeId], references: [id])
+  variant     VariantAttributeValue[]
+
+  @@unique([attributeId, valueString, valueNumber, valueBool])
+}
+
+model BarcodeSequence {
+  id        Int      @id @default(1)
+  nextCode  BigInt   @default(200000000000)
+  updatedAt DateTime @updatedAt
+}
+
+model ProductAttribute {
+  productId   String
+  attributeId String
+  attribute   Attribute @relation(fields: [attributeId], references: [id])
+  product     Product   @relation(fields: [productId], references: [id])
+
+  @@id([productId, attributeId])
+  @@map("product_attributes")
+}
+
+model VariantAttributeValue {
+  variantId        String
+  attributeValueId String
+  value            AttributeValue @relation(fields: [attributeValueId], references: [id])
+  variant          ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@id([variantId, attributeValueId])
+  @@map("variant_attribute_values")
+}
+
+model CategoriesOnStore {
+  storeId    String
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
+  store      Store    @relation(fields: [storeId], references: [id])
+
+  @@id([storeId, categoryId])
+  @@map("categories_on_stores")
+}
+
+model BrandsOnStore {
+  storeId String
+  brandId String
+  brand   Brand  @relation(fields: [brandId], references: [id])
+  store   Store  @relation(fields: [storeId], references: [id])
+
+  @@id([storeId, brandId])
+  @@map("brands_on_stores")
+}
+
+model AttributeOnStore {
+  storeId     String
+  attributeId String
+  attribute   Attribute @relation(fields: [attributeId], references: [id])
+  store       Store     @relation(fields: [storeId], references: [id])
+
+  @@id([storeId, attributeId])
+  @@map("attributes_on_stores")
+}
+
+/**
+ * =======================
+ * ORDERS & SALES
+ * =======================
+ */
+
+model Order {
+  id          String       @id @default(uuid())
+  storeId     String
+  warehouseId String
+  cashierId   String
+  customerId  String?
+  channel     OrderChannel
+  status      OrderStatus
+  totalAmount Decimal
+  paidAmount  Decimal      @default(0)
+  createdAt   DateTime     @default(now())
+
+  isReturned     Boolean             @default(false)
+  returnedAt     DateTime?
+  returnedAmount Decimal             @default(0)
+  returns        ReturnedOrder?
+  services       AdditionalService[]
+
+  store     Store       @relation(fields: [storeId], references: [id])
+  warehouse Warehouse   @relation(fields: [warehouseId], references: [id])
+  cashier   Staff       @relation("StaffOrders", fields: [cashierId], references: [id])
+  customer  Customer?   @relation("CustomerOrders", fields: [customerId], references: [id])
+  items     OrderItem[]
+  payments  Payment[]
+  // delivery  Delivery?
+
+  @@index([storeId, createdAt])
+  @@index([warehouseId, createdAt])
+  @@map("orders")
+}
+
+model OrderItem {
+  id          String         @id @default(uuid())
+  orderId     String
+  variantId   String
+  quantity    Int
+  retailPrice Decimal // Розничная цена на момент продажи, может отличаться от текущей цены в каталоге
+  sale        Decimal        @default(0) // Скидка на момент продажи
+  costAtSale  Decimal // За сколько закупили
+  returnItems ReturnItem?
+  order       Order          @relation(fields: [orderId], references: [id])
+  variant     ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@index([orderId])
+  @@index([variantId])
+  @@map("order_items")
+}
+
+model AdditionalService {
+  id          String  @id @default(uuid())
+  orderId     String
+  name        String
+  price       Decimal
+  description String?
+  order       Order   @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+  @@map("additional_services")
+}
+
+/**
+ * =======================
+ * RETURN ORDERS
+ * =======================
+ */
+model ReturnedOrder {
+  id          String            @id @default(uuid())
+  orderId     String            @unique
+  createdAt   DateTime          @default(now())
+  createdBy   String
+  status      ReturnOrderStatus
+  totalAmount Decimal           @default(0)
+  items       ReturnItem[]
+  payments    ReturnPayment[]
+  order       Order             @relation(fields: [orderId], references: [id])
+}
+
+model ReturnItem {
+  id        String        @id @default(uuid())
+  returnId  String
+  itemId    String        @unique
+  quantity  Int
+  orderItem OrderItem     @relation(fields: [itemId], references: [id])
+  return    ReturnedOrder @relation(fields: [returnId], references: [id])
+}
+
+model ReturnPayment {
+  id            String        @id @default(uuid())
+  returnOrderId String
+  amount        Decimal
+  type          PaymentType
+  createdAt     DateTime      @default(now())
+  createdBy     String
+  cashier       Staff         @relation("ReturnPayments", fields: [createdBy], references: [id])
+  return        ReturnedOrder @relation(fields: [returnOrderId], references: [id])
+}
+
+/**
+ * =======================
+ * PAYMENTS
+ * =======================
+ */
+
+model Payment {
+  id        String      @id @default(uuid())
+  orderId   String
+  type      PaymentType
+  amount    Decimal
+  paidAt    DateTime?
+  createdAt DateTime    @default(now())
+  createdBy String
+  cashier   Staff       @relation("StaffPayments", fields: [createdBy], references: [id])
+  order     Order       @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+  @@map("payments")
+}
+
+/**
+ * =======================
+ * DELIVERY
+ * =======================
+ */
+
+// model Delivery {
+//   id          String         @id @default(uuid())
+//   orderId     String         @unique
+//   type        DeliveryType   @default(PICKUP)
+//   address     String?
+//   phone       String?
+//   fee         Decimal        @default(0)
+//   status      DeliveryStatus @default(PENDING)
+//   shippedAt   DateTime?
+//   deliveredAt DateTime?
+//   order       Order          @relation(fields: [orderId], references: [id])
+
+//   @@map("deliveries")
+// }
+
+/**
+ * =======================
+ * ENUMS
+ * =======================
+ */
+
+enum UserRole {
+  ADMIN
+  OWNER
+  USER
+}
+
+enum UserType {
+  CUSTOMER
+  STAFF
+}
+
+enum StaffRole {
+  OWNER
+  SELLER
+  MANAGER
+  CASHIER
+  WAREHOUSE
+}
+
+enum StockMovementType {
+  IN
+  OUT
+}
+
+enum StockMovementReason {
+  PURCHASE
+  SALE
+  ADJUSTMENT
+  RETURN
+}
+
+enum OrderStatus {
+  CREATED
+  COMPLETED
+  DEBT
+  CANCELLED
+  HOLD
+  REFUNDED
+}
+
+enum ReturnOrderStatus {
+  DEBT
+  CREDIT
+  COMPLETED
+}
+
+enum PaymentType {
+  CASH
+  CARD
+  DEBT
+  INSTALLMENT
+}
+
+enum OrderChannel {
+  POS
+  ONLINE
+}
+
+enum DeliveryStatus {
+  PENDING
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+}
+
+enum DeliveryType {
+  COURIER
+  PICKUP
+}
+
+enum AttributeType {
+  STRING
+  NUMBER
+  BOOLEAN
+}
