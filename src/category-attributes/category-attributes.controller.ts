@@ -1,17 +1,12 @@
 import { Controller, Get, Post, Body, Param, ParseUUIDPipe, Query } from '@nestjs/common';
 import { CategoryAttributesService } from './category-attributes.service';
-import { CreateCategoryAttributeDto } from './dto/create-category-attribute.dto';
+import { CreateAttributeDto, CreateAttributeValueDto } from './dto/create-category-attribute.dto';
 import { PaginationParams } from '@shared/dto/pagination-params.dto';
 import { IdParamDto } from '@shared/dto/id-param.dto';
 
 @Controller('category')
 export class CategoryAttributesController {
   constructor(private readonly categoryAttributesService: CategoryAttributesService) { }
-
-  @Post()
-  createCategory(@Body() createCategoryAttributeDto: CreateCategoryAttributeDto) {
-    return this.categoryAttributesService.create(createCategoryAttributeDto);
-  }
 
 
   @Get('brand')
@@ -56,6 +51,16 @@ export class CategoryAttributesController {
     @Param('id', new ParseUUIDPipe({ version: '4' })) attrId: string
   ) {
     return this.categoryAttributesService.findAttributeItem(attrId);
+  }
+
+  @Post('attribute')
+  createAttribute(@Body() createCategoryAttributeDto: CreateAttributeDto) {
+    return this.categoryAttributesService.createAttribute(createCategoryAttributeDto);
+  }
+
+  @Post('attribute/value')
+  createAttributeValue(@Body() createCategoryAttributeDto: CreateAttributeValueDto) {
+    return this.categoryAttributesService.createAttributeValue(createCategoryAttributeDto);
   }
 
   @Get()

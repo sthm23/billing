@@ -1,11 +1,22 @@
-import { IsNotEmpty, IsOptional, IsString, IsUUID } from "class-validator";
+import { AttributeType } from "@generated/client";
+import { IsEnum, IsNotEmpty, IsString, IsUUID } from "class-validator";
 
-export class CreateCategoryAttributeDto {
+export class CreateAttributeDto {
     @IsNotEmpty()
     @IsString()
     name!: string;
 
-    @IsOptional()
+    @IsNotEmpty()
+    @IsEnum(AttributeType)
+    type!: AttributeType;
+}
+
+export class CreateAttributeValueDto {
+    @IsNotEmpty()
+    @IsString()
+    name!: string;
+
+    @IsNotEmpty()
     @IsUUID('4')
-    parentId?: string;
+    attributeId!: string;
 }
