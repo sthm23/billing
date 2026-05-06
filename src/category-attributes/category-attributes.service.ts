@@ -168,7 +168,7 @@ export class CategoryAttributesService {
   }
   async createAttributeValue(dto: CreateAttributeValueDto) {
     try {
-      let valueType = dto.name.trim().toLocaleLowerCase();
+      let valueType = dto.value.trim().toLocaleLowerCase();
       if (valueType === 'true' || valueType === 'false') {
         valueType = 'boolean';
       } else if (!isNaN(Number(valueType))) {
@@ -177,13 +177,20 @@ export class CategoryAttributesService {
         valueType = 'string';
       }
 
-      return await this.prisma.attributeValue.create({
+      const result = await this.prisma.attributeValue.create({
         data: {
           attributeId: dto.attributeId,
-          valueString: valueType === 'string' ? dto.name : null,
-          valueBool: valueType === 'boolean' ? dto.name === 'true' : null,
-          valueNumber: valueType === 'number' ? Number(dto.name) : null
+          valueString: valueType === 'string' ? dto.value : null,
+          valueBool: valueType === 'boolean' ? dto.value === 'true' : null,
+          valueNumber: valueType === 'number' ? Number(dto.value) : null
         }
+      })
+      return Promise.resolve({
+        id: result.id,
+        attributeId: result.attributeId,
+        attributeName: valueType === 'string' ? result.valueString
+          : valueType === 'boolean' ? Boolean(result.valueBool)
+            : valueType === 'number' ? Number(result.valueNumber) : null
       })
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)

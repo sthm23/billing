@@ -14,7 +14,7 @@ export class CreateAttributeDto {
 export class CreateAttributeValueDto {
     @IsNotEmpty()
     @IsString()
-    name!: string;
+    value!: string;
 
     @IsNotEmpty()
     @IsUUID('4')
