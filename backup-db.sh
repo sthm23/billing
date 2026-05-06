@@ -1,6 +1,6 @@
 #!/bin/bash
 # PostgreSQL Backup Script for Docker Container
-# Run this via cron daily: 0 2 * * * /path/to/backup-db.sh
+# Run this via cron every 3 days: 0 2 */3 * * /path/to/backup-db.sh
 
 set -e  # Exit on error
 
@@ -12,7 +12,7 @@ BACKUP_DIR="./backups"
 CONTAINER_NAME="dev_postgres"
 DATE=$(date +%Y-%m-%d_%H-%M-%S)
 BACKUP_FILE="${BACKUP_DIR}/backup_${DATE}.sql.gz"
-RETENTION_DAYS=7  # Keep last 7 days of backups
+RETENTION_DAYS=21  # Keep last 21 days of backups (approximately 7 backups)
 
 # Create backup directory if it doesn't exist
 mkdir -p "${BACKUP_DIR}"
