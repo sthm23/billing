@@ -30,7 +30,9 @@
 ```bash
 $ npm install
 ```
-
+```bash
+$ npm install --registry=https://registry.npmjs.org/
+```
 ## Compile and run the project
 
 ```bash
