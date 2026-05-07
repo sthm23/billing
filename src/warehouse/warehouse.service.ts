@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { CreateWarehouseDto, CreateWarehouseStaffDto } from './dto/create-warehouse.dto';
+import { AddInventoryDto, CreateWarehouseDto, CreateWarehouseStaffDto } from './dto/create-warehouse.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { StaffRole, StockMovementReason, StockMovementType, UserType } from '@generated/enums';
 import { HashingHelper } from '@shared/helper/hash.helper';
@@ -137,6 +137,49 @@ export class WarehouseService {
       })
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message);
+    }
+  }
+
+  async addInventory(warehouseId: string, dto: AddInventoryDto, user: CurrentUser) {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const variant = await tx.productVariant.findUnique({ where: { id: dto.variantId } });
+        if (!variant) throw new NotFoundException("Product variant not found");
+        const warehouse = await tx.warehouse.findUnique({ where: { id: warehouseId } });
+        if (!warehouse || warehouse.id !== variant.warehouseId) throw new NotFoundException("Warehouse not found");
+
+        await tx.inventory.update({
+          where: {
+            warehouseId_variantId: {
+              warehouseId: warehouse.id,
+              variantId: variant.id,
+            },
+          },
+          data: {
+            quantity: { increment: dto.quantity },
+          },
+        });
+        await tx.stockMovement.create({
+          data: {
+            type: StockMovementType.IN,
+            reason: StockMovementReason.PURCHASE,
+            quantity: dto.quantity,
+            variantId: variant.id,
+            warehouseId: warehouse.id,
+            unitCost: new Prisma.Decimal(dto.costPrice),
+            createdById: user.staff.id,
+          }
+        })
+        await tx.productVariant.update({
+          where: { id: variant.id },
+          data: {
+            price: new Prisma.Decimal(dto.price),
+          }
+        });
+        return { message: 'Inventory added successfully' };
+      })
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
     }
   }
 

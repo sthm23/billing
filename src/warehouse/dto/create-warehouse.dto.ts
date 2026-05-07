@@ -1,4 +1,5 @@
-import { IsNotEmpty, IsOptional, IsString, IsUUID, ValidateNested } from "class-validator";
+import { Type } from "class-transformer";
+import { IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Min, ValidateNested } from "class-validator";
 
 
 export class CreateWarehouseStaffDto {
@@ -49,3 +50,27 @@ export class CreateWarehouseDto {
     }
 }
 
+export class AddInventoryDto {
+    @IsNotEmpty()
+    @IsUUID('4')
+    variantId!: string;
+
+    @IsNotEmpty()
+    @IsUUID('4')
+    warehouseId!: string;
+
+    @IsNumber()
+    @Type(() => Number)
+    @Min(1)
+    quantity!: number;
+
+    @IsNumber()
+    @Type(() => Number)
+    @Min(1)
+    costPrice!: number;
+
+    @IsNumber()
+    @Type(() => Number)
+    @Min(1)
+    price!: number;
+}

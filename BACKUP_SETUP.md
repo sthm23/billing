@@ -64,19 +64,24 @@ Backup successful: ./backups/backup_2026-05-06_14-30-00.sql.gz
 Backup size: 2.3M
 ```
 
-### Step 4: Setup Automated Daily Backups (Cron)
+### Step 4: Setup Automated Backups Every 3 Days (Cron)
 
 On your VPS, add to crontab:
 ```bash
 crontab -e
 ```
 
-Add this line (runs daily at 2 AM):
+Add this line (runs every 3 days at 2 AM):
 ```
-0 2 * * * cd /path/to/your/app && ./backup-db.sh >> /var/log/db-backup.log 2>&1
+0 2 */3 * * cd /path/to/your/app && ./backup-db.sh >> /var/log/db-backup.log 2>&1
 ```
 
 **Replace `/path/to/your/app`** with actual path!
+
+**Cron schedule breakdown:**
+- `0 2` = At 2:00 AM
+- `*/3` = Every 3 days
+- `* *` = Every month, any day of week
 
 ### Step 5: Setup Remote Backup Upload (IMPORTANT!)
 
