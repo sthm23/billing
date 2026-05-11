@@ -58,6 +58,9 @@ export class CreateCashTransactionDto {
     @IsEnum(CashTransactionCategory)
     category: CashTransactionCategory = CashTransactionCategory.DELIVERY
 
+    @IsEnum(PaymentType)
+    paymentType: PaymentType = PaymentType.CASH
+
     @IsNotEmpty()
     @IsNumber()
     @Min(0)

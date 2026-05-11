@@ -37,6 +37,11 @@ export class PaymentController {
     return this.paymentService.createCashTransaction(id, dto, user);
   }
 
+  @Get('cashbox')
+  getCashBox(@CurrentUser() user: CurrentUserType) {
+    return this.paymentService.findAll({ pageSize: 10, currentPage: 1 }, user);
+  }
+
   @Post('return/:id')
   createReturnPayment(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,

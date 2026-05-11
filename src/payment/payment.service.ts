@@ -57,7 +57,8 @@ export class PaymentService {
             type: CashTransactionType.INCOME,
             createdById: user.staff.id,
             orderId: dto.orderId,
-            category: CashTransactionCategory.SALE
+            category: CashTransactionCategory.SALE,
+            paymentType: p.type as PaymentType
           }))
         })
         const status = totalPaid + newTotalAmount === +order.totalAmount - +order.returnedAmount
@@ -159,7 +160,8 @@ export class PaymentService {
             type: dto.type,
             createdById: user.staff.id,
             category: dto.category,
-            comment: dto.comment
+            comment: dto.comment,
+            paymentType: dto.paymentType as PaymentType
           }
         })
         await prisma.cashbox.update({
@@ -224,7 +226,8 @@ export class PaymentService {
             type: CashTransactionType.EXPENSE,
             createdById: user.staff.id,
             orderId: returnOrder.id,
-            category: CashTransactionCategory.RETURN
+            category: CashTransactionCategory.RETURN,
+            paymentType: paymentDto.type as PaymentType
           }))
         })
 

@@ -553,6 +553,7 @@ model CashTransaction {
   createdById String
   type        CashTransactionType
   category    CashTransactionCategory
+  paymentType PaymentType
 
   amount  Decimal
   comment String?

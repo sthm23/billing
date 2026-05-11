@@ -2,7 +2,7 @@ import { BadRequestException, NotFoundException, Injectable } from '@nestjs/comm
 import { CreateOrderDto, CreateOrderItemDto, CreateOrderPaymentDto } from './dto/create-order.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { CurrentUser } from '@auth/models/auth.model';
-import { CashStatus, CashTransactionCategory, CashTransactionType, OrderStatus, ReturnOrderStatus, StockMovementReason, StockMovementType, UserRole, UserType } from '@generated/enums';
+import { CashStatus, CashTransactionCategory, CashTransactionType, OrderStatus, PaymentType, ReturnOrderStatus, StockMovementReason, StockMovementType, UserRole, UserType } from '@generated/enums';
 import { OrderItem, Prisma } from '@generated/client';
 import { CreateReturnOrderDto, ReturnItemDto } from './dto/create-return.dto';
 import { OrderQueryParams } from './entities/order.entity';
@@ -270,7 +270,8 @@ export class OrderService {
             type: CashTransactionType.EXPENSE,
             createdById: user.staff.id,
             orderId: order.id,
-            category: CashTransactionCategory.RETURN
+            category: CashTransactionCategory.RETURN,
+            paymentType: p.type as PaymentType
           }))
         })
 
@@ -546,7 +547,8 @@ export class OrderService {
             type: CashTransactionType.INCOME,
             createdById: user.staff.id,
             orderId: orderId,
-            category: CashTransactionCategory.SALE
+            category: CashTransactionCategory.SALE,
+            paymentType: p.type as PaymentType
           }))
         })
 
