@@ -81,6 +81,7 @@ model Store {
   categories CategoriesOnStore[]
   brands     BrandsOnStore[]
   attributes AttributeOnStore[]
+  cashboxes  Cashbox[]
 
   @@map("stores")
 }
@@ -104,13 +105,15 @@ model Staff {
   isActive  Boolean   @default(true)
   createdAt DateTime  @default(now())
 
-  returnPayments ReturnPayment[]    @relation("ReturnPayments")
-  orders         Order[]            @relation("StaffOrders")
-  payments       Payment[]          @relation("StaffPayments")
-  store          Store              @relation(fields: [storeId], references: [id])
-  user           User               @relation(fields: [userId], references: [id])
-  warehouse      StaffOnWarehouse[]
-  stockMoves     StockMovement[]
+  returnPayments   ReturnPayment[]    @relation("ReturnPayments")
+  orders           Order[]            @relation("StaffOrders")
+  payments         Payment[]          @relation("StaffPayments")
+  store            Store              @relation(fields: [storeId], references: [id])
+  user             User               @relation(fields: [userId], references: [id])
+  warehouse        StaffOnWarehouse[]
+  stockMoves       StockMovement[]
+  cashboxes        Cashbox[]
+  cashTransactions CashTransaction[]
 
   @@index([storeId])
   @@map("staff")
@@ -422,13 +425,14 @@ model Order {
   returns        ReturnedOrder?
   services       AdditionalService[]
 
-  store     Store       @relation(fields: [storeId], references: [id])
-  warehouse Warehouse   @relation(fields: [warehouseId], references: [id])
-  cashier   Staff       @relation("StaffOrders", fields: [cashierId], references: [id])
-  customer  Customer?   @relation("CustomerOrders", fields: [customerId], references: [id])
-  items     OrderItem[]
-  payments  Payment[]
+  store            Store             @relation(fields: [storeId], references: [id])
+  warehouse        Warehouse         @relation(fields: [warehouseId], references: [id])
+  cashier          Staff             @relation("StaffOrders", fields: [cashierId], references: [id])
+  customer         Customer?         @relation("CustomerOrders", fields: [customerId], references: [id])
+  items            OrderItem[]
+  payments         Payment[]
   // delivery  Delivery?
+  cashTransactions CashTransaction[]
 
   @@index([storeId, createdAt])
   @@index([warehouseId, createdAt])
@@ -526,6 +530,44 @@ model Payment {
 }
 
 /**
+ * CASHBOX
+ */
+model Cashbox {
+  id          String     @id @default(uuid())
+  sellerId    String
+  storeId     String
+  status      CashStatus
+  warehouseId String
+  balance     Decimal    @default(0)
+  createdAt   DateTime   @default(now())
+
+  seller Staff @relation(fields: [sellerId], references: [id])
+  store  Store @relation(fields: [storeId], references: [id])
+
+  transactions CashTransaction[]
+}
+
+model CashTransaction {
+  id          String                  @id @default(uuid())
+  cashboxId   String
+  createdById String
+  type        CashTransactionType
+  category    CashTransactionCategory
+
+  amount  Decimal
+  comment String?
+
+  orderId String?
+
+  createdAt DateTime @default(now())
+
+  cashbox   Cashbox @relation(fields: [cashboxId], references: [id])
+  createdBy Staff   @relation(fields: [createdById], references: [id])
+
+  order Order? @relation(fields: [orderId], references: [id])
+}
+
+/**
  * =======================
  * DELIVERY
  * =======================
@@ -551,6 +593,26 @@ model Payment {
  * ENUMS
  * =======================
  */
+enum CashTransactionType {
+  INCOME
+  EXPENSE
+}
+
+enum CashTransactionCategory {
+  SALE
+  DEBT_PAYMENT
+  RENT
+  DELIVERY
+  SALARY
+  PURCHASE
+  RETURN
+  OTHER
+}
+
+enum CashStatus {
+  OPEN
+  CLOSED
+}
 
 enum UserRole {
   ADMIN

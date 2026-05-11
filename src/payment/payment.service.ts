@@ -1,9 +1,10 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { CreatePaymentDto, CreateReturnPaymentDto } from './dto/create-payment.dto';
+import { CreateCashBoxDto, CreateCashTransactionDto, CreatePaymentDto, CreateReturnPaymentDto } from './dto/create-payment.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { CurrentUser } from '@auth/models/auth.model';
-import { OrderStatus, PaymentType, ReturnOrderStatus } from '@generated/enums';
+import { CashStatus, CashTransactionCategory, CashTransactionType, OrderStatus, PaymentType, ReturnOrderStatus } from '@generated/enums';
+import { Prisma } from '@generated/client';
 
 @Injectable()
 export class PaymentService {
@@ -27,6 +28,16 @@ export class PaymentService {
       if (totalPaid + newTotalAmount > (+order.totalAmount - +order.returnedAmount)) {
         throw new BadRequestException('Payment amount exceeds order total');
       }
+      const cashBox = await this.prisma.cashbox.findFirst({
+        where: {
+          storeId: user.staff.storeId,
+          sellerId: user.staff.id,
+          status: CashStatus.OPEN
+        }
+      });
+      if (!cashBox) {
+        throw new BadRequestException('Open cashbox not found for the order store');
+      }
       await this.prisma.$transaction(async (prisma) => {
         for (const paymentDto of dto.payments) {
           await prisma.payment.create({
@@ -39,10 +50,26 @@ export class PaymentService {
             },
           });
         }
+        await prisma.cashTransaction.createMany({
+          data: dto.payments.map(p => ({
+            cashboxId: cashBox.id,
+            amount: p.amount,
+            type: CashTransactionType.INCOME,
+            createdById: user.staff.id,
+            orderId: dto.orderId,
+            category: CashTransactionCategory.SALE
+          }))
+        })
         const status = totalPaid + newTotalAmount === +order.totalAmount - +order.returnedAmount
           ? OrderStatus.COMPLETED : OrderStatus.DEBT;
         const customer = dto.customerId ? await prisma.customer.findUnique({ where: { id: dto.customerId } }) : null;
 
+        await prisma.cashbox.update({
+          where: { id: cashBox.id },
+          data: {
+            balance: { increment: new Prisma.Decimal(newTotalAmount) }
+          }
+        })
 
         if (order.isReturned && status === OrderStatus.COMPLETED) {
           await prisma.order.update({
@@ -76,6 +103,78 @@ export class PaymentService {
     }
   }
 
+  async createCashBox(dto: CreateCashBoxDto, user: CurrentUser) {
+    try {
+      const existingCashBox = await this.prisma.cashbox.findFirst({
+        where: {
+          storeId: user.staff.storeId,
+          sellerId: user.staff.id,
+          status: CashStatus.OPEN
+        }
+      })
+      if (existingCashBox) {
+        if (dto.status === CashStatus.OPEN) {
+          return existingCashBox
+        } else {
+          return await this.prisma.cashbox.update({
+            where: { id: existingCashBox.id },
+            data: {
+              status: dto.status
+            }
+          })
+        }
+      }
+      return await this.prisma.cashbox.create({
+        data: {
+          storeId: user.staff.storeId,
+          sellerId: user.staff.id,
+          warehouseId: user.staff.warehouse[0].warehouseId,
+          balance: dto.balance ?? 0,
+          status: dto.status ?? CashStatus.OPEN
+        }
+      });
+
+
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
+
+  async createCashTransaction(cashBoxId: string, dto: CreateCashTransactionDto, user: CurrentUser) {
+    try {
+      const cashBox = await this.prisma.cashbox.findUnique({
+        where: { id: cashBoxId }
+      })
+      if (!cashBox) {
+        throw new BadRequestException('Cashbox not found');
+      }
+      if (cashBox.status !== CashStatus.OPEN) {
+        throw new BadRequestException('Cannot add transaction to a cashbox that is not OPEN');
+      }
+      await this.prisma.$transaction(async (prisma) => {
+        await prisma.cashTransaction.create({
+          data: {
+            cashboxId: cashBox.id,
+            amount: dto.amount,
+            type: dto.type,
+            createdById: user.staff.id,
+            category: dto.category,
+            comment: dto.comment
+          }
+        })
+        await prisma.cashbox.update({
+          where: { id: cashBox.id },
+          data: {
+            balance: { increment: dto.type === CashTransactionType.INCOME ? new Prisma.Decimal(dto.amount) : new Prisma.Decimal(-dto.amount) }
+          }
+        })
+      })
+      return { message: 'Cash transaction added successfully' };
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
+
   async createPaymentForReturnOrder(id: string, dto: CreateReturnPaymentDto, user: CurrentUser) {
     try {
       const returnOrder = await this.prisma.returnedOrder.findUnique({
@@ -95,6 +194,18 @@ export class PaymentService {
         throw new BadRequestException('Payment amount exceeds returned order total');
       }
 
+      const cashBox = await this.prisma.cashbox.findFirst({
+        where: {
+          storeId: user.staff.storeId,
+          sellerId: user.staff.id,
+          status: CashStatus.OPEN
+        }
+      });
+
+      if (!cashBox) {
+        throw new BadRequestException('Open cashbox not found for the returned order store');
+      }
+
       await this.prisma.$transaction(async (prisma) => {
         await prisma.returnPayment.createMany({
           data: dto.payments.map(paymentDto => ({
@@ -106,11 +217,29 @@ export class PaymentService {
           )
         })
 
+        await prisma.cashTransaction.createMany({
+          data: dto.payments.map(paymentDto => ({
+            cashboxId: cashBox.id,
+            amount: paymentDto.amount,
+            type: CashTransactionType.EXPENSE,
+            createdById: user.staff.id,
+            orderId: returnOrder.id,
+            category: CashTransactionCategory.RETURN
+          }))
+        })
+
         const status = totalPaid + newTotalAmount === +returnOrder.totalAmount ? ReturnOrderStatus.COMPLETED : ReturnOrderStatus.CREDIT;
         await prisma.returnedOrder.update({
           where: { id: returnOrder.id },
           data: {
             status,
+          }
+        })
+
+        await prisma.cashbox.update({
+          where: { id: cashBox.id },
+          data: {
+            balance: { increment: new Prisma.Decimal(-newTotalAmount) }
           }
         })
       });

@@ -2,7 +2,7 @@ import { BadRequestException, NotFoundException, Injectable } from '@nestjs/comm
 import { CreateOrderDto, CreateOrderItemDto, CreateOrderPaymentDto } from './dto/create-order.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { CurrentUser } from '@auth/models/auth.model';
-import { OrderStatus, ReturnOrderStatus, StockMovementReason, StockMovementType, UserRole, UserType } from '@generated/enums';
+import { CashStatus, CashTransactionCategory, CashTransactionType, OrderStatus, ReturnOrderStatus, StockMovementReason, StockMovementType, UserRole, UserType } from '@generated/enums';
 import { OrderItem, Prisma } from '@generated/client';
 import { CreateReturnOrderDto, ReturnItemDto } from './dto/create-return.dto';
 import { OrderQueryParams } from './entities/order.entity';
@@ -27,16 +27,36 @@ export class OrderService {
         throw new BadRequestException('User is not active');
       }
 
-      return this.prisma.order.create({
-        data: {
+      const cashBox = await this.prisma.cashbox.findFirst({
+        where: {
           storeId: createOrderDto.storeId,
           warehouseId: createOrderDto.warehouseId,
-          cashierId: user.staff.id,
-          customerId: createOrderDto?.customerId ?? null,
-          channel: createOrderDto.channel,
-          status: OrderStatus.CREATED,
-          totalAmount: 0,
+          sellerId: user.staff.id,
+          status: CashStatus.OPEN
         }
+      })
+      return await this.prisma.$transaction(async (prisma) => {
+        if (!cashBox) {
+          await prisma.cashbox.create({
+            data: {
+              status: CashStatus.OPEN,
+              storeId: createOrderDto.storeId,
+              warehouseId: createOrderDto.warehouseId,
+              sellerId: user.staff.id
+            }
+          })
+        }
+        return await prisma.order.create({
+          data: {
+            storeId: createOrderDto.storeId,
+            warehouseId: createOrderDto.warehouseId,
+            cashierId: user.staff.id,
+            customerId: createOrderDto?.customerId ?? null,
+            channel: createOrderDto.channel,
+            status: OrderStatus.CREATED,
+            totalAmount: 0,
+          }
+        })
       })
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
@@ -180,6 +200,18 @@ export class OrderService {
 
     const initialReturnStatus = this.returnInitialStatus(order.status, +order.totalAmount, refundAmount, customerPayments);
 
+    const cashBox = await this.prisma.cashbox.findFirst({
+      where: {
+        storeId: order.storeId,
+        warehouseId: order.warehouseId,
+        sellerId: user.staff.id,
+        status: CashStatus.OPEN
+      }
+    })
+
+    if (!cashBox) {
+      throw new BadRequestException('Open cashbox not found for the order store and warehouse');
+    }
     try {
       return await this.prisma.$transaction(async (prisma) => {
         const returnOrder = await prisma.returnedOrder.create({
@@ -231,6 +263,16 @@ export class OrderService {
             createdBy: user.staff.id
           }
         })
+        await prisma.cashTransaction.createMany({
+          data: createdPayments.map(p => ({
+            cashboxId: cashBox.id,
+            amount: p.amount,
+            type: CashTransactionType.EXPENSE,
+            createdById: user.staff.id,
+            orderId: order.id,
+            category: CashTransactionCategory.RETURN
+          }))
+        })
 
         const returnStatus = this.validateReturnPayments(
           order.status, // статус заказа
@@ -261,6 +303,13 @@ export class OrderService {
             status: returnStatus
           }
         });
+
+        await prisma.cashbox.update({
+          where: { id: cashBox.id },
+          data: {
+            balance: { increment: new Prisma.Decimal(-cashierPayments) }
+          }
+        })
 
         return Promise.resolve({ message: 'Order returned successfully' });
       });
@@ -465,8 +514,20 @@ export class OrderService {
       if (totalPaid > +order.totalAmount) {
         throw new BadRequestException('Payment amount exceeds order total');
       }
+      const cashBox = await this.prisma.cashbox.findFirst({
+        where: {
+          storeId: order.storeId,
+          warehouseId: order.warehouseId,
+          sellerId: order.cashierId,
+          status: CashStatus.OPEN
+        }
+      });
 
+      if (!cashBox) {
+        throw new BadRequestException('Open cashbox not found for the order store and warehouse');
+      }
       await this.prisma.$transaction(async (prisma) => {
+
         const paymentsData = dto.payments.map(payment => ({
           orderId: orderId,
           amount: payment.amount,
@@ -477,6 +538,17 @@ export class OrderService {
         await prisma.payment.createMany({
           data: paymentsData
         });
+
+        await prisma.cashTransaction.createMany({
+          data: paymentsData.map(p => ({
+            cashboxId: cashBox.id,
+            amount: p.amount,
+            type: CashTransactionType.INCOME,
+            createdById: user.staff.id,
+            orderId: orderId,
+            category: CashTransactionCategory.SALE
+          }))
+        })
 
         // Суммируем количество по variantId, чтобы списывать один раз на вариант
         const qtyByVariantId = new Map<string, number>();
@@ -528,6 +600,13 @@ export class OrderService {
             paidAmount: status === OrderStatus.COMPLETED ? +order.totalAmount : totalPaid
           }
         });
+
+        await prisma.cashbox.update({
+          where: { id: cashBox.id },
+          data: {
+            balance: { increment: new Prisma.Decimal(newPaid) }
+          }
+        })
       });
 
       return Promise.resolve({ message: 'Payment created successfully' });
