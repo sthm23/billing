@@ -5,6 +5,7 @@ import { CurrentUser } from '@auth/models/auth.model';
 import { OrderStatus, ReturnOrderStatus, StockMovementReason, StockMovementType, UserRole, UserType } from '@generated/enums';
 import { OrderItem, Prisma } from '@generated/client';
 import { CreateReturnOrderDto, ReturnItemDto } from './dto/create-return.dto';
+import { OrderQueryParams } from './entities/order.entity';
 
 
 @Injectable()
@@ -535,7 +536,7 @@ export class OrderService {
     }
   }
 
-  async findAll(pageSize = 10, currentPage = 1, user: CurrentUser) {
+  async findAll({ pageSize = 10, currentPage = 1, status, fromDate, toDate }: OrderQueryParams, user: CurrentUser) {
     const skip = (currentPage - 1) * pageSize;
     try {
       const params = {}
@@ -544,26 +545,44 @@ export class OrderService {
         params['storeId'] = user.staff.storeId
       }
 
-      if (user.type === UserType.STAFF && user.role !== UserRole.OWNER) {
-        params['cashierId'] = user.staff.id
+      if (status) {
+        params['status'] = {
+          in: status.split(',') as OrderStatus[]
+        }
+      }
+
+      if (fromDate || toDate) {
+        params['createdAt'] = {}
+        if (fromDate) {
+          params['createdAt']['gte'] = new Date(fromDate)
+        }
+        if (toDate) {
+          params['createdAt']['lte'] = new Date(toDate)
+        }
       }
 
       const orders = await this.prisma.order.findMany({
-        where: params,
+        where: {
+          ...params,
+
+        },
         include: {
-          _count: {
-            select: { items: true, payments: true }
+          cashier: {
+            include: {
+              user: true,
+            }
           },
-          cashier: true,
           customer: true,
           store: true,
           warehouse: true
         },
         skip: skip,
         take: +pageSize,
+        orderBy: { createdAt: 'desc' },
       })
       const totalOrders = await this.prisma.order.count({
         where: params,
+        orderBy: { createdAt: 'desc' },
       })
       return {
         currentPage,
@@ -580,10 +599,49 @@ export class OrderService {
           totalAmount: order.totalAmount,
           paidAmount: order.paidAmount,
           createdAt: order.createdAt,
-          itemsCount: order._count.items,
-          paymentsCount: order._count.payments,
         }))
       };
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
+
+  async searchOrders(search: string, user: CurrentUser) {
+    try {
+      const params = {}
+      if (user.type === UserType.STAFF) {
+        params['storeId'] = user.staff.storeId
+      }
+      if (search) {
+        params['customer'] = {
+          OR: [
+            {
+              user: {
+                OR: [
+                  {
+                    fullName: { contains: search, mode: 'insensitive' },
+                  },
+                  {
+                    phone: { contains: search, mode: 'insensitive' },
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      };
+
+      return this.prisma.order.findMany({
+        where: params,
+        include: {
+          customer: {
+            include: {
+              user: true,
+            }
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }
@@ -631,6 +689,20 @@ export class OrderService {
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }
+  }
+
+  async clearCustomerFromOrder(id: string) {
+    const order = await this.prisma.order.findUnique({ where: { id } });
+    if (!order) {
+      throw new BadRequestException('Order not found');
+    }
+    if (order.status === OrderStatus.COMPLETED || order.status === OrderStatus.DEBT) {
+      throw new BadRequestException('Cannot clear customer from a completed or debt order');
+    }
+    return this.prisma.order.update({
+      where: { id },
+      data: { customerId: null }
+    });
   }
 
   async remove(id: string, user: CurrentUser) {

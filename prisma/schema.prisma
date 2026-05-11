@@ -236,6 +236,7 @@ model ProductVariant {
   sku            String // ску будет уникален в пределах магазина
   barCode        String?
   price          Decimal
+  createdAt      DateTime                @default(now())
   storeId        String // это для быстрого поиска уникального SKU в пределах магазина
   warehouseId    String // это для быстрого доступа к складу, на котором лежит товар
   inventory      Inventory[]
@@ -442,6 +443,7 @@ model OrderItem {
   retailPrice Decimal // Розничная цена на момент продажи, может отличаться от текущей цены в каталоге
   sale        Decimal        @default(0) // Скидка на момент продажи
   costAtSale  Decimal // За сколько закупили
+  createdAt   DateTime       @default(now())
   returnItems ReturnItem?
   order       Order          @relation(fields: [orderId], references: [id])
   variant     ProductVariant @relation(fields: [variantId], references: [id])
@@ -452,12 +454,13 @@ model OrderItem {
 }
 
 model AdditionalService {
-  id          String  @id @default(uuid())
+  id          String   @id @default(uuid())
   orderId     String
   name        String
   price       Decimal
   description String?
-  order       Order   @relation(fields: [orderId], references: [id])
+  createdAt   DateTime @default(now())
+  order       Order    @relation(fields: [orderId], references: [id])
 
   @@index([orderId])
   @@map("additional_services")
@@ -485,6 +488,7 @@ model ReturnItem {
   returnId  String
   itemId    String        @unique
   quantity  Int
+  createdAt DateTime      @default(now())
   orderItem OrderItem     @relation(fields: [itemId], references: [id])
   return    ReturnedOrder @relation(fields: [returnId], references: [id])
 }
@@ -598,6 +602,7 @@ enum PaymentType {
   CASH
   CARD
   ONLINE
+  TRANSFER
 }
 
 enum OrderChannel {

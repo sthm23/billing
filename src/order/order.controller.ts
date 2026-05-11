@@ -1,11 +1,11 @@
-import { Controller, Get, Post, Body, Param, Delete, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Delete, ParseUUIDPipe, Query, UseGuards, Patch } from '@nestjs/common';
 import { OrderService } from './order.service';
 import { CreateOrderDto, CreateOrderItemDto, CreateOrderPaymentDto } from './dto/create-order.dto';
 import { CreateReturnOrderDto } from './dto/create-return.dto';
-import { PaginationParams } from '@shared/dto/pagination-params.dto';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { CurrentUser } from '@shared/decorators/user.decorator';
 import { type CurrentUser as CurrentUserType } from '@auth/models/auth.model';
+import { OrderQueryParams } from './entities/order.entity';
 
 @UseGuards(AuthJWTGuard)
 @Controller('orders')
@@ -46,10 +46,18 @@ export class OrderController {
 
   @Get()
   findAll(
-    @Query() { pageSize, currentPage }: PaginationParams,
+    @Query() { pageSize, currentPage, search, status, fromDate, toDate }: OrderQueryParams,
     @CurrentUser() user: CurrentUserType
   ) {
-    return this.orderService.findAll(pageSize, currentPage, user);
+    return this.orderService.findAll({ pageSize, currentPage, search, status, fromDate, toDate }, user);
+  }
+
+  @Get('search')
+  searchOrder(
+    @Query() { search }: OrderQueryParams,
+    @CurrentUser() user: CurrentUserType
+  ) {
+    return this.orderService.searchOrders(search!, user);
   }
 
   @Get(':id')
@@ -58,6 +66,13 @@ export class OrderController {
     @CurrentUser() user: CurrentUserType
   ) {
     return this.orderService.findOne(id, user);
+  }
+
+  @Patch(':id/clear-customer')
+  clearCustomerFromOrder(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string
+  ) {
+    return this.orderService.clearCustomerFromOrder(id);
   }
 
   @Delete(':id')

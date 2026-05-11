@@ -123,7 +123,7 @@ export class ProductService {
         where: {
           ...param,
         },
-
+        orderBy: { createdAt: 'desc' },
       });
 
       const result = await this.prisma.product.findMany({
@@ -317,26 +317,6 @@ export class ProductService {
     }
   }
 
-  async findProductVariants(productId: string) {
-    try {
-      const product = await this.prisma.product.findUnique({
-        where: { id: productId },
-        include: {
-          variants: true,
-        }
-      })
-      if (!product) throw new NotFoundException('Product not found');
-      return {
-        ...product,
-        variants: product.variants.map(v => ({
-
-        }))
-      };
-    } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
-    }
-  }
-
   async findAllVariants(pageSize = 10, currentPage = 1, user: CurrentUser) {
     try {
       const skip = (currentPage - 1) * pageSize;
@@ -346,9 +326,12 @@ export class ProductService {
         where,
         skip,
         take: pageSize,
+        orderBy: { createdAt: 'desc' },
         include: {
           inventory: true,
-          stockMovements: true
+          stockMovements: {
+            orderBy: { createdAt: 'desc' },
+          }
         }
       });
       return {
