@@ -6,6 +6,7 @@ import { PaginationParams } from '@shared/dto/pagination-params.dto';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { CurrentUser } from '@shared/decorators/user.decorator';
 import { type CurrentUser as CurrentUserType } from '@auth/models/auth.model';
+
 @UseGuards(AuthJWTGuard)
 @Controller('payment')
 export class PaymentController {
@@ -29,8 +30,11 @@ export class PaymentController {
   }
 
   @Get()
-  findAll(@Query() { pageSize, currentPage }: PaginationParams) {
-    return this.paymentService.findAll(pageSize, currentPage);
+  findAll(
+    @Query() { pageSize, currentPage }: PaginationParams,
+    @CurrentUser() user: CurrentUserType
+  ) {
+    return this.paymentService.findAll({ pageSize, currentPage }, user);
   }
 
   @Get(':id')

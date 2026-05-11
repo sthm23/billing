@@ -120,14 +120,22 @@ export class PaymentService {
     }
   }
 
-  async findAll(pageSize = 10, currentPage = 1) {
+  async findAll({ currentPage, pageSize }: any, user: CurrentUser) {
     const skip = (currentPage - 1) * pageSize;
     try {
+      const params = {};
+      if (user.staff.storeId) {
+        params['storeId'] = user.staff.storeId;
+      }
+
       const result = await this.prisma.payment.findMany({
         skip: skip,
         take: +pageSize,
+        where: params
       });
-      const count = await this.prisma.payment.count();
+      const count = await this.prisma.payment.count({
+        where: params
+      });
       return {
         currentPage,
         pageSize,

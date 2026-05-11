@@ -572,7 +572,11 @@ export class OrderService {
               user: true,
             }
           },
-          customer: true,
+          customer: {
+            include: {
+              user: true
+            }
+          },
           store: true,
           warehouse: true
         },
@@ -696,8 +700,8 @@ export class OrderService {
     if (!order) {
       throw new BadRequestException('Order not found');
     }
-    if (order.status === OrderStatus.COMPLETED || order.status === OrderStatus.DEBT) {
-      throw new BadRequestException('Cannot clear customer from a completed or debt order');
+    if (order.status === OrderStatus.COMPLETED || order.status === OrderStatus.DEBT || order.status === OrderStatus.REFUNDED) {
+      throw new BadRequestException('Cannot clear customer from a completed, debt, or refunded order');
     }
     return this.prisma.order.update({
       where: { id },
@@ -724,8 +728,8 @@ export class OrderService {
       if (!order) {
         throw new BadRequestException('Order not found');
       }
-      if (order.status === OrderStatus.COMPLETED || order.status === OrderStatus.DEBT) {
-        throw new BadRequestException('Cannot cancel a completed or debt order');
+      if (order.status === OrderStatus.COMPLETED || order.status === OrderStatus.DEBT || order.status === OrderStatus.REFUNDED) {
+        throw new BadRequestException('Cannot cancel a completed, debt, or refunded order');
       }
       if (order.payments.length > 0) {
         throw new BadRequestException('Cannot cancel an order with payments');
