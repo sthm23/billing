@@ -1,4 +1,4 @@
 import { PartialType } from '@nestjs/mapped-types';
-import { CreateCashboxDto } from './create-cashbox.dto';
+import { CreateCashBoxDto } from './create-cashbox.dto';
 
-export class UpdateCashboxDto extends PartialType(CreateCashboxDto) {}
+export class UpdateCashboxDto extends PartialType(CreateCashBoxDto) { }

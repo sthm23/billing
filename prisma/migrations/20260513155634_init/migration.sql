@@ -1,4 +1,13 @@
 -- CreateEnum
+CREATE TYPE "CashTransactionType" AS ENUM ('INCOME', 'EXPENSE');
+
+-- CreateEnum
+CREATE TYPE "CashTransactionCategory" AS ENUM ('SALE', 'DEBT_PAYMENT', 'RENT', 'DELIVERY', 'SALARY', 'PURCHASE', 'RETURN', 'OTHER');
+
+-- CreateEnum
+CREATE TYPE "CashStatus" AS ENUM ('OPEN', 'CLOSED');
+
+-- CreateEnum
 CREATE TYPE "UserRole" AS ENUM ('ADMIN', 'OWNER', 'USER');
 
 -- CreateEnum
@@ -20,7 +29,7 @@ CREATE TYPE "OrderStatus" AS ENUM ('CREATED', 'COMPLETED', 'DEBT', 'CANCELLED', 
 CREATE TYPE "ReturnOrderStatus" AS ENUM ('DEBT', 'CREDIT', 'COMPLETED');
 
 -- CreateEnum
-CREATE TYPE "PaymentType" AS ENUM ('CASH', 'CARD', 'DEBT', 'INSTALLMENT');
+CREATE TYPE "PaymentType" AS ENUM ('CASH', 'CARD', 'ONLINE', 'TRANSFER');
 
 -- CreateEnum
 CREATE TYPE "OrderChannel" AS ENUM ('POS', 'ONLINE');
@@ -190,6 +199,7 @@ CREATE TABLE "product_variants" (
     "sku" TEXT NOT NULL,
     "barCode" TEXT,
     "price" DECIMAL(65,30) NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "storeId" TEXT NOT NULL,
     "warehouseId" TEXT NOT NULL,
 
@@ -248,6 +258,15 @@ CREATE TABLE "AttributeValue" (
     "valueBool" BOOLEAN,
 
     CONSTRAINT "AttributeValue_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "BarcodeSequence" (
+    "id" INTEGER NOT NULL DEFAULT 1,
+    "nextCode" BIGINT NOT NULL DEFAULT 200000000000,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "BarcodeSequence_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -318,6 +337,7 @@ CREATE TABLE "order_items" (
     "retailPrice" DECIMAL(65,30) NOT NULL,
     "sale" DECIMAL(65,30) NOT NULL DEFAULT 0,
     "costAtSale" DECIMAL(65,30) NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "order_items_pkey" PRIMARY KEY ("id")
 );
@@ -329,6 +349,7 @@ CREATE TABLE "additional_services" (
     "name" TEXT NOT NULL,
     "price" DECIMAL(65,30) NOT NULL,
     "description" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "additional_services_pkey" PRIMARY KEY ("id")
 );
@@ -351,6 +372,7 @@ CREATE TABLE "ReturnItem" (
     "returnId" TEXT NOT NULL,
     "itemId" TEXT NOT NULL,
     "quantity" INTEGER NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "ReturnItem_pkey" PRIMARY KEY ("id")
 );
@@ -378,6 +400,35 @@ CREATE TABLE "payments" (
     "createdBy" TEXT NOT NULL,
 
     CONSTRAINT "payments_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Cashbox" (
+    "id" TEXT NOT NULL,
+    "sellerId" TEXT NOT NULL,
+    "storeId" TEXT NOT NULL,
+    "status" "CashStatus" NOT NULL,
+    "warehouseId" TEXT NOT NULL,
+    "balance" DECIMAL(65,30) NOT NULL DEFAULT 0,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "Cashbox_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "CashTransaction" (
+    "id" TEXT NOT NULL,
+    "cashboxId" TEXT NOT NULL,
+    "createdById" TEXT NOT NULL,
+    "type" "CashTransactionType" NOT NULL,
+    "category" "CashTransactionCategory" NOT NULL,
+    "paymentType" "PaymentType" NOT NULL,
+    "amount" DECIMAL(65,30) NOT NULL,
+    "comment" TEXT,
+    "orderId" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "CashTransaction_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -440,7 +491,7 @@ CREATE INDEX "product_variants_productId_idx" ON "product_variants"("productId")
 CREATE UNIQUE INDEX "product_variants_storeId_sku_key" ON "product_variants"("storeId", "sku");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "product_variants_storeId_barCode_key" ON "product_variants"("storeId", "barCode");
+CREATE UNIQUE INDEX "product_variants_barCode_key" ON "product_variants"("barCode");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "inventories_warehouseId_variantId_key" ON "inventories"("warehouseId", "variantId");
@@ -486,6 +537,12 @@ CREATE UNIQUE INDEX "ReturnItem_itemId_key" ON "ReturnItem"("itemId");
 
 -- CreateIndex
 CREATE INDEX "payments_orderId_idx" ON "payments"("orderId");
+
+-- CreateIndex
+CREATE INDEX "Cashbox_storeId_createdAt_idx" ON "Cashbox"("storeId", "createdAt");
+
+-- CreateIndex
+CREATE INDEX "Cashbox_warehouseId_createdAt_idx" ON "Cashbox"("warehouseId", "createdAt");
 
 -- CreateIndex
 CREATE INDEX "_CustomerStores_B_index" ON "_CustomerStores"("B");
@@ -633,6 +690,24 @@ ALTER TABLE "payments" ADD CONSTRAINT "payments_createdBy_fkey" FOREIGN KEY ("cr
 
 -- AddForeignKey
 ALTER TABLE "payments" ADD CONSTRAINT "payments_orderId_fkey" FOREIGN KEY ("orderId") REFERENCES "orders"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Cashbox" ADD CONSTRAINT "Cashbox_sellerId_fkey" FOREIGN KEY ("sellerId") REFERENCES "staff"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Cashbox" ADD CONSTRAINT "Cashbox_storeId_fkey" FOREIGN KEY ("storeId") REFERENCES "stores"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Cashbox" ADD CONSTRAINT "Cashbox_warehouseId_fkey" FOREIGN KEY ("warehouseId") REFERENCES "warehouses"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "CashTransaction" ADD CONSTRAINT "CashTransaction_cashboxId_fkey" FOREIGN KEY ("cashboxId") REFERENCES "Cashbox"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "CashTransaction" ADD CONSTRAINT "CashTransaction_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "staff"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "CashTransaction" ADD CONSTRAINT "CashTransaction_orderId_fkey" FOREIGN KEY ("orderId") REFERENCES "orders"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "_CustomerStores" ADD CONSTRAINT "_CustomerStores_A_fkey" FOREIGN KEY ("A") REFERENCES "customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;

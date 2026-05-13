@@ -147,6 +147,7 @@ model Warehouse {
   stockMovements StockMovement[]
   products       Product[]
   store          Store              @relation(fields: [storeId], references: [id])
+  cashboxes      Cashbox[]
 
   @@index([storeId])
   @@map("warehouses")
@@ -544,7 +545,12 @@ model Cashbox {
   seller Staff @relation(fields: [sellerId], references: [id])
   store  Store @relation(fields: [storeId], references: [id])
 
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+
   transactions CashTransaction[]
+
+  @@index([storeId, createdAt])
+  @@index([warehouseId, createdAt])
 }
 
 model CashTransaction {
