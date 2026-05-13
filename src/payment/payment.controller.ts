@@ -1,11 +1,11 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
 import { PaymentService } from './payment.service';
 import { CreatePaymentDto, CreateReturnPaymentDto } from './dto/create-payment.dto';
-import { UpdatePaymentDto } from './dto/update-payment.dto';
 import { PaginationParams } from '@shared/dto/pagination-params.dto';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { CurrentUser } from '@shared/decorators/user.decorator';
 import { type CurrentUser as CurrentUserType } from '@auth/models/auth.model';
+
 @UseGuards(AuthJWTGuard)
 @Controller('payment')
 export class PaymentController {
@@ -29,22 +29,15 @@ export class PaymentController {
   }
 
   @Get()
-  findAll(@Query() { pageSize, currentPage }: PaginationParams) {
-    return this.paymentService.findAll(pageSize, currentPage);
+  findAll(
+    @Query() { pageSize, currentPage }: PaginationParams,
+    @CurrentUser() user: CurrentUserType
+  ) {
+    return this.paymentService.findAll({ pageSize, currentPage }, user);
   }
 
   @Get(':id')
   findOne(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
     return this.paymentService.findOne(id);
-  }
-
-  @Patch(':id')
-  update(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string, @Body() updatePaymentDto: UpdatePaymentDto) {
-    return this.paymentService.update(id, updatePaymentDto);
-  }
-
-  @Delete(':id')
-  remove(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
-    return this.paymentService.remove(id);
   }
 }

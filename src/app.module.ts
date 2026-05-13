@@ -12,6 +12,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { StoreModule } from './store/store.module';
 import { CategoryAttributesModule } from './category-attributes/category-attributes.module';
 import { FileModule } from './file/file.module';
+import { CashboxModule } from './cashbox/cashbox.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { FileModule } from './file/file.module';
     StoreModule,
     CategoryAttributesModule,
     FileModule,
+    CashboxModule,
   ],
   providers: [ConfigService],
 })

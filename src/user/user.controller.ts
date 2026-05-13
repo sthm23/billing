@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Body, Param, Delete, ValidationPipe, UseGuards, NotFoundException, Put, ParseUUIDPipe, Query } from '@nestjs/common';
 import { UserService } from './user.service';
 import { CreateUserDto } from './dto/create-user.dto';
-import { UpdateUserDto } from './dto/update-user.dto';
+import { UpdateCustomerDto, UpdateUserDto } from './dto/update-user.dto';
 import { RolesGuard } from '@shared/guards/role.guard';
 import { Roles } from '@shared/decorators/role.decorator';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
@@ -32,6 +32,11 @@ export class UserController {
   @Post('customers')
   createCustomers(@Body(new ValidationPipe()) createUserDto: CreateUserDto) {
     return this.userService.createCustomers(createUserDto);
+  }
+
+  @Put('customers/set-to-order')
+  setCustomerToOrder(@Body(new ValidationPipe()) updateCustomerDto: UpdateCustomerDto) {
+    return this.userService.setCustomerToOrder(updateCustomerDto);
   }
 
   @Get('customers')

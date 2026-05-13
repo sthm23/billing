@@ -81,6 +81,7 @@ model Store {
   categories CategoriesOnStore[]
   brands     BrandsOnStore[]
   attributes AttributeOnStore[]
+  cashboxes  Cashbox[]
 
   @@map("stores")
 }
@@ -104,13 +105,15 @@ model Staff {
   isActive  Boolean   @default(true)
   createdAt DateTime  @default(now())
 
-  returnPayments ReturnPayment[]    @relation("ReturnPayments")
-  orders         Order[]            @relation("StaffOrders")
-  payments       Payment[]          @relation("StaffPayments")
-  store          Store              @relation(fields: [storeId], references: [id])
-  user           User               @relation(fields: [userId], references: [id])
-  warehouse      StaffOnWarehouse[]
-  stockMoves     StockMovement[]
+  returnPayments   ReturnPayment[]    @relation("ReturnPayments")
+  orders           Order[]            @relation("StaffOrders")
+  payments         Payment[]          @relation("StaffPayments")
+  store            Store              @relation(fields: [storeId], references: [id])
+  user             User               @relation(fields: [userId], references: [id])
+  warehouse        StaffOnWarehouse[]
+  stockMoves       StockMovement[]
+  cashboxes        Cashbox[]
+  cashTransactions CashTransaction[]
 
   @@index([storeId])
   @@map("staff")
@@ -144,6 +147,7 @@ model Warehouse {
   stockMovements StockMovement[]
   products       Product[]
   store          Store              @relation(fields: [storeId], references: [id])
+  cashboxes      Cashbox[]
 
   @@index([storeId])
   @@map("warehouses")
@@ -236,6 +240,7 @@ model ProductVariant {
   sku            String // ску будет уникален в пределах магазина
   barCode        String?
   price          Decimal
+  createdAt      DateTime                @default(now())
   storeId        String // это для быстрого поиска уникального SKU в пределах магазина
   warehouseId    String // это для быстрого доступа к складу, на котором лежит товар
   inventory      Inventory[]
@@ -421,13 +426,14 @@ model Order {
   returns        ReturnedOrder?
   services       AdditionalService[]
 
-  store     Store       @relation(fields: [storeId], references: [id])
-  warehouse Warehouse   @relation(fields: [warehouseId], references: [id])
-  cashier   Staff       @relation("StaffOrders", fields: [cashierId], references: [id])
-  customer  Customer?   @relation("CustomerOrders", fields: [customerId], references: [id])
-  items     OrderItem[]
-  payments  Payment[]
+  store            Store             @relation(fields: [storeId], references: [id])
+  warehouse        Warehouse         @relation(fields: [warehouseId], references: [id])
+  cashier          Staff             @relation("StaffOrders", fields: [cashierId], references: [id])
+  customer         Customer?         @relation("CustomerOrders", fields: [customerId], references: [id])
+  items            OrderItem[]
+  payments         Payment[]
   // delivery  Delivery?
+  cashTransactions CashTransaction[]
 
   @@index([storeId, createdAt])
   @@index([warehouseId, createdAt])
@@ -442,6 +448,7 @@ model OrderItem {
   retailPrice Decimal // Розничная цена на момент продажи, может отличаться от текущей цены в каталоге
   sale        Decimal        @default(0) // Скидка на момент продажи
   costAtSale  Decimal // За сколько закупили
+  createdAt   DateTime       @default(now())
   returnItems ReturnItem?
   order       Order          @relation(fields: [orderId], references: [id])
   variant     ProductVariant @relation(fields: [variantId], references: [id])
@@ -452,12 +459,13 @@ model OrderItem {
 }
 
 model AdditionalService {
-  id          String  @id @default(uuid())
+  id          String   @id @default(uuid())
   orderId     String
   name        String
   price       Decimal
   description String?
-  order       Order   @relation(fields: [orderId], references: [id])
+  createdAt   DateTime @default(now())
+  order       Order    @relation(fields: [orderId], references: [id])
 
   @@index([orderId])
   @@map("additional_services")
@@ -485,6 +493,7 @@ model ReturnItem {
   returnId  String
   itemId    String        @unique
   quantity  Int
+  createdAt DateTime      @default(now())
   orderItem OrderItem     @relation(fields: [itemId], references: [id])
   return    ReturnedOrder @relation(fields: [returnId], references: [id])
 }
@@ -522,6 +531,50 @@ model Payment {
 }
 
 /**
+ * CASHBOX
+ */
+model Cashbox {
+  id          String     @id @default(uuid())
+  sellerId    String
+  storeId     String
+  status      CashStatus
+  warehouseId String
+  balance     Decimal    @default(0)
+  createdAt   DateTime   @default(now())
+
+  seller Staff @relation(fields: [sellerId], references: [id])
+  store  Store @relation(fields: [storeId], references: [id])
+
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+
+  transactions CashTransaction[]
+
+  @@index([storeId, createdAt])
+  @@index([warehouseId, createdAt])
+}
+
+model CashTransaction {
+  id          String                  @id @default(uuid())
+  cashboxId   String
+  createdById String
+  type        CashTransactionType
+  category    CashTransactionCategory
+  paymentType PaymentType
+
+  amount  Decimal
+  comment String?
+
+  orderId String?
+
+  createdAt DateTime @default(now())
+
+  cashbox   Cashbox @relation(fields: [cashboxId], references: [id])
+  createdBy Staff   @relation(fields: [createdById], references: [id])
+
+  order Order? @relation(fields: [orderId], references: [id])
+}
+
+/**
  * =======================
  * DELIVERY
  * =======================
@@ -547,6 +600,26 @@ model Payment {
  * ENUMS
  * =======================
  */
+enum CashTransactionType {
+  INCOME
+  EXPENSE
+}
+
+enum CashTransactionCategory {
+  SALE
+  DEBT_PAYMENT
+  RENT
+  DELIVERY
+  SALARY
+  PURCHASE
+  RETURN
+  OTHER
+}
+
+enum CashStatus {
+  OPEN
+  CLOSED
+}
 
 enum UserRole {
   ADMIN
@@ -598,6 +671,7 @@ enum PaymentType {
   CASH
   CARD
   ONLINE
+  TRANSFER
 }
 
 enum OrderChannel {

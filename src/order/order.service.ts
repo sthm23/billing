@@ -2,9 +2,10 @@ import { BadRequestException, NotFoundException, Injectable } from '@nestjs/comm
 import { CreateOrderDto, CreateOrderItemDto, CreateOrderPaymentDto } from './dto/create-order.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { CurrentUser } from '@auth/models/auth.model';
-import { OrderStatus, ReturnOrderStatus, StockMovementReason, StockMovementType, UserRole, UserType } from '@generated/enums';
+import { CashStatus, CashTransactionCategory, CashTransactionType, OrderStatus, PaymentType, ReturnOrderStatus, StockMovementReason, StockMovementType, UserRole, UserType } from '@generated/enums';
 import { OrderItem, Prisma } from '@generated/client';
 import { CreateReturnOrderDto, ReturnItemDto } from './dto/create-return.dto';
+import { OrderQueryParams } from './entities/order.entity';
 
 
 @Injectable()
@@ -26,16 +27,36 @@ export class OrderService {
         throw new BadRequestException('User is not active');
       }
 
-      return this.prisma.order.create({
-        data: {
+      const cashBox = await this.prisma.cashbox.findFirst({
+        where: {
           storeId: createOrderDto.storeId,
           warehouseId: createOrderDto.warehouseId,
-          cashierId: user.staff.id,
-          customerId: createOrderDto?.customerId ?? null,
-          channel: createOrderDto.channel,
-          status: OrderStatus.CREATED,
-          totalAmount: 0,
+          sellerId: user.staff.id,
+          status: CashStatus.OPEN
         }
+      })
+      return await this.prisma.$transaction(async (prisma) => {
+        if (!cashBox) {
+          await prisma.cashbox.create({
+            data: {
+              status: CashStatus.OPEN,
+              storeId: createOrderDto.storeId,
+              warehouseId: createOrderDto.warehouseId,
+              sellerId: user.staff.id
+            }
+          })
+        }
+        return await prisma.order.create({
+          data: {
+            storeId: createOrderDto.storeId,
+            warehouseId: createOrderDto.warehouseId,
+            cashierId: user.staff.id,
+            customerId: createOrderDto?.customerId ?? null,
+            channel: createOrderDto.channel,
+            status: OrderStatus.CREATED,
+            totalAmount: 0,
+          }
+        })
       })
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
@@ -179,6 +200,17 @@ export class OrderService {
 
     const initialReturnStatus = this.returnInitialStatus(order.status, +order.totalAmount, refundAmount, customerPayments);
 
+    const cashBox = await this.prisma.cashbox.findFirst({
+      where: {
+        storeId: order.storeId,
+        warehouseId: order.warehouseId,
+        status: CashStatus.OPEN
+      }
+    })
+
+    if (!cashBox) {
+      throw new BadRequestException('Open cashbox not found for the order store and warehouse');
+    }
     try {
       return await this.prisma.$transaction(async (prisma) => {
         const returnOrder = await prisma.returnedOrder.create({
@@ -230,6 +262,17 @@ export class OrderService {
             createdBy: user.staff.id
           }
         })
+        await prisma.cashTransaction.createMany({
+          data: createdPayments.map(p => ({
+            cashboxId: cashBox.id,
+            amount: p.amount,
+            type: CashTransactionType.EXPENSE,
+            createdById: user.staff.id,
+            orderId: order.id,
+            category: CashTransactionCategory.RETURN,
+            paymentType: p.type as PaymentType
+          }))
+        })
 
         const returnStatus = this.validateReturnPayments(
           order.status, // статус заказа
@@ -260,6 +303,13 @@ export class OrderService {
             status: returnStatus
           }
         });
+
+        await prisma.cashbox.update({
+          where: { id: cashBox.id },
+          data: {
+            balance: { increment: new Prisma.Decimal(-cashierPayments) }
+          }
+        })
 
         return Promise.resolve({ message: 'Order returned successfully' });
       });
@@ -464,8 +514,19 @@ export class OrderService {
       if (totalPaid > +order.totalAmount) {
         throw new BadRequestException('Payment amount exceeds order total');
       }
+      const cashBox = await this.prisma.cashbox.findFirst({
+        where: {
+          storeId: order.storeId,
+          warehouseId: order.warehouseId,
+          status: CashStatus.OPEN
+        }
+      });
 
+      if (!cashBox) {
+        throw new BadRequestException('Open cashbox not found for the order store and warehouse');
+      }
       await this.prisma.$transaction(async (prisma) => {
+
         const paymentsData = dto.payments.map(payment => ({
           orderId: orderId,
           amount: payment.amount,
@@ -476,6 +537,18 @@ export class OrderService {
         await prisma.payment.createMany({
           data: paymentsData
         });
+
+        await prisma.cashTransaction.createMany({
+          data: paymentsData.map(p => ({
+            cashboxId: cashBox.id,
+            amount: p.amount,
+            type: CashTransactionType.INCOME,
+            createdById: user.staff.id,
+            orderId: orderId,
+            category: CashTransactionCategory.SALE,
+            paymentType: p.type as PaymentType
+          }))
+        })
 
         // Суммируем количество по variantId, чтобы списывать один раз на вариант
         const qtyByVariantId = new Map<string, number>();
@@ -527,6 +600,13 @@ export class OrderService {
             paidAmount: status === OrderStatus.COMPLETED ? +order.totalAmount : totalPaid
           }
         });
+
+        await prisma.cashbox.update({
+          where: { id: cashBox.id },
+          data: {
+            balance: { increment: new Prisma.Decimal(newPaid) }
+          }
+        })
       });
 
       return Promise.resolve({ message: 'Payment created successfully' });
@@ -535,7 +615,7 @@ export class OrderService {
     }
   }
 
-  async findAll(pageSize = 10, currentPage = 1, user: CurrentUser) {
+  async findAll({ pageSize = 10, currentPage = 1, status, fromDate, toDate }: OrderQueryParams, user: CurrentUser) {
     const skip = (currentPage - 1) * pageSize;
     try {
       const params = {}
@@ -544,26 +624,48 @@ export class OrderService {
         params['storeId'] = user.staff.storeId
       }
 
-      if (user.type === UserType.STAFF && user.role !== UserRole.OWNER) {
-        params['cashierId'] = user.staff.id
+      if (status) {
+        params['status'] = {
+          in: status.split(',') as OrderStatus[]
+        }
+      }
+
+      if (fromDate || toDate) {
+        params['createdAt'] = {}
+        if (fromDate) {
+          params['createdAt']['gte'] = new Date(fromDate)
+        }
+        if (toDate) {
+          params['createdAt']['lte'] = new Date(toDate)
+        }
       }
 
       const orders = await this.prisma.order.findMany({
-        where: params,
+        where: {
+          ...params,
+
+        },
         include: {
-          _count: {
-            select: { items: true, payments: true }
+          cashier: {
+            include: {
+              user: true,
+            }
           },
-          cashier: true,
-          customer: true,
+          customer: {
+            include: {
+              user: true
+            }
+          },
           store: true,
           warehouse: true
         },
         skip: skip,
         take: +pageSize,
+        orderBy: { createdAt: 'desc' },
       })
       const totalOrders = await this.prisma.order.count({
         where: params,
+        orderBy: { createdAt: 'desc' },
       })
       return {
         currentPage,
@@ -580,10 +682,49 @@ export class OrderService {
           totalAmount: order.totalAmount,
           paidAmount: order.paidAmount,
           createdAt: order.createdAt,
-          itemsCount: order._count.items,
-          paymentsCount: order._count.payments,
         }))
       };
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
+
+  async searchOrders(search: string, user: CurrentUser) {
+    try {
+      const params = {}
+      if (user.type === UserType.STAFF) {
+        params['storeId'] = user.staff.storeId
+      }
+      if (search) {
+        params['customer'] = {
+          OR: [
+            {
+              user: {
+                OR: [
+                  {
+                    fullName: { contains: search, mode: 'insensitive' },
+                  },
+                  {
+                    phone: { contains: search, mode: 'insensitive' },
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      };
+
+      return this.prisma.order.findMany({
+        where: params,
+        include: {
+          customer: {
+            include: {
+              user: true,
+            }
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }
@@ -633,6 +774,20 @@ export class OrderService {
     }
   }
 
+  async clearCustomerFromOrder(id: string) {
+    const order = await this.prisma.order.findUnique({ where: { id } });
+    if (!order) {
+      throw new BadRequestException('Order not found');
+    }
+    if (order.status === OrderStatus.COMPLETED || order.status === OrderStatus.DEBT || order.status === OrderStatus.REFUNDED) {
+      throw new BadRequestException('Cannot clear customer from a completed, debt, or refunded order');
+    }
+    return this.prisma.order.update({
+      where: { id },
+      data: { customerId: null }
+    });
+  }
+
   async remove(id: string, user: CurrentUser) {
     try {
       const params = {}
@@ -652,8 +807,8 @@ export class OrderService {
       if (!order) {
         throw new BadRequestException('Order not found');
       }
-      if (order.status === OrderStatus.COMPLETED || order.status === OrderStatus.DEBT) {
-        throw new BadRequestException('Cannot cancel a completed or debt order');
+      if (order.status === OrderStatus.COMPLETED || order.status === OrderStatus.DEBT || order.status === OrderStatus.REFUNDED) {
+        throw new BadRequestException('Cannot cancel a completed, debt, or refunded order');
       }
       if (order.payments.length > 0) {
         throw new BadRequestException('Cannot cancel an order with payments');

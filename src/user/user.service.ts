@@ -3,6 +3,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma, User, UserRole, UserType } from '@generated/client';
 import { CreateUserDto } from './dto/create-user.dto';
 import { CurrentUser } from '@auth/models/auth.model';
+import { UpdateCustomerDto } from './dto/update-user.dto';
 
 @Injectable()
 export class UserService {
@@ -40,16 +41,26 @@ export class UserService {
         }
       })
       if (user) throw new ConflictException('Phone already existing');
-      const userEntity = new CreateUserDto(createUserDto);
+      // const userEntity = new CreateUserDto(createUserDto);
       return await this.prismaService.$transaction(async (tx) => {
         const newUser = await tx.user.create({
-          data: userEntity
+          data: {
+            fullName: createUserDto.fullName,
+            phone: createUserDto.phone,
+            type: UserType.CUSTOMER,
+          }
         })
         const customer = await tx.customer.create({
           data: {
             userId: newUser.id
           }
         })
+        if (createUserDto.orderId) {
+          await tx.order.update({
+            where: { id: createUserDto.orderId },
+            data: { customerId: customer.id }
+          });
+        }
         return Promise.resolve({ ...newUser, customer });
       })
     } catch (error: any) {
@@ -212,16 +223,23 @@ export class UserService {
     }
   }
 
-  // async update(id: string, dto: UpdateUserDto) {
-  //   try {
-  //     return this.prismaService.user.update({
-  //       where: { id },
-  //       data: dto,
-  //     });
-  //   } catch (error: any) {
-  //     throw new BadRequestException(error.response || error.message)
-  //   }
-  // }
+  async setCustomerToOrder(dto: UpdateCustomerDto) {
+    try {
+      const customer = await this.prismaService.customer.findUnique({
+        where: { id: dto.customerId },
+      });
+      if (!customer) {
+        throw new NotFoundException(`Customer with ID ${dto.customerId} not found`);
+      }
+      await this.prismaService.order.update({
+        where: { id: dto.orderId! },
+        data: { customerId: dto.customerId }
+      });
+      return { message: 'Customer assigned to order successfully' };
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
 
   async deactivate(id: string) {
     try {

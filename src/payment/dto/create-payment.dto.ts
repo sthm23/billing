@@ -1,5 +1,5 @@
-import { ArrayMinSize, IsArray, IsDateString, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Min, ValidateNested } from "class-validator"
-import { PaymentType } from "@generated/enums"
+import { ArrayMinSize, IsArray, IsDateString, IsEnum, isNotEmpty, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Min, ValidateNested } from "class-validator"
+import { CashStatus, CashTransactionCategory, CashTransactionType, PaymentType } from "@generated/enums"
 import { Type } from "class-transformer"
 
 export class CreatePaymentItemDto {
@@ -40,3 +40,4 @@ export class CreateReturnPaymentDto {
     @Type(() => CreatePaymentItemDto)
     payments: CreatePaymentItemDto[] = []
 }
+
