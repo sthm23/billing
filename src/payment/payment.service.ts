@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { CreateCashBoxDto, CreateCashTransactionDto, CreatePaymentDto, CreateReturnPaymentDto } from './dto/create-payment.dto';
+import { CreatePaymentDto, CreateReturnPaymentDto } from './dto/create-payment.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { CurrentUser } from '@auth/models/auth.model';
@@ -99,79 +99,6 @@ export class PaymentService {
         }
       })
       return { message: 'Payment(s) added successfully' };
-    } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
-    }
-  }
-
-  async createCashBox(dto: CreateCashBoxDto, user: CurrentUser) {
-    try {
-      const existingCashBox = await this.prisma.cashbox.findFirst({
-        where: {
-          storeId: user.staff.storeId,
-          sellerId: user.staff.id,
-          status: CashStatus.OPEN
-        }
-      })
-      if (existingCashBox) {
-        if (dto.status === CashStatus.OPEN) {
-          return existingCashBox
-        } else {
-          return await this.prisma.cashbox.update({
-            where: { id: existingCashBox.id },
-            data: {
-              status: dto.status
-            }
-          })
-        }
-      }
-      return await this.prisma.cashbox.create({
-        data: {
-          storeId: user.staff.storeId,
-          sellerId: user.staff.id,
-          warehouseId: user.staff.warehouse[0].warehouseId,
-          balance: dto.balance ?? 0,
-          status: dto.status ?? CashStatus.OPEN
-        }
-      });
-
-
-    } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
-    }
-  }
-
-  async createCashTransaction(cashBoxId: string, dto: CreateCashTransactionDto, user: CurrentUser) {
-    try {
-      const cashBox = await this.prisma.cashbox.findUnique({
-        where: { id: cashBoxId }
-      })
-      if (!cashBox) {
-        throw new BadRequestException('Cashbox not found');
-      }
-      if (cashBox.status !== CashStatus.OPEN) {
-        throw new BadRequestException('Cannot add transaction to a cashbox that is not OPEN');
-      }
-      await this.prisma.$transaction(async (prisma) => {
-        await prisma.cashTransaction.create({
-          data: {
-            cashboxId: cashBox.id,
-            amount: dto.amount,
-            type: dto.type,
-            createdById: user.staff.id,
-            category: dto.category,
-            comment: dto.comment,
-            paymentType: dto.paymentType as PaymentType
-          }
-        })
-        await prisma.cashbox.update({
-          where: { id: cashBox.id },
-          data: {
-            balance: { increment: dto.type === CashTransactionType.INCOME ? new Prisma.Decimal(dto.amount) : new Prisma.Decimal(-dto.amount) }
-          }
-        })
-      })
-      return { message: 'Cash transaction added successfully' };
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }
@@ -281,13 +208,5 @@ export class PaymentService {
 
   findOne(id: string) {
     return `This action returns a #${id} payment`;
-  }
-
-  update(id: string, updatePaymentDto: UpdatePaymentDto) {
-    return `This action updates a #${id} payment`;
-  }
-
-  remove(id: string) {
-    return `This action removes a #${id} payment`;
   }
 }

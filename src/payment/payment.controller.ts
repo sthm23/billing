@@ -1,7 +1,6 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
 import { PaymentService } from './payment.service';
-import { CreateCashBoxDto, CreateCashTransactionDto, CreatePaymentDto, CreateReturnPaymentDto } from './dto/create-payment.dto';
-import { UpdatePaymentDto } from './dto/update-payment.dto';
+import { CreatePaymentDto, CreateReturnPaymentDto } from './dto/create-payment.dto';
 import { PaginationParams } from '@shared/dto/pagination-params.dto';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { CurrentUser } from '@shared/decorators/user.decorator';
@@ -18,28 +17,6 @@ export class PaymentController {
     @CurrentUser() user: CurrentUserType
   ) {
     return this.paymentService.create(createPaymentDto, user);
-  }
-
-  @Post('cashbox')
-  createCashbox(
-    @Body() dto: CreateCashBoxDto,
-    @CurrentUser() user: CurrentUserType
-  ) {
-    return this.paymentService.createCashBox(dto, user);
-  }
-
-  @Post('transaction/:id')
-  createCashTransaction(
-    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @Body() dto: CreateCashTransactionDto,
-    @CurrentUser() user: CurrentUserType
-  ) {
-    return this.paymentService.createCashTransaction(id, dto, user);
-  }
-
-  @Get('cashbox')
-  getCashBox(@CurrentUser() user: CurrentUserType) {
-    return this.paymentService.findAll({ pageSize: 10, currentPage: 1 }, user);
   }
 
   @Post('return/:id')
@@ -62,15 +39,5 @@ export class PaymentController {
   @Get(':id')
   findOne(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
     return this.paymentService.findOne(id);
-  }
-
-  @Patch(':id')
-  update(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string, @Body() updatePaymentDto: UpdatePaymentDto) {
-    return this.paymentService.update(id, updatePaymentDto);
-  }
-
-  @Delete(':id')
-  remove(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
-    return this.paymentService.remove(id);
   }
 }
