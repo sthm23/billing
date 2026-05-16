@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, ParseUUIDPipe, UseGuards, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, ParseUUIDPipe, UseGuards, Query } from '@nestjs/common';
 import { CashboxService } from './cashbox.service';
 import { CreateCashBoxDto, CreateCashTransactionDto } from './dto/create-cashbox.dto';
 import { CurrentUser } from '@shared/decorators/user.decorator';
@@ -18,8 +18,12 @@ export class CashboxController {
   ) {
     return this.cashboxService.createCashBox(dto, user);
   }
+  @Patch(':id/close')
+  closeCashbox(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
+    return this.cashboxService.closeCashBox(id);
+  }
 
-  @Post('transaction/:id')
+  @Post(':id/transaction')
   createCashTransaction(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: CreateCashTransactionDto,

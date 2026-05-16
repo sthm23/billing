@@ -1,5 +1,5 @@
 import { CashStatus, CashTransactionType, CashTransactionCategory, PaymentType } from "@generated/enums"
-import { IsOptional, IsNumber, Min, IsEnum, IsNotEmpty, IsString } from "class-validator"
+import { IsOptional, IsNumber, Min, IsEnum, IsNotEmpty, IsString, IsUUID } from "class-validator"
 
 export class CreateCashBoxDto {
     @IsOptional()
@@ -9,6 +9,14 @@ export class CreateCashBoxDto {
 
     @IsEnum(CashStatus)
     status!: CashStatus
+
+    @IsNotEmpty()
+    @IsUUID('4')
+    storeId!: string
+
+    @IsNotEmpty()
+    @IsUUID('4')
+    warehouseId!: string
 }
 
 export class CreateCashTransactionDto {
@@ -29,4 +37,8 @@ export class CreateCashTransactionDto {
     @IsNotEmpty()
     @IsString()
     comment!: string
+
+    @IsOptional()
+    @IsUUID('4')
+    orderId?: string
 }

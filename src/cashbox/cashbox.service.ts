@@ -13,40 +13,60 @@ export class CashboxService {
   ) { }
   async createCashBox(dto: CreateCashBoxDto, user: CurrentUser) {
     try {
+      const store = await this.prisma.store.findFirst({
+        where: {
+          id: dto.storeId,
+        },
+        include: {
+          warehouse: true
+        }
+      })
+      if (!store) {
+        throw new BadRequestException('Store not found');
+      }
+
+      if (store.warehouse && store.warehouse.length > 0 && !store.warehouse.find(w => w.id === dto.warehouseId)) {
+        throw new BadRequestException('Warehouse does not belong to the store');
+      }
+
       const existingCashBox = await this.prisma.cashbox.findFirst({
         where: {
-          storeId: user.staff.storeId,
-          warehouseId: user.staff.warehouse[0]?.warehouseId,
+          storeId: dto.storeId,
+          warehouseId: dto.warehouseId,
           status: CashStatus.OPEN
         }
       })
       if (existingCashBox) {
-        if (dto.status === CashStatus.OPEN) {
-          if (existingCashBox.status === CashStatus.CLOSED) {
-            throw new BadRequestException('Cannot open a new cashbox while there is an open cashbox')
-          }
-          return existingCashBox
-        } else {
-          if (existingCashBox.status === CashStatus.CLOSED) {
-            throw new BadRequestException('Cashbox is already closed')
-          }
-          return await this.prisma.cashbox.update({
-            where: { id: existingCashBox.id },
-            data: {
-              status: dto.status
-            }
-          })
-        }
+        throw new BadRequestException('An OPEN cashbox already exists for this store and warehouse');
       }
       return await this.prisma.cashbox.create({
         data: {
-          storeId: user.staff.storeId,
+          storeId: dto.storeId,
           sellerId: user.staff.id,
-          warehouseId: user.staff.warehouse[0].warehouseId,
+          warehouseId: dto.warehouseId,
           balance: dto.balance ?? 0,
-          status: dto.status ?? CashStatus.OPEN
+          status: CashStatus.OPEN
         }
       });
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
+
+  async closeCashBox(id: string) {
+    try {
+      const existingCashBox = await this.prisma.cashbox.findFirst({
+        where: { id, status: CashStatus.OPEN }
+      })
+      if (!existingCashBox) {
+        throw new BadRequestException('No OPEN cashbox found for this store and warehouse');
+      }
+      return await this.prisma.cashbox.update({
+        where: { id: existingCashBox.id },
+        data: {
+          status: CashStatus.CLOSED
+        }
+      })
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }
@@ -72,13 +92,15 @@ export class CashboxService {
             createdById: user.staff.id,
             category: dto.category,
             comment: dto.comment,
-            paymentType: dto.paymentType as PaymentType
+            paymentType: dto.paymentType as PaymentType,
+            orderId: dto.orderId ?? null
           }
         })
+        const balance = dto.type === CashTransactionType.INCOME ? { increment: new Prisma.Decimal(dto.amount) } : { decrement: new Prisma.Decimal(dto.amount) }
         await prisma.cashbox.update({
           where: { id: cashBox.id },
           data: {
-            balance: { increment: dto.type === CashTransactionType.INCOME ? new Prisma.Decimal(dto.amount) : new Prisma.Decimal(-dto.amount) }
+            balance,
           }
         })
       })
