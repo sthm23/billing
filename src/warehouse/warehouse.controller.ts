@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete, ParseUUIDPipe, UseGuards, Query } from '@nestjs/common';
 import { WarehouseService } from './warehouse.service';
-import { AddInventoryDto, CreateWarehouseDto } from './dto/create-warehouse.dto';
+import { InventoryMovementDto, CreateWarehouseDto } from './dto/create-warehouse.dto';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { AdminGuard } from '@shared/guards/admin.guard';
 import { PaginationParams } from '@shared/dto/pagination-params.dto';
@@ -39,10 +39,10 @@ export class WarehouseController {
   @Post(':id/inventory')
   addInventory(
     @Param('id', new ParseUUIDPipe({ version: '4' })) warehouseId: string,
-    @Body() dto: AddInventoryDto,
+    @Body() dto: InventoryMovementDto,
     @CurrentUser() user: CurrentUserType,
   ) {
-    return this.warehouseService.addInventory(warehouseId, dto, user);
+    return this.warehouseService.inventoryMovement(warehouseId, dto, user);
   }
 
   @UseGuards(AuthJWTGuard, AdminGuard)
