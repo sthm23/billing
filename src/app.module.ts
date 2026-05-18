@@ -13,6 +13,7 @@ import { StoreModule } from './store/store.module';
 import { CategoryAttributesModule } from './category-attributes/category-attributes.module';
 import { FileModule } from './file/file.module';
 import { CashboxModule } from './cashbox/cashbox.module';
+import { DebtModule } from './debt/debt.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { CashboxModule } from './cashbox/cashbox.module';
     CategoryAttributesModule,
     FileModule,
     CashboxModule,
+    DebtModule,
   ],
   providers: [ConfigService],
 })

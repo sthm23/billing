@@ -78,21 +78,23 @@ model Store {
   customers Customer[]  @relation("CustomerStores")
   orders    Order[]
 
-  categories CategoriesOnStore[]
-  brands     BrandsOnStore[]
-  attributes AttributeOnStore[]
-  cashboxes  Cashbox[]
+  categories    CategoriesOnStore[]
+  brands        BrandsOnStore[]
+  attributes    AttributeOnStore[]
+  cashboxes     Cashbox[]
+  customerDebts CustomerDebt[]
 
   @@map("stores")
 }
 
 model Customer {
-  id        String   @id @default(uuid())
-  userId    String   @unique
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id])
-  stores    Store[]  @relation("CustomerStores")
-  orders    Order[]  @relation("CustomerOrders")
+  id            String         @id @default(uuid())
+  userId        String         @unique
+  createdAt     DateTime       @default(now())
+  user          User           @relation(fields: [userId], references: [id])
+  stores        Store[]        @relation("CustomerStores")
+  orders        Order[]        @relation("CustomerOrders")
+  customerDebts CustomerDebt[]
 
   @@map("customers")
 }
@@ -114,6 +116,7 @@ model Staff {
   stockMoves       StockMovement[]
   cashboxes        Cashbox[]
   cashTransactions CashTransaction[]
+  debtPayments     DebtPayment[]
 
   @@index([storeId])
   @@map("staff")
@@ -565,13 +568,49 @@ model CashTransaction {
   comment String?
 
   orderId String?
+  debtId  String?
 
   createdAt DateTime @default(now())
 
   cashbox   Cashbox @relation(fields: [cashboxId], references: [id])
   createdBy Staff   @relation(fields: [createdById], references: [id])
 
-  order Order? @relation(fields: [orderId], references: [id])
+  order Order?       @relation(fields: [orderId], references: [id])
+  debt  DebtPayment? @relation(fields: [debtId], references: [id])
+}
+
+model CustomerDebt {
+  id          String     @id @default(uuid())
+  storeId     String
+  customerId  String
+  description String?
+  totalAmount Decimal
+  paidAmount  Decimal    @default(0)
+  status      DebtStatus
+  createdAt   DateTime   @default(now())
+  returnedAt  DateTime?
+
+  customer Customer      @relation(fields: [customerId], references: [id])
+  store    Store         @relation(fields: [storeId], references: [id])
+  payments DebtPayment[]
+
+  @@index([storeId, createdAt])
+  @@index([customerId, createdAt])
+  @@index([status])
+}
+
+model DebtPayment {
+  id        String      @id @default(uuid())
+  debtId    String
+  amount    Decimal
+  type      PaymentType
+  createdBy String
+  createdAt DateTime    @default(now())
+
+  debt    CustomerDebt @relation(fields: [debtId], references: [id])
+  cashier Staff        @relation(fields: [createdBy], references: [id])
+
+  cashTransactions CashTransaction[]
 }
 
 /**
@@ -600,6 +639,11 @@ model CashTransaction {
  * ENUMS
  * =======================
  */
+enum DebtStatus {
+  ACTIVE
+  PAID
+}
+
 enum CashTransactionType {
   INCOME
   EXPENSE
