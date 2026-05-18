@@ -134,7 +134,7 @@ export class DebtService {
         where,
         include: {
           customer: true,
-          debtPayment: true
+          payments: true
         }
       })
     } catch (error: any) {
@@ -148,7 +148,7 @@ export class DebtService {
         where: { id },
         include: {
           customer: true,
-          debtPayment: true
+          payments: true
         }
       });
       return debt;

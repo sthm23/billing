@@ -13,6 +13,7 @@
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "prisma:migrate": "npx prisma migrate dev --name init",
+    "prisma:migrate-prod": "npx prisma migrate deploy",
     "prisma:generate": "npx prisma generate",
     "prisma:seed": "npx prisma db seed",
     "prisma:reset": "npx prisma migrate reset",
