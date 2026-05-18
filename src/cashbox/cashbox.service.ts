@@ -11,6 +11,7 @@ export class CashboxService {
   constructor(
     private readonly prisma: PrismaService,
   ) { }
+
   async createCashBox(dto: CreateCashBoxDto, user: CurrentUser) {
     try {
       const store = await this.prisma.store.findFirst({

@@ -1,7 +1,6 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, ParseUUIDPipe, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, ParseUUIDPipe, UseGuards } from '@nestjs/common';
 import { DebtService } from './debt.service';
 import { CreateDebtDto, CreateDebtPaymentDto } from './dto/create-debt.dto';
-import { UpdateDebtDto } from './dto/update-debt.dto';
 import { CurrentUser } from '@shared/decorators/user.decorator';
 import type { CurrentUser as UserInfo } from '@auth/models/auth.model';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';

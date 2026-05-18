@@ -79,67 +79,6 @@ export class WarehouseService {
     }
   }
 
-  /**
-  * Приход новой партии: НЕ создаём варианты заново, а увеличиваем остаток + пишем IN движение.
-  */
-  async stockIn(warehouseId: string, dto: StockInDto, user: CurrentUser) {
-    if (!user?.staff?.id) throw new ForbiddenException('Only staff can receive stock');
-
-    try {
-      await this.prisma.$transaction(async (tx) => {
-        for (const item of dto.items) {
-          // 1) Обновляем/создаём остаток
-          await tx.inventory.upsert({
-            where: {
-              warehouseId_variantId: {
-                warehouseId: warehouseId,
-                variantId: item.variantId,
-              },
-            },
-            create: {
-              quantity: item.quantity,
-              warehouse: { connect: { id: warehouseId } },
-              variant: { connect: { id: item.variantId } },
-            },
-            update: {
-              quantity: { increment: item.quantity },
-            },
-          });
-
-          // 2) Пишем складское движение прихода (партия)
-          await tx.stockMovement.create({
-            data: {
-              type: StockMovementType.IN,
-              reason: StockMovementReason.PURCHASE,
-              quantity: item.quantity,
-              unitCost: new Prisma.Decimal(item.unitCost),
-              warehouse: { connect: { id: warehouseId } },
-              createdBy: { connect: { id: user.staff.id } },
-              variant: { connect: { id: item.variantId } },
-            },
-          });
-        }
-      });
-
-      return { ok: true };
-    } catch (error: any) {
-      throw new BadRequestException(error.response || error.message);
-    }
-  }
-
-  async findStockMovement(productId: string) {
-    try {
-      const movements = await this.prisma.stockMovement.findMany({
-        where: { variant: { productId } },
-        include: {
-
-        }
-      })
-    } catch (error: any) {
-      throw new BadRequestException(error.response || error.message);
-    }
-  }
-
   async inventoryMovement(warehouseId: string, dto: InventoryMovementDto, user: CurrentUser) {
     try {
       return await this.prisma.$transaction(async (tx) => {
