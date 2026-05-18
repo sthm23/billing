@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { AddInventoryDto, CreateWarehouseDto, CreateWarehouseStaffDto } from './dto/create-warehouse.dto';
+import { InventoryMovementDto, CreateWarehouseDto, CreateWarehouseStaffDto } from './dto/create-warehouse.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { StaffRole, StockMovementReason, StockMovementType, UserType } from '@generated/enums';
 import { HashingHelper } from '@shared/helper/hash.helper';
@@ -140,7 +140,7 @@ export class WarehouseService {
     }
   }
 
-  async addInventory(warehouseId: string, dto: AddInventoryDto, user: CurrentUser) {
+  async inventoryMovement(warehouseId: string, dto: InventoryMovementDto, user: CurrentUser) {
     try {
       return await this.prisma.$transaction(async (tx) => {
         const variant = await tx.productVariant.findUnique({ where: { id: dto.variantId } });
@@ -148,6 +148,7 @@ export class WarehouseService {
         const warehouse = await tx.warehouse.findUnique({ where: { id: warehouseId } });
         if (!warehouse || warehouse.id !== variant.warehouseId) throw new NotFoundException("Warehouse not found");
 
+        const quantity = dto.type === StockMovementType.IN ? { increment: dto.quantity } : { decrement: dto.quantity }
         await tx.inventory.update({
           where: {
             warehouseId_variantId: {
@@ -156,13 +157,13 @@ export class WarehouseService {
             },
           },
           data: {
-            quantity: { increment: dto.quantity },
+            quantity: quantity,
           },
         });
         await tx.stockMovement.create({
           data: {
-            type: StockMovementType.IN,
-            reason: StockMovementReason.PURCHASE,
+            type: dto.type,
+            reason: dto.reason,
             quantity: dto.quantity,
             variantId: variant.id,
             warehouseId: warehouse.id,
@@ -182,5 +183,4 @@ export class WarehouseService {
       throw new BadRequestException(error.response || error.message)
     }
   }
-
 }

@@ -1,5 +1,6 @@
+import { StockMovementReason, StockMovementType } from "@generated/enums";
 import { Type } from "class-transformer";
-import { IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Min, ValidateNested } from "class-validator";
+import { IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Min, ValidateNested } from "class-validator";
 
 
 export class CreateWarehouseStaffDto {
@@ -50,7 +51,7 @@ export class CreateWarehouseDto {
     }
 }
 
-export class AddInventoryDto {
+export class InventoryMovementDto {
     @IsNotEmpty()
     @IsUUID('4')
     variantId!: string;
@@ -73,4 +74,12 @@ export class AddInventoryDto {
     @Type(() => Number)
     @Min(1)
     price!: number;
+
+    @IsNotEmpty()
+    @IsEnum(StockMovementType)
+    type: StockMovementType = StockMovementType.IN
+
+    @IsNotEmpty()
+    @IsEnum(StockMovementReason)
+    reason: StockMovementReason = StockMovementReason.PURCHASE
 }
