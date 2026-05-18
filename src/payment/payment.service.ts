@@ -1,9 +1,11 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { CreatePaymentDto, CreateReturnPaymentDto } from './dto/create-payment.dto';
-import { UpdatePaymentDto } from './dto/update-payment.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { CurrentUser } from '@auth/models/auth.model';
-import { CashStatus, CashTransactionCategory, CashTransactionType, OrderStatus, PaymentType, ReturnOrderStatus } from '@generated/enums';
+import {
+  CashStatus, CashTransactionCategory, CashTransactionType,
+  OrderStatus, PaymentType, ReturnOrderStatus
+} from '@generated/enums';
 import { Prisma } from '@generated/client';
 
 @Injectable()
@@ -11,6 +13,7 @@ export class PaymentService {
   constructor(
     private readonly prisma: PrismaService,
   ) { }
+
   async create(dto: CreatePaymentDto, user: CurrentUser) {
     try {
       const order = await this.prisma.order.findUnique({
@@ -207,6 +210,16 @@ export class PaymentService {
   }
 
   findOne(id: string) {
-    return `This action returns a #${id} payment`;
+    return this.prisma.payment.findUnique({
+      where: { id },
+      include: {
+        order: true,
+        cashier: {
+          include: {
+            user: true
+          }
+        }
+      }
+    });
   }
 }

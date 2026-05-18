@@ -41,7 +41,10 @@ export class CashboxController {
   }
 
   @Get(':id')
-  findOne(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string, @CurrentUser() user: CurrentUserType) {
+  findOne(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: CurrentUserType
+  ) {
     return this.cashboxService.findOne(id, user);
   }
 }

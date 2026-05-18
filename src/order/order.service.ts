@@ -2,7 +2,11 @@ import { BadRequestException, NotFoundException, Injectable } from '@nestjs/comm
 import { CreateOrderDto, CreateOrderItemDto, CreateOrderPaymentDto } from './dto/create-order.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { CurrentUser } from '@auth/models/auth.model';
-import { CashStatus, CashTransactionCategory, CashTransactionType, OrderStatus, PaymentType, ReturnOrderStatus, StockMovementReason, StockMovementType, UserRole, UserType } from '@generated/enums';
+import {
+  CashStatus, CashTransactionCategory, CashTransactionType,
+  OrderStatus, PaymentType, ReturnOrderStatus, StaffRole,
+  StockMovementReason, StockMovementType, UserRole, UserType
+} from '@generated/enums';
 import { OrderItem, Prisma } from '@generated/client';
 import { CreateReturnOrderDto, ReturnItemDto } from './dto/create-return.dto';
 import { OrderQueryParams } from './entities/order.entity';
@@ -735,7 +739,7 @@ export class OrderService {
       const params = {
         id,
         storeId: user.role !== UserRole.ADMIN ? user.staff.storeId : undefined,
-        cashierId: user.type === UserType.STAFF && user.role !== UserRole.OWNER ? user.staff.id : undefined
+        cashierId: user.type === UserType.STAFF && (user.staff.role !== StaffRole.OWNER && user.staff.role !== StaffRole.MANAGER) ? user.staff.id : undefined
       } as Prisma.OrderFindUniqueArgs['where'];
 
       const order = await this.prisma.order.findUnique({
