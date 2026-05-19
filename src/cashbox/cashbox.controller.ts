@@ -19,8 +19,11 @@ export class CashboxController {
     return this.cashboxService.createCashBox(dto, user);
   }
   @Patch(':id/close')
-  closeCashbox(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
-    return this.cashboxService.closeCashBox(id);
+  closeCashbox(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: CurrentUserType
+  ) {
+    return this.cashboxService.closeCashBox(id, user);
   }
 
   @Post(':id/transaction')
