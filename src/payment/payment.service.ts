@@ -34,6 +34,7 @@ export class PaymentService {
       const cashBox = await this.prisma.cashbox.findFirst({
         where: {
           storeId: user.staff.storeId,
+          warehouseId: order.warehouseId,
           sellerId: user.staff.id,
           status: CashStatus.OPEN
         }

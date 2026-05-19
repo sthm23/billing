@@ -208,6 +208,7 @@ export class OrderService {
       where: {
         storeId: order.storeId,
         warehouseId: order.warehouseId,
+        sellerId: user.staff.id,
         status: CashStatus.OPEN
       }
     })
@@ -522,6 +523,7 @@ export class OrderService {
         where: {
           storeId: order.storeId,
           warehouseId: order.warehouseId,
+          sellerId: user.staff.id,
           status: CashStatus.OPEN
         }
       });

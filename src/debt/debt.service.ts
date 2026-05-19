@@ -4,6 +4,8 @@ import { UpdateDebtDto } from './dto/update-debt.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { CashTransactionCategory, CashTransactionType, DebtStatus } from '@generated/enums';
 import { CurrentUser } from '@auth/models/auth.model';
+import { OrderQueryParams } from '@order/entities/order.entity';
+import { DebtQueryParams } from './dto/param.dto';
 
 @Injectable()
 export class DebtService {
@@ -41,7 +43,7 @@ export class DebtService {
       throw new BadRequestException('Долг не найден');
     }
     const cashBox = await this.prisma.cashbox.findFirst({
-      where: { warehouseId: dto.warehouseId, storeId: debt.storeId },
+      where: { warehouseId: dto.warehouseId, storeId: debt.storeId, sellerId: user.staff.id },
     });
     if (!cashBox) {
       throw new BadRequestException('Касса не найдена для данного склада');
@@ -109,34 +111,42 @@ export class DebtService {
     }
   }
 
-  async findAll(params: any, user: CurrentUser) {
+  async findAll({ pageSize = 10, currentPage = 1, status, customerId, fromDate, toDate }: DebtQueryParams, user: CurrentUser) {
     try {
-      const where: any = {
+
+      const where = {
         storeId: user.staff.storeId,
       };
-      if (params.status) {
-        where.status = params.status;
+      if (status) {
+        where['status'] = status;
       }
-      if (params.customerId) {
-        where.customerId = params.customerId;
+      if (customerId) {
+        where['customerId'] = customerId;
       }
-      if (params.createdAtFrom || params.createdAtTo) {
-        where.createdAt = {};
-        if (params.createdAtFrom) {
-          where.createdAt.gte = new Date(params.createdAtFrom);
+      if (fromDate || toDate) {
+        where['createdAt'] = {};
+        if (fromDate) {
+          where['createdAt'].gte = new Date(fromDate);
         }
-        if (params.createdAtTo) {
-          where.createdAt.lte = new Date(params.createdAtTo);
+        if (toDate) {
+          where['createdAt'].lte = new Date(toDate);
         }
       }
 
-      return this.prisma.customerDebt.findMany({
+      const result = await this.prisma.customerDebt.findMany({
         where,
         include: {
-          customer: true,
+          customer: {
+            include: {
+              user: true
+            }
+          },
           payments: true
         }
       })
+      const total = await this.prisma.customerDebt.count({ where });
+      return { data: result, total, currentPage: +currentPage, pageSize: +pageSize };
+
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message);
     }
