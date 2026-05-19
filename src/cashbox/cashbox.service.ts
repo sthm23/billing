@@ -30,12 +30,17 @@ export class CashboxService {
         throw new BadRequestException('Warehouse does not belong to the store');
       }
 
+      const param = {
+        storeId: dto.storeId,
+        status: CashStatus.OPEN
+      }
+      const isAdminOrOwner = user.role === UserRole.ADMIN || user.role === UserRole.OWNER
+      if (!isAdminOrOwner) {
+        param['warehouseId'] = dto.warehouseId
+        param['sellerId'] = user.staff.id
+      }
       const existingCashBox = await this.prisma.cashbox.findFirst({
-        where: {
-          storeId: dto.storeId,
-          warehouseId: dto.warehouseId,
-          status: CashStatus.OPEN
-        }
+        where: { ...param }
       })
       if (existingCashBox) {
         throw new BadRequestException('An OPEN cashbox already exists for this store and warehouse');
@@ -54,10 +59,21 @@ export class CashboxService {
     }
   }
 
-  async closeCashBox(id: string) {
+  async closeCashBox(id: string, user: CurrentUser) {
     try {
+      const param = {
+        id,
+        status: CashStatus.OPEN,
+        storeId: user.staff.storeId,
+      }
+
+      if (user.role !== UserRole.ADMIN && user.role !== UserRole.OWNER) {
+        param['warehouseId'] = user.staff.warehouse[0]?.warehouseId
+        param['sellerId'] = user.staff.id
+      }
+
       const existingCashBox = await this.prisma.cashbox.findFirst({
-        where: { id, status: CashStatus.OPEN }
+        where: { ...param }
       })
       if (!existingCashBox) {
         throw new BadRequestException('No OPEN cashbox found for this store and warehouse');
@@ -75,8 +91,16 @@ export class CashboxService {
 
   async createCashTransaction(cashBoxId: string, dto: CreateCashTransactionDto, user: CurrentUser) {
     try {
+      const param = {
+        id: cashBoxId,
+        storeId: user.staff.storeId,
+      }
+      if (user.role !== UserRole.ADMIN && user.role !== UserRole.OWNER) {
+        param['warehouseId'] = user.staff.warehouse[0]?.warehouseId
+        param['sellerId'] = user.staff.id
+      }
       const cashBox = await this.prisma.cashbox.findUnique({
-        where: { id: cashBoxId }
+        where: { ...param },
       })
       if (!cashBox) {
         throw new BadRequestException('Cashbox not found');
@@ -124,6 +148,7 @@ export class CashboxService {
         if (user.staff.warehouse[0]?.warehouseId) {
           paramsSchema['warehouseId'] = user.staff.warehouse[0].warehouseId
         }
+
       }
       const totalItems = await this.prisma.cashbox.count({
         where: paramsSchema
@@ -166,6 +191,7 @@ export class CashboxService {
         if (user.staff.warehouse[0]?.warehouseId) {
           paramsSchema['warehouseId'] = user.staff.warehouse[0].warehouseId
         }
+        paramsSchema['sellerId'] = user.staff.id
       }
       const cashbox = await this.prisma.cashbox.findUnique({
         where: { ...paramsSchema },
