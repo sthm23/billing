@@ -41,7 +41,7 @@ export class DebtService {
       throw new BadRequestException('Долг не найден');
     }
     const cashBox = await this.prisma.cashbox.findFirst({
-      where: { warehouseId: dto.warehouseId, storeId: debt.storeId },
+      where: { warehouseId: dto.warehouseId, storeId: debt.storeId, sellerId: user.staff.id },
     });
     if (!cashBox) {
       throw new BadRequestException('Касса не найдена для данного склада');
