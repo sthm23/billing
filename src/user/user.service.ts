@@ -41,7 +41,7 @@ export class UserService {
         }
       })
       if (user) throw new ConflictException('Phone already existing');
-      // const userEntity = new CreateUserDto(createUserDto);
+
       return await this.prismaService.$transaction(async (tx) => {
         const newUser = await tx.user.create({
           data: {
