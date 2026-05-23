@@ -2,7 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { CreateDebtDto, CreateDebtPaymentDto } from './dto/create-debt.dto';
 import { UpdateDebtDto } from './dto/update-debt.dto';
 import { PrismaService } from '@prisma/prisma.service';
-import { CashTransactionCategory, CashTransactionType, DebtStatus } from '@generated/enums';
+import { CashStatus, CashTransactionCategory, CashTransactionType, DebtStatus } from '@generated/enums';
 import { CurrentUser } from '@auth/models/auth.model';
 import { OrderQueryParams } from '@order/entities/order.entity';
 import { DebtQueryParams } from './dto/param.dto';
@@ -43,7 +43,7 @@ export class DebtService {
       throw new BadRequestException('Долг не найден');
     }
     const cashBox = await this.prisma.cashbox.findFirst({
-      where: { warehouseId: dto.warehouseId, storeId: debt.storeId, sellerId: user.staff.id },
+      where: { warehouseId: dto.warehouseId, storeId: debt.storeId, sellerId: user.staff.id, status: CashStatus.OPEN },
     });
     if (!cashBox) {
       throw new BadRequestException('Касса не найдена для данного склада');
@@ -157,7 +157,11 @@ export class DebtService {
       const debt = await this.prisma.customerDebt.findUnique({
         where: { id },
         include: {
-          customer: true,
+          customer: {
+            include: {
+              user: true
+            }
+          },
           payments: true
         }
       });
