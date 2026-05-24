@@ -2,6 +2,8 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { CreateAttributeDto, CreateAttributeValueDto } from './dto/create-category-attribute.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { AttributeType } from '@generated/enums';
+import { PaginationParams } from '@shared/dto/pagination-params.dto';
+import { AttributeParams } from './dto/attribute-params.dto';
 
 @Injectable()
 export class CategoryAttributesService {
@@ -76,9 +78,21 @@ export class CategoryAttributesService {
       throw new BadRequestException(error.response || error.message)
     }
   }
-  async findAttributes() {
+  async findAttributes({ currentPage = 1, pageSize = 10 }: AttributeParams) {
     try {
-      return this.prisma.attribute.findMany();
+      const skip = (currentPage - 1) * pageSize;
+      const take = +pageSize;
+      const data = await this.prisma.attribute.findMany({
+        skip,
+        take: +take,
+      });
+      const totalOrders = await this.prisma.attribute.count();
+      return {
+        currentPage,
+        pageSize,
+        total: totalOrders,
+        data
+      }
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }

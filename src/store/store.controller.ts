@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, UseGuards, ParseUUIDPipe, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, UseGuards, ParseUUIDPipe, Query, Put } from '@nestjs/common';
 import { StoreService } from './store.service';
 import { CreateOwnerDto, CreateStaffDto, CreateStoreDto } from './dto/create-store.dto';
 import { CurrentUser } from '@shared/decorators/user.decorator';
@@ -9,6 +9,7 @@ import { RolesGuard } from '@shared/guards/role.guard';
 import { Roles } from '@shared/decorators/role.decorator';
 import { UserRole } from '@generated/enums';
 import { PaginationParams } from '@shared/dto/pagination-params.dto';
+import { UpdateStoreDto } from './dto/update-store.dto';
 
 @UseGuards(AuthJWTGuard, RolesGuard)
 @Controller('store')
@@ -23,6 +24,15 @@ export class StoreController {
     @Body() createStoreDto: CreateStoreDto
   ) {
     return this.storeService.createStore(createStoreDto, user.id);
+  }
+
+  @Roles(UserRole.OWNER)
+  @Put(':id')
+  updateStore(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateStoreDto
+  ) {
+    return this.storeService.updateStore(id, dto);
   }
 
   @Roles(UserRole.OWNER)

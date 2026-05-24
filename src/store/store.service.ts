@@ -4,6 +4,7 @@ import { PrismaService } from '@prisma/prisma.service';
 import { StaffRole, UserRole, UserType } from '@generated/enums';
 import { HashingHelper } from '@shared/helper/hash.helper';
 import { CurrentUser } from '@auth/models/auth.model';
+import { UpdateStoreDto } from './dto/update-store.dto';
 
 @Injectable()
 export class StoreService {
@@ -78,6 +79,99 @@ export class StoreService {
 
         return store;
       })
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
+
+  async updateStore(id: string, dto: UpdateStoreDto) {
+    try {
+      const store = await this.prisma.store.findUnique({
+        where: { id },
+        include: {
+          brands: true,
+          attributes: true,
+          warehouse: true,
+        }
+      });
+      if (!store) {
+        throw new NotFoundException('Store not found');
+      }
+      const nextAttributeIds = [...new Set(dto.attributeIds ?? [])];
+      const nextBrandIds = [...new Set(dto.brandIds ?? [])];
+
+      const currentAttributeIds = store.attributes.map((attr) => attr.attributeId);
+      const currentBrandIds = store.brands.map((brand) => brand.brandId);
+
+      const nextAttributeSet = new Set(nextAttributeIds);
+      const nextBrandSet = new Set(nextBrandIds);
+
+      const currentAttributeSet = new Set(currentAttributeIds);
+      const currentBrandSet = new Set(currentBrandIds);
+
+      const newAttributes = nextAttributeIds.filter((attrId) => !currentAttributeSet.has(attrId));
+      const removedAttributes = currentAttributeIds.filter((attrId) => !nextAttributeSet.has(attrId));
+
+      const newBrands = nextBrandIds.filter((brandId) => !currentBrandSet.has(brandId));
+      const removedBrands = currentBrandIds.filter((brandId) => !nextBrandSet.has(brandId));
+
+      return this.prisma.$transaction(async (tx) => {
+        await tx.store.update({
+          where: { id },
+          data: {
+            ...(dto.name ? { name: dto.name } : {}),
+          },
+        });
+
+        if (dto.warehouseName && store.warehouse.length > 0) {
+          await tx.warehouse.update({
+            where: { id: store.warehouse[0].id },
+            data: { name: dto.warehouseName },
+          });
+        }
+
+        if (removedAttributes.length > 0) {
+          await tx.attributeOnStore.deleteMany({
+            where: {
+              storeId: id,
+              attributeId: { in: removedAttributes },
+            },
+          });
+        }
+
+        if (newAttributes.length > 0) {
+          await tx.attributeOnStore.createMany({
+            data: newAttributes.map((attrId) => ({ attributeId: attrId, storeId: id })),
+            skipDuplicates: true,
+          });
+        }
+
+        if (removedBrands.length > 0) {
+          await tx.brandsOnStore.deleteMany({
+            where: {
+              storeId: id,
+              brandId: { in: removedBrands },
+            },
+          });
+        }
+
+        if (newBrands.length > 0) {
+          await tx.brandsOnStore.createMany({
+            data: newBrands.map((brandId) => ({ brandId, storeId: id })),
+            skipDuplicates: true,
+          });
+        }
+
+        return tx.store.findUnique({
+          where: { id },
+          include: {
+            brands: true,
+            attributes: true,
+            warehouse: true,
+          }
+        });
+      });
+
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }
@@ -209,14 +303,11 @@ export class StoreService {
       const store = await this.prisma.store.findUnique({
         where: { id },
         include: {
-          _count: {
-            select: {
-              orders: true
-            }
-          },
           staff: true,
           warehouse: true,
           categories: true,
+          attributes: true,
+          brands: true,
         }
       })
       if (!store) {
