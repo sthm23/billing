@@ -3,6 +3,7 @@ import { CategoryAttributesService } from './category-attributes.service';
 import { CreateAttributeDto, CreateAttributeValueDto } from './dto/create-category-attribute.dto';
 import { PaginationParams } from '@shared/dto/pagination-params.dto';
 import { IdParamDto } from '@shared/dto/id-param.dto';
+import { AttributeParams } from './dto/attribute-params.dto';
 
 @Controller('category')
 export class CategoryAttributesController {
@@ -28,8 +29,10 @@ export class CategoryAttributesController {
 
 
   @Get('attributes')
-  getAttributes() {
-    return this.categoryAttributesService.findAttributes();
+  getAttributes(
+    @Query() pagination: AttributeParams
+  ) {
+    return this.categoryAttributesService.findAttributes(pagination);
   }
 
   @Get('attributes/store/:id')
