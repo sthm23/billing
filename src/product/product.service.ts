@@ -5,6 +5,7 @@ import { Prisma, Product, StaffRole, StockMovementReason, StockMovementType, Use
 import { buildSku } from '@shared/helper/sku-generator.helper';
 import { CurrentUser } from '@auth/models/auth.model';
 import { BarcodeService } from '@shared/helper/bar-code.service';
+import { UpdateProductVariantPriceDTO } from './dto/update-product.dto';
 
 @Injectable()
 export class ProductService {
@@ -413,6 +414,31 @@ export class ProductService {
         })),
       };
 
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
+
+  async updateProductVariant(id: string, dto: UpdateProductVariantPriceDTO, user: CurrentUser) {
+    try {
+      const variant = await this.prisma.productVariant.findUnique({ where: { id } });
+      if (!variant) throw new NotFoundException('Product variant not found');
+      const warehouse = await this.prisma.warehouse.findUnique({ where: { id: variant.warehouseId } });
+
+      if (!warehouse) throw new NotFoundException('Warehouse not found');
+      const hasAccess = user.role === UserRole.OWNER || (user.staff && user.staff.role === StaffRole.MANAGER);
+
+      if (hasAccess && !user.staff.warehouse.some(w => w.warehouseId === warehouse.id)) {
+        throw new ForbiddenException('You do not have access to this warehouse');
+      }
+
+      await this.prisma.productVariant.update({
+        where: { id },
+        data: {
+          price: dto.price,
+        }
+      })
+      return { message: 'Product variant price updated successfully' };
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }

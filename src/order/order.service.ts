@@ -342,7 +342,6 @@ export class OrderService {
 
         for (const item of dto.items) {
           if (item.quantity >= 1) {
-            // if (item.quantity <= 0) throw new BadRequestException(`Invalid quantity for variant: ${item.variantId}`);
             const stock = incomingQuantityByVariant.get(item.variantId) ?? 0;
             incomingQuantityByVariant.set(item.variantId, stock + item.quantity);
             variantIds.push(item.variantId);
