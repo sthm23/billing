@@ -32,10 +32,11 @@ export class RolesGuard implements CanActivate {
         }
 
         const userRole = user.type === UserType.STAFF && user.auth && user?.staff?.role;
+
         if (!userRole) {
             throw new ForbiddenException('You do not have access to this resource');
         }
-        const hasRole = requiredRoles.some((role) => user.role === role);
+        const hasRole = requiredRoles.some((role) => (user.role === role) || (user?.staff?.role === role));
         if (!hasRole) {
             throw new ForbiddenException('You do not have access to this resource');
         }
