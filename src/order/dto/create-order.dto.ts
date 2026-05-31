@@ -112,7 +112,6 @@ export class CreateOrderPaymentDto {
 
 
     @IsArray()
-    @ArrayMinSize(1, { message: "At least one payment is required" })
     @ValidateNested({ each: true })
     @Type(() => OrderPaymentDto)
     payments: OrderPaymentDto[] = []
