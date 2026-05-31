@@ -5,12 +5,17 @@ import { CurrentUser } from '@shared/decorators/user.decorator';
 import { type CurrentUser as CurrentUserType } from '@auth/models/auth.model';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { PaginationParams } from '@shared/dto/pagination-params.dto';
+import { UserRole, StaffRole } from '@generated/enums';
+import { Roles } from '@shared/decorators/role.decorator';
+import { RolesGuard } from '@shared/guards/role.guard';
 
 @UseGuards(AuthJWTGuard)
 @Controller('cashbox')
 export class CashboxController {
   constructor(private readonly cashboxService: CashboxService) { }
 
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OWNER, StaffRole.MANAGER)
   @Post()
   createCashbox(
     @Body() dto: CreateCashBoxDto,
