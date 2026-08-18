@@ -34,6 +34,8 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
 
+    console.log('login user', user);
+
     const { accessToken, refreshToken } = await this.authService.login(user.id, {
       ip: req.ip,
       ua: req.headers['user-agent'],
@@ -62,6 +64,8 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const refreshToken = req.cookies?.refreshToken as string | undefined;
+
+    console.log('refreshToken', refreshToken);
 
     if (!refreshToken) {
       throw new UnauthorizedException();
