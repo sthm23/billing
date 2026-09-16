@@ -1,33 +1,29 @@
-# Billing System — Comprehensive Documentation
+# Billing System — Legacy Documentation
 
-> **Полная документация** для multi-tenant POS системы управления розничными магазинами
-
----
-
-## 📖 О документации
-
-Эта папка содержит **comprehensive документацию** для всех участников разработки:
-- **AI модели** (Claude, GPT, и др.)
-- Разработчики
-- Архитекторы
-- QA инженеры
-- Product owners
-
-Вся документация структурирована и разбита на специализированные файлы для удобства навигации.
+> ⚠️ **DEPRECATED**: This documentation is kept for reference only.
+> 
+> **New documentation structure** (2026-09-16):
+> - **Start here**: [`../../AGENTS.md`](../../AGENTS.md) — Project entry point
+> - **Documentation**: [`../../docs/`](../../docs/) — Workflows, API map, business domain
+> - **Backend guide**: [`../AGENTS.md`](../AGENTS.md) — Backend development
 
 ---
 
-## 🚀 С чего начать?
+## 📖 About This Folder
 
-### Для AI моделей
-**[QUICK_START.md](QUICK_START.md)** — начните отсюда!
+This folder contains **legacy comprehensive documentation** that may still be useful for reference:
+- Detailed architecture explanations
+- Complete database schema
+- Full API documentation
+- Detailed business logic
 
-Этот документ содержит:
-- Краткий обзор проекта
-- Структуру кодовой базы
-- Ключевые концепции (multi-tenancy, warehouse-centric, Product vs ProductVariant)
-- Частые задачи с примерами кода
-- Debugging tips
+**Note**: The new documentation structure (in `../../docs/`) is more concise and AI-friendly.
+
+---
+
+## 📚 Legacy Files
+
+### For Reference Only
 - FAQ для AI моделей
 - Checklist для первой задачи
 

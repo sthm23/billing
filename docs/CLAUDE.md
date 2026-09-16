@@ -1,8 +1,17 @@
-# CLAUDE.md — Навигация по документации
+# CLAUDE.md — Legacy Documentation Index
 
-> **Для новых AI моделей**: Начните с [QUICK_START.md](QUICK_START.md) 🚀
+> ⚠️ **DEPRECATED**: This documentation is kept for reference only.
+> 
+> **New documentation structure** (2026-09-16):
+> - **Start here**: [`../../AGENTS.md`](../../AGENTS.md) — Project entry point
+> - **Documentation**: [`../../docs/`](../../docs/) — Workflows, API map, business domain
+> - **Backend guide**: [`../AGENTS.md`](../AGENTS.md) — Backend development
+
+This folder contains **legacy detailed documentation** that may still be useful for reference.
 
 ---
+
+## 📚 Legacy Documentation Files
 
 ## 📚 Полная документация проекта
 
