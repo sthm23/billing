@@ -22,15 +22,19 @@ import { LoggerModule } from 'nestjs-pino';
       pinoHttp: {
         transport: {
           targets: [
-            { target: 'pino-pretty', level: 'debug' },   // консоль
-            {
-              target: 'pino-loki',                         // отправка в Loki
-              level: 'info',
-              options: {
-                host: 'http://loki:3100',
-                labels: { app: 'billing-api' },
-              },
-            },
+            ...(process.env.NODE_ENV !== 'production'
+              ? [{ target: 'pino-pretty', level: 'debug' }]
+              : []),
+            ...(process.env.LOKI_URL
+              ? [{
+                  target: 'pino-loki',
+                  level: 'info',
+                  options: {
+                    host: process.env.LOKI_URL,
+                    labels: { app: 'billing-api' },
+                  },
+                }]
+              : []),
           ],
         },
       },

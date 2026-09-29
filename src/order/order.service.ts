@@ -664,7 +664,6 @@ export class OrderService {
       const orders = await this.prisma.order.findMany({
         where: {
           ...params,
-
         },
         include: {
           cashier: {
@@ -758,7 +757,7 @@ export class OrderService {
         storeId: user.role !== UserRole.ADMIN ? user.staff.storeId : undefined,
         cashierId: user.type === UserType.STAFF && (user.staff.role !== StaffRole.OWNER && user.staff.role !== StaffRole.MANAGER) ? user.staff.id : undefined
       } as Prisma.OrderFindUniqueArgs['where'];
-
+      this.logger.debug({ orderId: id, params }, 'Finding order');
       const order = await this.prisma.order.findUnique({
         where: params,
         include: {
@@ -783,6 +782,7 @@ export class OrderService {
       if (!order) {
         throw new BadRequestException('Order not found');
       }
+      this.logger.debug({ orderId: id, order }, 'Order found');
       return Promise.resolve({
         ...order,
         items: order.items.map(item => ({
@@ -791,6 +791,7 @@ export class OrderService {
         }))
       });
     } catch (error: any) {
+      this.logger.error({ orderId: id, err: error.message }, 'Failed to find order');
       throw new BadRequestException(error.response || error.message)
     }
   }
