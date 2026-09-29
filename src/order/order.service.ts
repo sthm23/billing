@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException, Injectable } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { CreateOrderDto, CreateOrderItemDto, CreateOrderPaymentDto } from './dto/create-order.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { CurrentUser } from '@auth/models/auth.model';
@@ -16,8 +17,10 @@ import { OrderQueryParams } from './entities/order.entity';
 export class OrderService {
   constructor(
     private readonly prisma: PrismaService,
+    @InjectPinoLogger(OrderService.name) private readonly logger: PinoLogger,
   ) { }
   async create(createOrderDto: CreateOrderDto, user: CurrentUser) {
+    this.logger.debug({ storeId: createOrderDto.storeId, warehouseId: createOrderDto.warehouseId, userId: user?.id }, 'Creating order');
     try {
       if (!user || !user.staff) {
         throw new BadRequestException('Staff not found');
@@ -39,7 +42,7 @@ export class OrderService {
           status: CashStatus.OPEN
         }
       })
-      return await this.prisma.$transaction(async (prisma) => {
+      const order = await this.prisma.$transaction(async (prisma) => {
         if (!cashBox) {
           await prisma.cashbox.create({
             data: {
@@ -62,7 +65,10 @@ export class OrderService {
           }
         })
       })
+      this.logger.info({ orderId: order.id, storeId: order.storeId, cashierId: user.staff.id }, 'Order created');
+      return order;
     } catch (error: any) {
+      this.logger.error({ storeId: createOrderDto.storeId, userId: user?.id, err: error.message }, 'Failed to create order');
       throw new BadRequestException(error.response || error.message)
     }
   }
@@ -181,6 +187,7 @@ export class OrderService {
 
 
   async createReturn(createOrderDto: CreateReturnOrderDto, user: CurrentUser) {
+    this.logger.debug({ orderId: createOrderDto.orderId, itemCount: createOrderDto.items.length }, 'Processing order return');
     const order = await this.prisma.order.findUnique({
       where: { id: createOrderDto.orderId },
       include: { items: true, payments: true, services: true }
@@ -316,14 +323,17 @@ export class OrderService {
           }
         })
 
+        this.logger.info({ orderId: createOrderDto.orderId, returnOrderId: returnOrder.id, refundAmount, returnStatus }, 'Order return completed');
         return Promise.resolve({ message: 'Order returned successfully' });
       });
     } catch (error: any) {
+      this.logger.error({ orderId: createOrderDto.orderId, err: error.message }, 'Failed to process order return');
       throw new BadRequestException(error.response || error.message)
     }
   }
 
   async createOrderItems(dto: CreateOrderItemDto) {
+    this.logger.debug({ orderId: dto.orderId, itemCount: dto.items.length }, 'Updating order items');
     try {
       await this.prisma.$transaction(async (prisma) => {
         const order = await prisma.order.findUnique({
@@ -382,6 +392,7 @@ export class OrderService {
           }
 
           if (invQty < incomingQty) {
+            this.logger.warn({ variantId, available: invQty, requested: incomingQty }, 'Insufficient stock for order item');
             throw new BadRequestException(
               `Insufficient stock for variant: ${variantId} (available: ${invQty}, requested total in order: ${incomingQty})`,
             );
@@ -492,13 +503,16 @@ export class OrderService {
         });
       });
 
+      this.logger.info({ orderId: dto.orderId }, 'Order items updated');
       return Promise.resolve({ message: 'Order items created successfully' });
     } catch (error: any) {
+      this.logger.error({ orderId: dto.orderId, err: error.message }, 'Failed to update order items');
       throw new BadRequestException(error.response || error.message);
     }
   }
 
   async createPayment(orderId: string, dto: CreateOrderPaymentDto, user: CurrentUser) {
+    this.logger.debug({ orderId, paymentCount: dto.payments.length }, 'Processing order payment');
     try {
       const order = await this.prisma.order.findUnique({
         where: { id: orderId },
@@ -589,8 +603,8 @@ export class OrderService {
             }
           });
 
-          // если 0 — значит либо нет строки инвентаря, либо остатка не хватает
           if (updated.count !== 1) {
+            this.logger.warn({ variantId, warehouseId: order.warehouseId }, 'Insufficient stock during payment — inventory update failed');
             throw new BadRequestException(`Insufficient stock for variant: ${variantId}`);
           }
         }
@@ -614,8 +628,10 @@ export class OrderService {
         })
       });
 
+      this.logger.info({ orderId, newPaid, cashboxId: cashBox.id }, 'Order payment processed');
       return Promise.resolve({ message: 'Payment created successfully' });
     } catch (error: any) {
+      this.logger.error({ orderId, err: error.message }, 'Failed to process order payment');
       throw new BadRequestException(error.response || error.message)
     }
   }
@@ -794,6 +810,7 @@ export class OrderService {
   }
 
   async remove(id: string, user: CurrentUser) {
+    this.logger.debug({ orderId: id }, 'Cancelling order');
     try {
       const params = {}
       if (user.type === UserType.STAFF) {
@@ -821,11 +838,14 @@ export class OrderService {
       if (order.status === OrderStatus.CANCELLED) {
         throw new BadRequestException('Order is already cancelled');
       }
-      return this.prisma.order.update({
+      const result = await this.prisma.order.update({
         where: { id },
         data: { status: OrderStatus.CANCELLED }
       });
+      this.logger.info({ orderId: id }, 'Order cancelled');
+      return result;
     } catch (error: any) {
+      this.logger.error({ orderId: id, err: error.message }, 'Failed to cancel order');
       throw new BadRequestException(error.response || error.message)
     }
   }

@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { CreateCashBoxDto, CreateCashTransactionDto } from './dto/create-cashbox.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { CashStatus, CashTransactionType, PaymentType, UserRole } from '@generated/enums';
@@ -10,9 +11,11 @@ import { CashboxWhereUniqueInput } from '@generated/internal/prismaNamespace';
 export class CashboxService {
   constructor(
     private readonly prisma: PrismaService,
+    @InjectPinoLogger(CashboxService.name) private readonly logger: PinoLogger,
   ) { }
 
   async createCashBox(dto: CreateCashBoxDto, user: CurrentUser) {
+    this.logger.debug({ storeId: dto.storeId, warehouseId: dto.warehouseId, sellerId: user.staff.id }, 'Opening cashbox');
     try {
       const store = await this.prisma.store.findFirst({
         where: {
@@ -43,9 +46,10 @@ export class CashboxService {
         where: { ...param }
       })
       if (existingCashBox) {
+        this.logger.warn({ storeId: dto.storeId, warehouseId: dto.warehouseId }, 'Open cashbox already exists');
         throw new BadRequestException('An OPEN cashbox already exists for this store and warehouse');
       }
-      return await this.prisma.cashbox.create({
+      const cashbox = await this.prisma.cashbox.create({
         data: {
           storeId: dto.storeId,
           sellerId: user.staff.id,
@@ -54,12 +58,16 @@ export class CashboxService {
           status: CashStatus.OPEN
         }
       });
+      this.logger.info({ cashboxId: cashbox.id, storeId: dto.storeId, sellerId: user.staff.id }, 'Cashbox opened');
+      return cashbox;
     } catch (error: any) {
+      this.logger.error({ storeId: dto.storeId, err: error.message }, 'Failed to open cashbox');
       throw new BadRequestException(error.response || error.message)
     }
   }
 
   async closeCashBox(id: string, user: CurrentUser) {
+    this.logger.debug({ cashboxId: id, sellerId: user.staff.id }, 'Closing cashbox');
     try {
       const param = {
         id,
@@ -78,18 +86,22 @@ export class CashboxService {
       if (!existingCashBox) {
         throw new BadRequestException('No OPEN cashbox found for this store and warehouse');
       }
-      return await this.prisma.cashbox.update({
+      const closed = await this.prisma.cashbox.update({
         where: { id: existingCashBox.id },
         data: {
           status: CashStatus.CLOSED
         }
       })
+      this.logger.info({ cashboxId: existingCashBox.id, storeId: user.staff.storeId }, 'Cashbox closed');
+      return closed;
     } catch (error: any) {
+      this.logger.error({ cashboxId: id, err: error.message }, 'Failed to close cashbox');
       throw new BadRequestException(error.response || error.message)
     }
   }
 
   async createCashTransaction(cashBoxId: string, dto: CreateCashTransactionDto, user: CurrentUser) {
+    this.logger.debug({ cashboxId: cashBoxId, amount: dto.amount, type: dto.type, category: dto.category }, 'Creating cash transaction');
     try {
       const param = {
         id: cashBoxId,
@@ -129,8 +141,10 @@ export class CashboxService {
           }
         })
       })
+      this.logger.info({ cashboxId: cashBoxId, amount: dto.amount, type: dto.type }, 'Cash transaction created');
       return { message: 'Cash transaction added successfully' };
     } catch (error: any) {
+      this.logger.error({ cashboxId: cashBoxId, err: error.message }, 'Failed to create cash transaction');
       throw new BadRequestException(error.response || error.message)
     }
   }

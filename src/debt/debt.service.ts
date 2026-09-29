@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { CreateDebtDto, CreateDebtPaymentDto } from './dto/create-debt.dto';
 import { UpdateDebtDto } from './dto/update-debt.dto';
 import { PrismaService } from '@prisma/prisma.service';
@@ -12,6 +13,7 @@ export class DebtService {
 
   constructor(
     private readonly prisma: PrismaService,
+    @InjectPinoLogger(DebtService.name) private readonly logger: PinoLogger,
   ) { }
 
   async createCustomerDebt(dto: CreateDebtDto, user: CurrentUser) {
@@ -20,7 +22,7 @@ export class DebtService {
         throw new BadRequestException('Wrong StoreId given!')
       }
 
-      return await this.prisma.customerDebt.create({
+      const debt = await this.prisma.customerDebt.create({
         data: {
           storeId: dto.storeId,
           customerId: dto.customerId,
@@ -32,12 +34,16 @@ export class DebtService {
           returnedAt: dto.returnedAt ?? new Date(),
         }
       });
+      this.logger.info({ debtId: debt.id, customerId: dto.customerId, amount: dto.amount }, 'Customer debt created');
+      return debt;
     } catch (err: any) {
+      this.logger.error({ customerId: dto.customerId, err: err.message }, 'Failed to create customer debt');
       throw new BadRequestException(err.response || err.message)
     }
   }
 
   async createDebtPayment(dto: CreateDebtPaymentDto, user: CurrentUser) {
+    this.logger.debug({ debtId: dto.debtId, warehouseId: dto.warehouseId }, 'Processing debt payment');
     const debt = await this.prisma.customerDebt.findUnique({ where: { id: dto.debtId } });
     if (!debt) {
       throw new BadRequestException('Долг не найден');
@@ -98,15 +104,18 @@ export class DebtService {
         const newStatus = newPaidAmount >= +debt.totalAmount ? DebtStatus.PAID : DebtStatus.ACTIVE;
 
         // 4. Обновляем paidAmount и статус долга
-        return await prisma.customerDebt.update({
+        const updated = await prisma.customerDebt.update({
           where: { id: debt.id },
           data: {
             paidAmount: { increment: totalPaymentAmount },
             status: newStatus
           }
         });
+        this.logger.info({ debtId: debt.id, amount: totalPaymentAmount, newStatus, cashboxId: cashBox.id }, 'Debt payment processed');
+        return updated;
       });
     } catch (error: any) {
+      this.logger.error({ debtId: dto.debtId, err: error.message }, 'Failed to process debt payment');
       throw new BadRequestException(error.response || error.message);
     }
   }

@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { InventoryMovementDto, CreateWarehouseDto, CreateWarehouseStaffDto } from './dto/create-warehouse.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { StaffRole, StockMovementReason, StockMovementType, UserType } from '@generated/enums';
@@ -11,7 +12,7 @@ import { CurrentUser } from '@auth/models/auth.model';
 export class WarehouseService {
   constructor(
     private readonly prisma: PrismaService,
-
+    @InjectPinoLogger(WarehouseService.name) private readonly logger: PinoLogger,
   ) { }
 
   async createWarehouse(dto: CreateWarehouseDto) {
@@ -80,12 +81,19 @@ export class WarehouseService {
   }
 
   async inventoryMovement(warehouseId: string, dto: InventoryMovementDto, user: CurrentUser) {
+    this.logger.debug({ warehouseId, variantId: dto.variantId, type: dto.type, quantity: dto.quantity }, 'Processing inventory movement');
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      const result = await this.prisma.$transaction(async (tx) => {
         const variant = await tx.productVariant.findUnique({ where: { id: dto.variantId } });
-        if (!variant) throw new NotFoundException("Product variant not found");
+        if (!variant) {
+          this.logger.warn({ warehouseId, variantId: dto.variantId }, 'Inventory movement rejected: variant not found');
+          throw new NotFoundException("Product variant not found");
+        }
         const warehouse = await tx.warehouse.findUnique({ where: { id: warehouseId } });
-        if (!warehouse || warehouse.id !== variant.warehouseId) throw new NotFoundException("Warehouse not found");
+        if (!warehouse || warehouse.id !== variant.warehouseId) {
+          this.logger.warn({ warehouseId, variantId: dto.variantId }, 'Inventory movement rejected: warehouse not found or mismatch');
+          throw new NotFoundException("Warehouse not found");
+        }
 
         const quantity = dto.type === StockMovementType.IN ? { increment: dto.quantity } : { decrement: dto.quantity }
         await tx.inventory.update({
@@ -118,7 +126,10 @@ export class WarehouseService {
         });
         return { message: 'Inventory added successfully' };
       })
+      this.logger.info({ warehouseId, variantId: dto.variantId, type: dto.type, quantityDelta: dto.quantity }, 'Inventory movement recorded');
+      return result;
     } catch (error: any) {
+      this.logger.error({ warehouseId, variantId: dto.variantId, err: error.message }, 'Failed to process inventory movement');
       throw new BadRequestException(error.response || error.message)
     }
   }

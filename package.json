@@ -41,10 +41,13 @@
     "class-validator": "^0.14.3",
     "cookie-parser": "^1.4.7",
     "dotenv": "^17.2.3",
+    "nestjs-pino": "^5.2.1",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "passport-local": "^1.0.0",
     "pg": "^8.16.3",
+    "pino-http": "^11.0.0",
+    "pino-loki": "^3.0.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"
   },

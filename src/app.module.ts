@@ -14,10 +14,27 @@ import { CategoryAttributesModule } from './category-attributes/category-attribu
 import { FileModule } from './file/file.module';
 import { CashboxModule } from './cashbox/cashbox.module';
 import { DebtModule } from './debt/debt.module';
-
+import { LoggerModule } from 'nestjs-pino';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    LoggerModule.forRoot({
+      pinoHttp: {
+        transport: {
+          targets: [
+            { target: 'pino-pretty', level: 'debug' },   // консоль
+            {
+              target: 'pino-loki',                         // отправка в Loki
+              level: 'info',
+              options: {
+                host: 'http://loki:3100',
+                labels: { app: 'billing-api' },
+              },
+            },
+          ],
+        },
+      },
+    }),
     PrismaModule,
     AdminModule,
     UserModule,
