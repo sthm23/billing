@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { CreatePaymentDto, CreateReturnPaymentDto } from './dto/create-payment.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { CurrentUser } from '@auth/models/auth.model';
@@ -12,9 +13,11 @@ import { Prisma } from '@generated/client';
 export class PaymentService {
   constructor(
     private readonly prisma: PrismaService,
+    @InjectPinoLogger(PaymentService.name) private readonly logger: PinoLogger,
   ) { }
 
   async create(dto: CreatePaymentDto, user: CurrentUser) {
+    this.logger.debug({ orderId: dto.orderId }, 'Processing debt payment');
     try {
       const order = await this.prisma.order.findUnique({
         where: { id: dto.orderId },
@@ -102,13 +105,17 @@ export class PaymentService {
           });
         }
       })
+      const finalStatus = totalPaid + newTotalAmount === +order.totalAmount - +order.returnedAmount ? OrderStatus.COMPLETED : OrderStatus.DEBT;
+      this.logger.info({ orderId: dto.orderId, amount: newTotalAmount, finalStatus }, 'Debt payment processed');
       return { message: 'Payment(s) added successfully' };
     } catch (error: any) {
+      this.logger.error({ orderId: dto.orderId, err: error.message }, 'Failed to process debt payment');
       throw new BadRequestException(error.response || error.message)
     }
   }
 
   async createPaymentForReturnOrder(id: string, dto: CreateReturnPaymentDto, user: CurrentUser) {
+    this.logger.debug({ returnOrderId: id }, 'Processing return payout');
     try {
       const returnOrder = await this.prisma.returnedOrder.findUnique({
         where: { id },
@@ -178,7 +185,10 @@ export class PaymentService {
         })
       });
 
+      const finalStatus = totalPaid + newTotalAmount === +returnOrder.totalAmount ? ReturnOrderStatus.COMPLETED : ReturnOrderStatus.CREDIT;
+      this.logger.info({ returnOrderId: id, amount: newTotalAmount, finalStatus }, 'Return payout processed');
     } catch (error: any) {
+      this.logger.error({ returnOrderId: id, err: error.message }, 'Failed to process return payout');
       throw new BadRequestException(error.response || error.message)
     }
   }

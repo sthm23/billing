@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { CreateOwnerDto, CreateStaffDto, CreateStoreDto } from './dto/create-store.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { StaffRole, UserRole, UserType } from '@generated/enums';
@@ -11,7 +12,7 @@ export class StoreService {
 
   constructor(
     private readonly prisma: PrismaService,
-
+    @InjectPinoLogger(StoreService.name) private readonly logger: PinoLogger,
   ) { }
 
   async createStore(dto: CreateStoreDto, creatorId: string) {
@@ -77,9 +78,11 @@ export class StoreService {
           }
         })
 
+        this.logger.info({ storeId: store.id, ownerId: dto.ownerId }, 'Store created');
         return store;
       })
     } catch (error: any) {
+      this.logger.error({ ownerId: dto.ownerId, err: error.message }, 'Failed to create store');
       throw new BadRequestException(error.response || error.message)
     }
   }
@@ -162,7 +165,7 @@ export class StoreService {
           });
         }
 
-        return tx.store.findUnique({
+        const updated = await tx.store.findUnique({
           where: { id },
           include: {
             brands: true,
@@ -170,9 +173,12 @@ export class StoreService {
             warehouse: true,
           }
         });
+        this.logger.info({ storeId: id }, 'Store updated');
+        return updated;
       });
 
     } catch (error: any) {
+      this.logger.error({ storeId: id, err: error.message }, 'Failed to update store');
       throw new BadRequestException(error.response || error.message)
     }
   }
@@ -193,10 +199,12 @@ export class StoreService {
         include: { auth: true },
       });
 
-      if (existingUser) throw new ConflictException('Login or Phone is exist!');
-
+      if (existingUser) {
+        this.logger.warn({ login: dto.login }, 'Owner creation rejected: login or phone already exists');
+        throw new ConflictException('Login or Phone is exist!');
+      }
       const passwordHash = await HashingHelper.hash(dto.password, 10);
-      return this.prisma.user.create({
+      const owner = await this.prisma.user.create({
         data: {
           fullName: dto.fullName,
           phone: dto.phone,
@@ -210,7 +218,10 @@ export class StoreService {
           }
         }
       })
+      this.logger.info({ userId: owner.id, login: dto.login }, 'Store owner created');
+      return owner;
     } catch (error: any) {
+      this.logger.error({ login: dto.login, err: error.message }, 'Failed to create store owner');
       throw new BadRequestException(error.response || error.message)
     }
   }
@@ -230,7 +241,10 @@ export class StoreService {
         },
         include: { auth: true },
       });
-      if (existingUser) throw new ConflictException('Login or Phone is exist!');
+      if (existingUser) {
+        this.logger.warn({ login: dto.login }, 'Staff creation rejected: login or phone already exists');
+        throw new ConflictException('Login or Phone is exist!');
+      }
       const passwordHash = await HashingHelper.hash(dto.password, 10);
       const staff = await this.prisma.user.create({
         data: {
@@ -260,8 +274,10 @@ export class StoreService {
           staff: true
         }
       })
+      this.logger.info({ userId: staff.id, login: dto.login, storeId: dto.storeId }, 'Staff created');
       return staff
     } catch (error: any) {
+      this.logger.error({ login: dto.login, storeId: dto.storeId, err: error.message }, 'Failed to create staff');
       throw new BadRequestException(error.response || error.message)
     }
   }

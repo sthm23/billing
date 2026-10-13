@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { CreateProductDto, CreateProductVariantDto } from './dto/create-product.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma, Product, StaffRole, StockMovementReason, StockMovementType, UserRole } from '@generated/client';
@@ -13,6 +14,7 @@ export class ProductService {
   constructor(
     private prisma: PrismaService,
     private barcodeService: BarcodeService,
+    @InjectPinoLogger(ProductService.name) private readonly logger: PinoLogger,
   ) { }
 
   async createProduct(dto: CreateProductDto, user: CurrentUser): Promise<Product> {
@@ -20,11 +22,11 @@ export class ProductService {
       const warehouse = await this.prisma.warehouse.findUnique({ where: { id: dto.warehouseId } });
       if (!warehouse) throw new NotFoundException("Warehouse not found");
 
-      return await this.prisma.product.create({
+      const product = await this.prisma.product.create({
         data: {
           name: dto.name,
           warehouseId: dto.warehouseId,
-          storeId: warehouse.storeId, // важно: берем из warehouse, не из dto
+          storeId: warehouse.storeId,
           brandId: dto.brandId ?? null,
           categoryId: dto.categoryId ?? null,
           description: dto.description ?? null,
@@ -48,7 +50,10 @@ export class ProductService {
           }
         }
       });
+      this.logger.info({ productId: product.id, warehouseId: dto.warehouseId }, 'Product created');
+      return product;
     } catch (error: any) {
+      this.logger.error({ warehouseId: dto.warehouseId, err: error.message }, 'Failed to create product');
       throw new BadRequestException(error.response || error.message)
     }
   }
@@ -101,8 +106,10 @@ export class ProductService {
         }
       })
 
+      this.logger.info({ productId: product.id, variantCount: dto.variants.length }, 'Product variants created');
       return Promise.resolve(product);
     } catch (error: any) {
+      this.logger.error({ productId: dto.productId, err: error.message }, 'Failed to create product variants');
       throw new BadRequestException(error.response || error.message)
     }
   }
@@ -438,8 +445,10 @@ export class ProductService {
           price: dto.price,
         }
       })
+      this.logger.info({ variantId: id }, 'Product variant price updated');
       return { message: 'Product variant price updated successfully' };
     } catch (error: any) {
+      this.logger.error({ variantId: id, err: error.message }, 'Failed to update product variant price');
       throw new BadRequestException(error.response || error.message)
     }
   }
@@ -454,8 +463,10 @@ export class ProductService {
           isArchived: true,
         }
       })
+      this.logger.info({ productId: id }, 'Product archived');
       return { message: 'Product archived successfully' };
     } catch (error: any) {
+      this.logger.error({ productId: id, err: error.message }, 'Failed to archive product');
       throw new BadRequestException(error.response || error.message)
     }
   }

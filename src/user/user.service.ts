@@ -1,4 +1,5 @@
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma, User, UserRole, UserType } from '@generated/client';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -10,6 +11,7 @@ export class UserService {
 
   constructor(
     private prismaService: PrismaService,
+    @InjectPinoLogger(UserService.name) private readonly logger: PinoLogger,
   ) { }
 
   async create(createUserDto: CreateUserDto): Promise<User> {
@@ -19,13 +21,19 @@ export class UserService {
           phone: createUserDto.phone
         }
       })
-      if (user) throw new ConflictException('Phone already existing');
+      if (user) {
+        this.logger.warn({ phone: createUserDto.phone }, 'User creation rejected: phone already exists');
+        throw new ConflictException('Phone already existing');
+      }
       const userEntity = new CreateUserDto(createUserDto);
 
-      return this.prismaService.user.create({
+      const newUser = await this.prismaService.user.create({
         data: userEntity
       });
+      this.logger.info({ userId: newUser.id }, 'User created');
+      return newUser;
     } catch (error: any) {
+      this.logger.error({ phone: createUserDto.phone, err: error.message }, 'Failed to create user');
       throw new BadRequestException(error.response || error.message)
     }
   }
@@ -40,7 +48,10 @@ export class UserService {
           customer: true
         }
       })
-      if (user) throw new ConflictException('Phone already existing');
+      if (user) {
+        this.logger.warn({ phone: createUserDto.phone }, 'Customer creation rejected: phone already exists');
+        throw new ConflictException('Phone already existing');
+      }
 
       return await this.prismaService.$transaction(async (tx) => {
         const newUser = await tx.user.create({
@@ -61,9 +72,11 @@ export class UserService {
             data: { customerId: customer.id }
           });
         }
+        this.logger.info({ userId: newUser.id }, 'Customer created');
         return Promise.resolve({ ...newUser, customer });
       })
     } catch (error: any) {
+      this.logger.error({ phone: createUserDto.phone, err: error.message }, 'Failed to create customer');
       throw new BadRequestException(error.response || error.message)
     }
   }
@@ -92,7 +105,7 @@ export class UserService {
         data: result
       };
     } catch (error: any) {
-      console.log(error);
+      this.logger.error({ err: error.message }, 'User query failed');
       throw new BadRequestException(error.response || error.message)
     }
   }
@@ -121,7 +134,7 @@ export class UserService {
         data: result
       };
     } catch (error: any) {
-      console.log(error);
+      this.logger.error({ err: error.message }, 'User query failed');
       throw new BadRequestException(error.response || error.message)
     }
   }
@@ -261,8 +274,10 @@ export class UserService {
       }
 
       await this.prismaService.user.update({ where: { id }, include: { auth: true, staff: true }, data: data });
+      this.logger.info({ userId: id }, 'User deactivated');
       return { login: result.auth!.login, message: 'User deactivated successfully' };
     } catch (error: any) {
+      this.logger.error({ userId: id, err: error.message }, 'Failed to deactivate user');
       throw new BadRequestException(error.response || error.message)
     }
   }

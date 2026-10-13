@@ -1,0 +1,35 @@
+# Development override for docker-compose
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  nodejs:
+    build:
+      target: builder
+      args:
+        - NODE_ENV=development
+    image: billing:dev
+    container_name: billing_api_dev
+    environment:
+      - NODE_ENV=development
+    volumes:
+      # Hot reload: mount source code
+      - ./src:/app/src
+      - ./prisma:/app/prisma
+      # Prevent overwriting node_modules
+      - /app/node_modules
+      - /app/dist
+    command: npm run start:dev
+    # Expose debugger port
+    ports:
+      - "${PORT:-4000}:${PORT:-4000}"
+      - "9229:9229"  # Node.js debugger
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+
+  postgres:
+    # Expose port for local tools (pgAdmin, DBeaver, etc.)
+    ports:
+      - "${POSTGRES_OUTPUT_PORT:-5432}:5432"
