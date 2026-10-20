@@ -1,6 +1,16 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
-import { CreateOwnerDto, CreateStaffDto, CreateStoreDto } from './dto/create-store.dto';
+import {
+  CreateOwnerDto,
+  CreateStaffDto,
+  CreateStoreDto,
+} from './dto/create-store.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { StaffRole, UserRole, UserType } from '@generated/enums';
 import { HashingHelper } from '@shared/helper/hash.helper';
@@ -9,19 +19,18 @@ import { UpdateStoreDto } from './dto/update-store.dto';
 
 @Injectable()
 export class StoreService {
-
   constructor(
     private readonly prisma: PrismaService,
     @InjectPinoLogger(StoreService.name) private readonly logger: PinoLogger,
-  ) { }
+  ) {}
 
   async createStore(dto: CreateStoreDto, creatorId: string) {
     try {
       const owner = await this.prisma.user.findUnique({
-        where: { id: dto.ownerId }
+        where: { id: dto.ownerId },
       });
       const category = await this.prisma.category.findUnique({
-        where: { id: dto.categoryId }
+        where: { id: dto.categoryId },
       });
       if (!owner) {
         throw new NotFoundException('Owner not found');
@@ -39,32 +48,34 @@ export class StoreService {
             categories: {
               create: {
                 category: {
-                  connect: { id: category.id }
-                }
-              }
+                  connect: { id: category.id },
+                },
+              },
             },
 
             brands: {
               createMany: {
-                data: dto.brandIds.map(brandId => ({ brandId }))
-              }
+                data: dto.brandIds.map((brandId) => ({ brandId })),
+              },
             },
             attributes: {
               createMany: {
-                data: dto.attributeIds.map(attrId => ({ attributeId: attrId }))
-              }
+                data: dto.attributeIds.map((attrId) => ({
+                  attributeId: attrId,
+                })),
+              },
             },
           },
           include: {
-            warehouse: true
-          }
-        })
+            warehouse: true,
+          },
+        });
         const warehouse = await tx.warehouse.create({
           data: {
             name: dto.warehouseName,
             storeId: store.id,
-          }
-        })
+          },
+        });
         await tx.staff.create({
           data: {
             userId: owner.id,
@@ -72,18 +83,24 @@ export class StoreService {
             role: StaffRole.OWNER,
             warehouse: {
               create: {
-                warehouseId: warehouse.id
-              }
-            }
-          }
-        })
+                warehouseId: warehouse.id,
+              },
+            },
+          },
+        });
 
-        this.logger.info({ storeId: store.id, ownerId: dto.ownerId }, 'Store created');
+        this.logger.info(
+          { storeId: store.id, ownerId: dto.ownerId },
+          'Store created',
+        );
         return store;
-      })
+      });
     } catch (error: any) {
-      this.logger.error({ ownerId: dto.ownerId, err: error.message }, 'Failed to create store');
-      throw new BadRequestException(error.response || error.message)
+      this.logger.error(
+        { ownerId: dto.ownerId, err: error.message },
+        'Failed to create store',
+      );
+      throw new BadRequestException(error.response || error.message);
     }
   }
 
@@ -95,7 +112,7 @@ export class StoreService {
           brands: true,
           attributes: true,
           warehouse: true,
-        }
+        },
       });
       if (!store) {
         throw new NotFoundException('Store not found');
@@ -103,7 +120,9 @@ export class StoreService {
       const nextAttributeIds = [...new Set(dto.attributeIds ?? [])];
       const nextBrandIds = [...new Set(dto.brandIds ?? [])];
 
-      const currentAttributeIds = store.attributes.map((attr) => attr.attributeId);
+      const currentAttributeIds = store.attributes.map(
+        (attr) => attr.attributeId,
+      );
       const currentBrandIds = store.brands.map((brand) => brand.brandId);
 
       const nextAttributeSet = new Set(nextAttributeIds);
@@ -112,11 +131,19 @@ export class StoreService {
       const currentAttributeSet = new Set(currentAttributeIds);
       const currentBrandSet = new Set(currentBrandIds);
 
-      const newAttributes = nextAttributeIds.filter((attrId) => !currentAttributeSet.has(attrId));
-      const removedAttributes = currentAttributeIds.filter((attrId) => !nextAttributeSet.has(attrId));
+      const newAttributes = nextAttributeIds.filter(
+        (attrId) => !currentAttributeSet.has(attrId),
+      );
+      const removedAttributes = currentAttributeIds.filter(
+        (attrId) => !nextAttributeSet.has(attrId),
+      );
 
-      const newBrands = nextBrandIds.filter((brandId) => !currentBrandSet.has(brandId));
-      const removedBrands = currentBrandIds.filter((brandId) => !nextBrandSet.has(brandId));
+      const newBrands = nextBrandIds.filter(
+        (brandId) => !currentBrandSet.has(brandId),
+      );
+      const removedBrands = currentBrandIds.filter(
+        (brandId) => !nextBrandSet.has(brandId),
+      );
 
       return this.prisma.$transaction(async (tx) => {
         await tx.store.update({
@@ -144,7 +171,10 @@ export class StoreService {
 
         if (newAttributes.length > 0) {
           await tx.attributeOnStore.createMany({
-            data: newAttributes.map((attrId) => ({ attributeId: attrId, storeId: id })),
+            data: newAttributes.map((attrId) => ({
+              attributeId: attrId,
+              storeId: id,
+            })),
             skipDuplicates: true,
           });
         }
@@ -171,15 +201,17 @@ export class StoreService {
             brands: true,
             attributes: true,
             warehouse: true,
-          }
+          },
         });
         this.logger.info({ storeId: id }, 'Store updated');
         return updated;
       });
-
     } catch (error: any) {
-      this.logger.error({ storeId: id, err: error.message }, 'Failed to update store');
-      throw new BadRequestException(error.response || error.message)
+      this.logger.error(
+        { storeId: id, err: error.message },
+        'Failed to update store',
+      );
+      throw new BadRequestException(error.response || error.message);
     }
   }
 
@@ -190,17 +222,20 @@ export class StoreService {
           OR: [
             {
               auth: {
-                login: dto.login
-              }
+                login: dto.login,
+              },
             },
-            { phone: dto.phone }
-          ]
+            { phone: dto.phone },
+          ],
         },
         include: { auth: true },
       });
 
       if (existingUser) {
-        this.logger.warn({ login: dto.login }, 'Owner creation rejected: login or phone already exists');
+        this.logger.warn(
+          { login: dto.login },
+          'Owner creation rejected: login or phone already exists',
+        );
         throw new ConflictException('Login or Phone is exist!');
       }
       const passwordHash = await HashingHelper.hash(dto.password, 10);
@@ -213,36 +248,92 @@ export class StoreService {
           auth: {
             create: {
               login: dto.login,
-              passwordHash
-            }
-          }
-        }
-      })
-      this.logger.info({ userId: owner.id, login: dto.login }, 'Store owner created');
+              passwordHash,
+            },
+          },
+        },
+      });
+      this.logger.info(
+        { userId: owner.id, login: dto.login },
+        'Store owner created',
+      );
       return owner;
     } catch (error: any) {
-      this.logger.error({ login: dto.login, err: error.message }, 'Failed to create store owner');
-      throw new BadRequestException(error.response || error.message)
+      this.logger.error(
+        { login: dto.login, err: error.message },
+        'Failed to create store owner',
+      );
+      throw new BadRequestException(error.response || error.message);
     }
   }
 
-  async createStaff(dto: CreateStaffDto) {
+  /**
+   * Resolves the store a new staff member is created in.
+   * Admins may target any store; everyone else only their own store
+   * (taken from the token, never trusted from the request), and the
+   * warehouse must belong to that store.
+   */
+  private async resolveStaffStore(
+    dto: CreateStaffDto,
+    user: CurrentUser,
+  ): Promise<string> {
+    const isAdmin = user.role === UserRole.ADMIN;
+    const storeId = isAdmin ? dto.storeId : user.staff?.storeId;
+
+    if (!storeId) {
+      throw new ForbiddenException('Current user is not attached to a store');
+    }
+
+    if (!isAdmin && dto.storeId && dto.storeId !== storeId) {
+      this.logger.warn(
+        { userId: user.id, storeId: dto.storeId },
+        'Staff creation rejected: foreign store',
+      );
+      throw new ForbiddenException(
+        'You can only create staff for your own store',
+      );
+    }
+
+    if (!isAdmin && dto.role === StaffRole.OWNER) {
+      throw new ForbiddenException(
+        'Store owners are created by an administrator',
+      );
+    }
+
+    const warehouse = await this.prisma.warehouse.findFirst({
+      where: { id: dto.warehouseId, storeId },
+      select: { id: true },
+    });
+
+    if (!warehouse) {
+      throw new BadRequestException('Warehouse does not belong to the store');
+    }
+
+    return storeId;
+  }
+
+  async createStaff(dto: CreateStaffDto, user: CurrentUser) {
+    const storeId = await this.resolveStaffStore(dto, user);
+
     try {
       const existingUser = await this.prisma.user.findFirst({
         where: {
           OR: [
             {
               auth: {
-                login: dto.login
-              }
+                login: dto.login,
+              },
             },
-            { phone: dto.phone }
-          ]
+            { phone: dto.phone },
+          ],
         },
         include: { auth: true },
       });
       if (existingUser) {
-        this.logger.warn({ login: dto.login }, 'Staff creation rejected: login or phone already exists');
+        this.logger.warn(
+          { login: dto.login },
+          'Staff creation rejected: login or phone already exists',
+        );
         throw new ConflictException('Login or Phone is exist!');
       }
       const passwordHash = await HashingHelper.hash(dto.password, 10);
@@ -255,34 +346,45 @@ export class StoreService {
             create: {
               login: dto.login,
               passwordHash,
-            }
+            },
           },
           staff: {
             create: {
               role: dto.role,
-              storeId: dto.storeId,
+              storeId,
               warehouse: {
                 create: {
-                  warehouseId: dto.warehouseId
-                }
-              }
-            }
-          }
+                  warehouseId: dto.warehouseId,
+                },
+              },
+            },
+          },
         },
         include: {
-          auth: true,
-          staff: true
-        }
-      })
-      this.logger.info({ userId: staff.id, login: dto.login, storeId: dto.storeId }, 'Staff created');
-      return staff
+          // Never return passwordHash to the client.
+          auth: { select: { id: true, login: true, isActive: true, createdAt: true } },
+          staff: true,
+        },
+      });
+      this.logger.info(
+        { userId: staff.id, login: dto.login, storeId },
+        'Staff created',
+      );
+      return staff;
     } catch (error: any) {
-      this.logger.error({ login: dto.login, storeId: dto.storeId, err: error.message }, 'Failed to create staff');
-      throw new BadRequestException(error.response || error.message)
+      this.logger.error(
+        { login: dto.login, storeId, err: error.message },
+        'Failed to create staff',
+      );
+      throw new BadRequestException(error.response || error.message);
     }
   }
 
-  async findAll(pageSize: number = 10, currentPage: number = 1, user: CurrentUser) {
+  async findAll(
+    pageSize: number = 10,
+    currentPage: number = 1,
+    user: CurrentUser,
+  ) {
     const skip = (currentPage - 1) * pageSize;
     try {
       const result = await this.prisma.store.findMany({
@@ -294,19 +396,19 @@ export class StoreService {
           categories: {
             include: {
               category: true,
-            }
-          }
-        }
+            },
+          },
+        },
       });
       const count = await this.prisma.store.count();
       return {
         currentPage,
         pageSize,
         total: count,
-        data: result
+        data: result,
       };
     } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
+      throw new BadRequestException(error.response || error.message);
     }
   }
 
@@ -324,34 +426,33 @@ export class StoreService {
           categories: true,
           attributes: true,
           brands: true,
-        }
-      })
+        },
+      });
       if (!store) {
         throw new NotFoundException('Store not found');
       }
       return store;
     } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
+      throw new BadRequestException(error.response || error.message);
     }
   }
 
   async findStaffStockMovements(userId: string, user: CurrentUser) {
-
     try {
       const movements = await this.prisma.stockMovement.findMany({
         where: {
           createdById: userId,
         },
         omit: {
-          unitCost: user.role !== UserRole.OWNER
+          unitCost: user.role !== UserRole.OWNER,
         },
         include: {
-          variant: true
-        }
+          variant: true,
+        },
       });
       return movements;
     } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
+      throw new BadRequestException(error.response || error.message);
     }
   }
 }

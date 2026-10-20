@@ -93,6 +93,13 @@
     ],
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
+    "moduleNameMapper": {
+      "^@prisma/(prisma\\.service|prisma\\.module|s3\\.service|models/.*)$": "<rootDir>/prisma/$1",
+      "^@generated(/.*)?$": "<rootDir>/../generated/prisma$1",
+      "^@(utils|user|auth|admin|order|payment|product|report|seller|shared|warehouse)(/.*)?$": "<rootDir>/$1$2",
+      "^src/(.*)$": "<rootDir>/$1",
+      "^(\\.{1,2}/.*)\\.js$": "$1"
+    },
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },

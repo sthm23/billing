@@ -136,15 +136,18 @@ Configure in `tsconfig.json`:
 @warehouse/*     → src/warehouse
 @order/*         → src/order
 @payment/*       → src/payment
-@cashbox/*       → src/cashbox
-@debt/*          → src/debt
 @admin/*         → src/admin
+@report/*        → src/report
+@seller/*        → src/seller
 @shared/*        → src/shared
+@utils/*         → src/utils
 @prisma/*        → src/prisma
 @generated/*     → generated/prisma
 ```
 
-**Always use path aliases** instead of relative imports.
+There are **no** `@cashbox`, `@debt` or `@store` aliases — import those modules relatively.
+
+**Always use path aliases** where they exist. A new alias must also be added to `moduleNameMapper` in the `jest` section of `package.json`, otherwise tests can't resolve it.
 
 ---
 
@@ -484,6 +487,8 @@ npm run test:cov                  # Coverage report
 ```
 
 **Test Files**: `*.spec.ts` co-located with source
+
+**Current state**: most specs are generated "should be defined" stubs that don't provide their dependencies and fail. Working example with mocked `PrismaService` and Pino logger (`getLoggerToken`): `src/store/store.service.spec.ts`. Run a subset with `npx jest src/<module>`.
 
 ---
 
