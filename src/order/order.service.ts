@@ -516,7 +516,12 @@ export class OrderService {
               ),
             },
           },
-          select: { id: true, storeId: true, price: true },
+          select: {
+            id: true,
+            storeId: true,
+            price: true,
+            product: { select: { isArchived: true } },
+          },
         });
 
         const variantById = new Map(variants.map((v) => [v.id, v]));
@@ -529,6 +534,15 @@ export class OrderService {
           if (variant.storeId !== order.storeId) {
             throw new BadRequestException(
               `Variant ${variantId} does not belong to this store`,
+            );
+          }
+          // An archived product cannot be added; lines already in the order stay.
+          if (
+            variant.product.isArchived &&
+            !order.items.some((i) => i.variantId === variantId)
+          ) {
+            throw new BadRequestException(
+              `Product of variant ${variantId} is archived`,
             );
           }
         }

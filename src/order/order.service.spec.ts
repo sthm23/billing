@@ -99,7 +99,12 @@ describe('OrderService', () => {
     );
     prisma.order.findUnique.mockResolvedValue(makeOrder());
     prisma.productVariant.findMany.mockResolvedValue([
-      { id: VARIANT, storeId: STORE, price: 100000 },
+      {
+        id: VARIANT,
+        storeId: STORE,
+        price: 100000,
+        product: { isArchived: false },
+      },
     ]);
     prisma.inventory.findMany.mockResolvedValue([
       { variantId: VARIANT, quantity: 10 },
@@ -161,6 +166,40 @@ describe('OrderService', () => {
       );
       await expect(
         service.createOrderItems(itemsDto([{}]), makeUser(StaffRole.MANAGER)),
+      ).resolves.toBeDefined();
+    });
+
+    it('rejects a new line of an archived product but keeps a saved one', async () => {
+      prisma.productVariant.findMany.mockResolvedValue([
+        {
+          id: VARIANT,
+          storeId: STORE,
+          price: 100000,
+          product: { isArchived: true },
+        },
+      ]);
+      await expect(
+        service.createOrderItems(itemsDto([{}]), makeUser(StaffRole.SELLER)),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      prisma.order.findUnique.mockResolvedValue(
+        makeOrder({
+          items: [
+            {
+              id: ITEM,
+              variantId: VARIANT,
+              retailPrice: 100000,
+              sale: 0,
+              quantity: 1,
+            },
+          ],
+        }),
+      );
+      await expect(
+        service.createOrderItems(
+          itemsDto([{ itemId: ITEM }]),
+          makeUser(StaffRole.SELLER),
+        ),
       ).resolves.toBeDefined();
     });
 

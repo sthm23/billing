@@ -29,7 +29,13 @@ function makeUser(overrides: Partial<CurrentUser> = {}): CurrentUser {
 describe('ProductService', () => {
   let service: ProductService;
   const prisma = {
-    productVariant: { count: jest.fn(), findMany: jest.fn() },
+    product: { findMany: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
+    productVariant: {
+      count: jest.fn(),
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+    },
+    stockMovement: { count: jest.fn(), findMany: jest.fn() },
   };
   const logger = {
     debug: jest.fn(),
@@ -75,11 +81,186 @@ describe('ProductService', () => {
     service = module.get<ProductService>(ProductService);
   });
 
+  describe('findAll', () => {
+    const stockRow = (id: string, quantities: number[]) => ({
+      id,
+      variants: quantities.map((quantity) => ({ inventory: [{ quantity }] })),
+    });
+
+    beforeEach(() => {
+      prisma.product.findMany.mockImplementation(
+        (args: { select?: unknown }) =>
+          args.select
+            ? Promise.resolve([
+                stockRow('low', [2, 3]),
+                stockRow('empty', []),
+                stockRow('ok', [4, 9]),
+              ])
+            : Promise.resolve([]),
+      );
+    });
+
+    it('scopes a seller to the store and their warehouses and counts low stock', async () => {
+      const res = await service.findAll({ search: 'брус' }, makeUser());
+      const where = prisma.product.findMany.mock.calls[1][0].where;
+      expect(where.AND).toEqual(
+        expect.arrayContaining([
+          { isArchived: false },
+          { storeId: STORE },
+          { warehouseId: { in: [WAREHOUSE] } },
+        ]),
+      );
+      expect(JSON.stringify(where.AND)).toContain('брус');
+      expect(res).toMatchObject({
+        total: 3,
+        counts: { all: 3, lowStock: 2 },
+        lowStockThreshold: 5,
+      });
+    });
+
+    it('returns only products with total stock ≤ 5 when lowStock is set', async () => {
+      const res = await service.findAll({ lowStock: true }, makeUser());
+      const where = prisma.product.findMany.mock.calls[1][0].where;
+      expect(where.AND).toContainEqual({ id: { in: ['low', 'empty'] } });
+      expect(res.total).toBe(2);
+    });
+
+    it('matches a category and its subcategories', async () => {
+      await service.findAll({ categoryId: 'cat' }, makeUser());
+      const where = prisma.product.findMany.mock.calls[1][0].where;
+      expect(where.AND).toContainEqual({
+        OR: [
+          { categoryId: 'cat' },
+          { category: { parentId: 'cat' } },
+          { category: { parent: { parentId: 'cat' } } },
+        ],
+      });
+    });
+
+    it('lets an owner see every warehouse of the store', async () => {
+      await service.findAll(
+        {},
+        makeUser({
+          role: UserRole.OWNER,
+          staff: {
+            id: 'owner',
+            storeId: STORE,
+            role: StaffRole.OWNER,
+            warehouse: [],
+          },
+        } as never),
+      );
+      const where = prisma.product.findMany.mock.calls[1][0].where;
+      expect(where.AND).toContainEqual({ storeId: STORE });
+      expect(JSON.stringify(where.AND)).not.toContain('warehouseId');
+    });
+  });
+
+  describe('findOne', () => {
+    it('rejects a product of another store', async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        id: 'product',
+        storeId: 'foreign-store',
+        warehouseId: WAREHOUSE,
+      });
+      await expect(
+        service.findOne('product', makeUser()),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  describe('findStockMovements', () => {
+    it('returns movements of an accessible variant, newest first', async () => {
+      prisma.productVariant.findUnique.mockResolvedValue({
+        storeId: STORE,
+        warehouseId: WAREHOUSE,
+      });
+      prisma.stockMovement.count.mockResolvedValue(1);
+      prisma.stockMovement.findMany.mockResolvedValue([
+        {
+          id: 'm1',
+          type: 'OUT',
+          reason: 'SALE',
+          quantity: 2,
+          unitCost: null,
+          createdAt: new Date('2026-10-20'),
+          createdBy: { user: { fullName: 'Алишер' } },
+        },
+      ]);
+      const res = await service.findStockMovements(
+        'variant',
+        20,
+        1,
+        makeUser(),
+      );
+      expect(prisma.stockMovement.findMany.mock.calls[0][0]).toMatchObject({
+        where: { variantId: 'variant' },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(res).toMatchObject({
+        total: 1,
+        data: [{ id: 'm1', createdBy: 'Алишер' }],
+      });
+    });
+
+    it('rejects a variant of a warehouse the seller does not work in', async () => {
+      prisma.productVariant.findUnique.mockResolvedValue({
+        storeId: STORE,
+        warehouseId: FOREIGN_WAREHOUSE,
+      });
+      await expect(
+        service.findStockMovements('variant', 20, 1, makeUser()),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.stockMovement.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('remove', () => {
+    it('archives a product of the manager warehouse', async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        id: 'product',
+        storeId: STORE,
+        warehouseId: WAREHOUSE,
+      });
+      await service.remove(
+        'product',
+        makeUser({
+          staff: {
+            id: 'm',
+            storeId: STORE,
+            role: StaffRole.MANAGER,
+            warehouse: [{ warehouseId: WAREHOUSE }],
+          },
+        } as never),
+      );
+      expect(prisma.product.update).toHaveBeenCalledWith({
+        where: { id: 'product' },
+        data: { isArchived: true },
+      });
+    });
+
+    it('rejects a product of another store', async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        id: 'product',
+        storeId: 'foreign-store',
+        warehouseId: WAREHOUSE,
+      });
+      await expect(
+        service.remove('product', makeUser()),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe('search', () => {
     it('searches only the staff warehouse of the staff store and returns the product name', async () => {
       const res = await service.search(20, 1, 'брус', WAREHOUSE, makeUser());
       const where = prisma.productVariant.findMany.mock.calls[0][0].where;
-      expect(where).toMatchObject({ warehouseId: WAREHOUSE, storeId: STORE });
+      expect(where).toMatchObject({
+        warehouseId: WAREHOUSE,
+        storeId: STORE,
+        product: { isArchived: false },
+      });
       expect(prisma.productVariant.count.mock.calls[0][0].where).toBe(where);
       expect(res.data[0]).toMatchObject({
         productName: 'Половой брус 6м',

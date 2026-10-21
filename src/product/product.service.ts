@@ -22,6 +22,8 @@ import { buildSku } from '@shared/helper/sku-generator.helper';
 import { CurrentUser } from '@auth/models/auth.model';
 import { BarcodeService } from '@shared/helper/bar-code.service';
 import { UpdateProductVariantPriceDTO } from './dto/update-product.dto';
+import { ProductListParams } from './dto/product-list-params.dto';
+import { LOW_STOCK_THRESHOLD } from './product.constants';
 
 @Injectable()
 export class ProductService {
@@ -156,34 +158,108 @@ export class ProductService {
     }
   }
 
-  async findAll(pageSize = 10, currentPage = 1, user: CurrentUser) {
+  /**
+   * Staff work only with their store; everyone but the owner only with their
+   * warehouses. An admin may access any product.
+   */
+  private assertWarehouseAccess(
+    storeId: string,
+    warehouseId: string,
+    user: CurrentUser,
+  ) {
+    if (user.role === UserRole.ADMIN) return;
+    if (!user.staff || user.staff.storeId !== storeId) {
+      throw new ForbiddenException('No access to this product');
+    }
+    if (user.role === UserRole.OWNER || user.staff.role === StaffRole.OWNER) {
+      return;
+    }
+    if (!user.staff.warehouse.some((w) => w.warehouseId === warehouseId)) {
+      throw new ForbiddenException('No access to this product');
+    }
+  }
+
+  /** Ids of matching products whose total stock is at or below the threshold. */
+  private async findLowStockProductIds(where: Prisma.ProductWhereInput) {
+    const products = await this.prisma.product.findMany({
+      where,
+      select: {
+        id: true,
+        variants: { select: { inventory: { select: { quantity: true } } } },
+      },
+    });
+    const lowIds = products
+      .filter((p) => {
+        const total = p.variants.reduce(
+          (acc, v) => acc + v.inventory.reduce((s, i) => s + i.quantity, 0),
+          0,
+        );
+        return total <= LOW_STOCK_THRESHOLD;
+      })
+      .map((p) => p.id);
+    return { all: products.length, lowIds };
+  }
+
+  async findAll(params: ProductListParams, user: CurrentUser) {
+    const pageSize = params.pageSize ?? 10;
+    const currentPage = params.currentPage ?? 1;
     const skip = (currentPage - 1) * pageSize;
     try {
-      const param = {
-        isArchived: false,
-      };
-      if (user.role === UserRole.OWNER) {
-        param['storeId'] = user.staff.storeId;
+      const and: Prisma.ProductWhereInput[] = [{ isArchived: false }];
+      if (user.role !== UserRole.ADMIN) {
+        if (!user.staff) throw new ForbiddenException('Staff only');
+        and.push({ storeId: user.staff.storeId });
+        if (
+          user.role !== UserRole.OWNER &&
+          user.staff.role !== StaffRole.OWNER
+        ) {
+          and.push({
+            warehouseId: {
+              in: user.staff.warehouse.map((w) => w.warehouseId),
+            },
+          });
+        }
       }
-      if (user.staff && user.staff.role !== StaffRole.OWNER) {
-        param['warehouseId'] = {
-          in: user.staff.warehouse.map((w) => w.warehouseId),
-        };
+      const search = params.search?.trim();
+      if (search) {
+        and.push({
+          OR: [
+            { name: { contains: search, mode: 'insensitive' } },
+            {
+              variants: {
+                some: {
+                  OR: [
+                    { sku: { contains: search, mode: 'insensitive' } },
+                    { barCode: { contains: search } },
+                  ],
+                },
+              },
+            },
+          ],
+        });
+      }
+      if (params.categoryId) {
+        // A chip is a top category: include products of its subcategories.
+        and.push({
+          OR: [
+            { categoryId: params.categoryId },
+            { category: { parentId: params.categoryId } },
+            { category: { parent: { parentId: params.categoryId } } },
+          ],
+        });
       }
 
-      const count = await this.prisma.product.count({
-        where: {
-          ...param,
-        },
-        orderBy: { createdAt: 'desc' },
-      });
+      // Counts for the «Все» / «Мало» chips: same search and category, without lowStock.
+      const { all, lowIds } = await this.findLowStockProductIds({ AND: and });
+      const where: Prisma.ProductWhereInput = params.lowStock
+        ? { AND: [...and, { id: { in: lowIds } }] }
+        : { AND: and };
+      const count = params.lowStock ? lowIds.length : all;
 
       const result = await this.prisma.product.findMany({
         skip: skip,
         take: +pageSize,
-        where: {
-          ...param,
-        },
+        where,
         orderBy: {
           createdAt: 'desc',
         },
@@ -219,6 +295,8 @@ export class ProductService {
         currentPage,
         pageSize,
         total: count,
+        counts: { all, lowStock: lowIds.length },
+        lowStockThreshold: LOW_STOCK_THRESHOLD,
         data: result.map((product) => {
           let minPrice: Prisma.Decimal | null = null;
           let maxPrice: Prisma.Decimal | null = null;
@@ -258,11 +336,12 @@ export class ProductService {
         }),
       };
     } catch (error: any) {
+      if (error instanceof ForbiddenException) throw error;
       throw new BadRequestException(error.response || error.message);
     }
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, user: CurrentUser) {
     try {
       const product = await this.prisma.product.findUnique({
         where: { id },
@@ -313,6 +392,7 @@ export class ProductService {
         },
       });
       if (!product) throw new NotFoundException('Product not found');
+      this.assertWarehouseAccess(product.storeId, product.warehouseId, user);
       const variants = product.variants.map((variant) => {
         return {
           id: variant.id,
@@ -375,7 +455,61 @@ export class ProductService {
         variants,
       };
     } catch (error: any) {
+      if (
+        error instanceof ForbiddenException ||
+        error instanceof NotFoundException
+      ) {
+        throw error;
+      }
       throw new ForbiddenException('Product not found: ' + error?.message);
+    }
+  }
+
+  /** Stock movements of one variant, newest first. */
+  async findStockMovements(
+    variantId: string,
+    pageSize = 20,
+    currentPage = 1,
+    user: CurrentUser,
+  ) {
+    const variant = await this.prisma.productVariant.findUnique({
+      where: { id: variantId },
+      select: { storeId: true, warehouseId: true },
+    });
+    if (!variant) throw new NotFoundException('Product variant not found');
+    this.assertWarehouseAccess(variant.storeId, variant.warehouseId, user);
+
+    try {
+      const skip = (+currentPage - 1) * +pageSize;
+      const where: Prisma.StockMovementWhereInput = { variantId };
+      const [total, movements] = await Promise.all([
+        this.prisma.stockMovement.count({ where }),
+        this.prisma.stockMovement.findMany({
+          where,
+          skip,
+          take: +pageSize,
+          orderBy: { createdAt: 'desc' },
+          include: {
+            createdBy: { select: { user: { select: { fullName: true } } } },
+          },
+        }),
+      ]);
+      return {
+        currentPage,
+        pageSize,
+        total,
+        data: movements.map((m) => ({
+          id: m.id,
+          type: m.type,
+          reason: m.reason,
+          quantity: m.quantity,
+          unitCost: m.unitCost,
+          createdAt: m.createdAt,
+          createdBy: m.createdBy?.user?.fullName ?? null,
+        })),
+      };
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message);
     }
   }
 
@@ -435,6 +569,8 @@ export class ProductService {
       const skip = (+currentPage - 1) * +pageSize;
       const where: Prisma.ProductVariantWhereInput = {
         warehouseId,
+        // Archived products cannot be sold
+        product: { isArchived: false },
         OR: [
           { barCode: { contains: text, mode: 'insensitive' } },
           { sku: { contains: text, mode: 'insensitive' } },
@@ -550,10 +686,11 @@ export class ProductService {
     }
   }
 
-  async remove(id: string) {
+  async remove(id: string, user: CurrentUser) {
     try {
       const product = await this.prisma.product.findUnique({ where: { id } });
       if (!product) throw new NotFoundException('Product not found');
+      this.assertWarehouseAccess(product.storeId, product.warehouseId, user);
       await this.prisma.product.update({
         where: { id },
         data: {
@@ -567,6 +704,7 @@ export class ProductService {
         { productId: id, err: error.message },
         'Failed to archive product',
       );
+      if (error instanceof ForbiddenException) throw error;
       throw new BadRequestException(error.response || error.message);
     }
   }

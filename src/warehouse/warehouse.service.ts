@@ -1,8 +1,24 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
-import { InventoryMovementDto, CreateWarehouseDto, CreateWarehouseStaffDto } from './dto/create-warehouse.dto';
+import {
+  InventoryMovementDto,
+  CreateWarehouseDto,
+  CreateWarehouseStaffDto,
+} from './dto/create-warehouse.dto';
 import { PrismaService } from '@prisma/prisma.service';
-import { StaffRole, StockMovementReason, StockMovementType, UserType } from '@generated/enums';
+import {
+  StaffRole,
+  StockMovementReason,
+  StockMovementType,
+  UserRole,
+  UserType,
+} from '@generated/enums';
 import { HashingHelper } from '@shared/helper/hash.helper';
 import { Prisma, Staff, User } from '@generated/client';
 import { StockInDto } from './dto/stock-in.dto';
@@ -12,8 +28,9 @@ import { CurrentUser } from '@auth/models/auth.model';
 export class WarehouseService {
   constructor(
     private readonly prisma: PrismaService,
-    @InjectPinoLogger(WarehouseService.name) private readonly logger: PinoLogger,
-  ) { }
+    @InjectPinoLogger(WarehouseService.name)
+    private readonly logger: PinoLogger,
+  ) {}
 
   async createWarehouse(dto: CreateWarehouseDto) {
     try {
@@ -23,15 +40,15 @@ export class WarehouseService {
           storeId: dto.storeId,
           staffs: {
             create: {
-              staffId: dto.ownerId
-            }
-          }
-        }
+              staffId: dto.ownerId,
+            },
+          },
+        },
       });
 
-      return { warehouse, worker: null }
+      return { warehouse, worker: null };
     } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
+      throw new BadRequestException(error.response || error.message);
     }
   }
 
@@ -47,10 +64,10 @@ export class WarehouseService {
         currentPage,
         pageSize,
         total: count,
-        data: result
+        data: result,
       };
     } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
+      throw new BadRequestException(error.response || error.message);
     }
   }
 
@@ -64,49 +81,123 @@ export class WarehouseService {
               variant: {
                 include: {
                   product: true,
-
-                }
-              }
-            }
+                },
+              },
+            },
           },
           stockMovements: true,
           staffs: true,
-          orders: true
-
-        }
-      })
+          orders: true,
+        },
+      });
     } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
+      throw new BadRequestException(error.response || error.message);
     }
   }
 
-  async inventoryMovement(warehouseId: string, dto: InventoryMovementDto, user: CurrentUser) {
-    this.logger.debug({ warehouseId, variantId: dto.variantId, type: dto.type, quantity: dto.quantity }, 'Processing inventory movement');
+  /** Owner: any warehouse of their store; manager: only their warehouses. */
+  private assertWarehouseAccess(
+    warehouse: { id: string; storeId: string },
+    user: CurrentUser,
+  ) {
+    if (!user.staff || user.staff.storeId !== warehouse.storeId) {
+      throw new ForbiddenException('No access to this warehouse');
+    }
+    if (user.role === UserRole.OWNER || user.staff.role === StaffRole.OWNER)
+      return;
+    if (!user.staff.warehouse.some((w) => w.warehouseId === warehouse.id)) {
+      throw new ForbiddenException('No access to this warehouse');
+    }
+  }
+
+  private validateMovement(dto: InventoryMovementDto) {
+    const allowed =
+      (dto.type === StockMovementType.IN &&
+        (dto.reason === StockMovementReason.PURCHASE ||
+          dto.reason === StockMovementReason.ADJUSTMENT)) ||
+      (dto.type === StockMovementType.OUT &&
+        dto.reason === StockMovementReason.ADJUSTMENT);
+    if (!allowed) {
+      throw new BadRequestException(
+        `Movement ${dto.type}/${dto.reason} is not allowed here`,
+      );
+    }
+    if (
+      dto.reason === StockMovementReason.PURCHASE &&
+      dto.costPrice === undefined
+    ) {
+      throw new BadRequestException('costPrice is required for a purchase');
+    }
+  }
+
+  async inventoryMovement(
+    warehouseId: string,
+    dto: InventoryMovementDto,
+    user: CurrentUser,
+  ) {
+    this.logger.debug(
+      {
+        warehouseId,
+        variantId: dto.variantId,
+        type: dto.type,
+        quantity: dto.quantity,
+      },
+      'Processing inventory movement',
+    );
+    this.validateMovement(dto);
     try {
       const result = await this.prisma.$transaction(async (tx) => {
-        const variant = await tx.productVariant.findUnique({ where: { id: dto.variantId } });
+        const variant = await tx.productVariant.findUnique({
+          where: { id: dto.variantId },
+        });
         if (!variant) {
-          this.logger.warn({ warehouseId, variantId: dto.variantId }, 'Inventory movement rejected: variant not found');
-          throw new NotFoundException("Product variant not found");
+          this.logger.warn(
+            { warehouseId, variantId: dto.variantId },
+            'Inventory movement rejected: variant not found',
+          );
+          throw new NotFoundException('Product variant not found');
         }
-        const warehouse = await tx.warehouse.findUnique({ where: { id: warehouseId } });
+        const warehouse = await tx.warehouse.findUnique({
+          where: { id: warehouseId },
+        });
         if (!warehouse || warehouse.id !== variant.warehouseId) {
-          this.logger.warn({ warehouseId, variantId: dto.variantId }, 'Inventory movement rejected: warehouse not found or mismatch');
-          throw new NotFoundException("Warehouse not found");
+          this.logger.warn(
+            { warehouseId, variantId: dto.variantId },
+            'Inventory movement rejected: warehouse not found or mismatch',
+          );
+          throw new NotFoundException('Warehouse not found');
         }
+        this.assertWarehouseAccess(warehouse, user);
 
-        const quantity = dto.type === StockMovementType.IN ? { increment: dto.quantity } : { decrement: dto.quantity }
-        await tx.inventory.update({
-          where: {
-            warehouseId_variantId: {
+        if (dto.type === StockMovementType.IN) {
+          await tx.inventory.upsert({
+            where: {
+              warehouseId_variantId: {
+                warehouseId: warehouse.id,
+                variantId: variant.id,
+              },
+            },
+            update: { quantity: { increment: dto.quantity } },
+            create: {
               warehouseId: warehouse.id,
               variantId: variant.id,
+              quantity: dto.quantity,
             },
-          },
-          data: {
-            quantity: quantity,
-          },
-        });
+          });
+        } else {
+          // Atomic check: stock never goes below zero
+          const updated = await tx.inventory.updateMany({
+            where: {
+              warehouseId: warehouse.id,
+              variantId: variant.id,
+              quantity: { gte: dto.quantity },
+            },
+            data: { quantity: { decrement: dto.quantity } },
+          });
+          if (updated.count === 0) {
+            throw new BadRequestException('Insufficient stock for write-off');
+          }
+        }
         await tx.stockMovement.create({
           data: {
             type: dto.type,
@@ -114,23 +205,40 @@ export class WarehouseService {
             quantity: dto.quantity,
             variantId: variant.id,
             warehouseId: warehouse.id,
-            unitCost: new Prisma.Decimal(dto.costPrice),
+            unitCost:
+              dto.costPrice === undefined
+                ? null
+                : new Prisma.Decimal(dto.costPrice),
             createdById: user.staff.id,
-          }
-        })
-        await tx.productVariant.update({
-          where: { id: variant.id },
-          data: {
-            price: new Prisma.Decimal(dto.price),
-          }
+          },
         });
-        return { message: 'Inventory added successfully' };
-      })
-      this.logger.info({ warehouseId, variantId: dto.variantId, type: dto.type, quantityDelta: dto.quantity }, 'Inventory movement recorded');
+        if (dto.price !== undefined) {
+          await tx.productVariant.update({
+            where: { id: variant.id },
+            data: {
+              price: new Prisma.Decimal(dto.price),
+            },
+          });
+        }
+        return { message: 'Inventory movement recorded' };
+      });
+      this.logger.info(
+        {
+          warehouseId,
+          variantId: dto.variantId,
+          type: dto.type,
+          quantityDelta: dto.quantity,
+        },
+        'Inventory movement recorded',
+      );
       return result;
     } catch (error: any) {
-      this.logger.error({ warehouseId, variantId: dto.variantId, err: error.message }, 'Failed to process inventory movement');
-      throw new BadRequestException(error.response || error.message)
+      this.logger.error(
+        { warehouseId, variantId: dto.variantId, err: error.message },
+        'Failed to process inventory movement',
+      );
+      if (error instanceof ForbiddenException) throw error;
+      throw new BadRequestException(error.response || error.message);
     }
   }
 }
