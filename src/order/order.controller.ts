@@ -1,6 +1,21 @@
-import { Controller, Get, Post, Body, Param, Delete, ParseUUIDPipe, Query, UseGuards, Patch } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Delete,
+  ParseUUIDPipe,
+  Query,
+  UseGuards,
+  Patch,
+} from '@nestjs/common';
 import { OrderService } from './order.service';
-import { CreateOrderDto, CreateOrderItemDto, CreateOrderPaymentDto } from './dto/create-order.dto';
+import {
+  CreateOrderDto,
+  CreateOrderItemDto,
+  CreateOrderPaymentDto,
+} from './dto/create-order.dto';
 import { CreateReturnOrderDto } from './dto/create-return.dto';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { CurrentUser } from '@shared/decorators/user.decorator';
@@ -10,52 +25,61 @@ import { OrderQueryParams } from './entities/order.entity';
 @UseGuards(AuthJWTGuard)
 @Controller('orders')
 export class OrderController {
-  constructor(private readonly orderService: OrderService) { }
+  constructor(private readonly orderService: OrderService) {}
 
   @Post()
-  create(
-    @Body() dto: CreateOrderDto,
-    @CurrentUser() user: CurrentUserType
-  ) {
+  create(@Body() dto: CreateOrderDto, @CurrentUser() user: CurrentUserType) {
     return this.orderService.create(dto, user);
   }
 
   @Post('return')
   createReturn(
     @Body() dto: CreateReturnOrderDto,
-    @CurrentUser() user: CurrentUserType
+    @CurrentUser() user: CurrentUserType,
   ) {
     return this.orderService.createReturn(dto, user);
   }
 
   @Post('items')
   createOrderItems(
-    @Body() dto: CreateOrderItemDto
+    @Body() dto: CreateOrderItemDto,
+    @CurrentUser() user: CurrentUserType,
   ) {
-    return this.orderService.createOrderItems(dto);
+    return this.orderService.createOrderItems(dto, user);
   }
 
   @Post('payment/:id')
   createOrderPayment(
     @Param('id', new ParseUUIDPipe({ version: '4' })) orderId: string,
     @Body() dto: CreateOrderPaymentDto,
-    @CurrentUser() user: CurrentUserType
+    @CurrentUser() user: CurrentUserType,
   ) {
     return this.orderService.createPayment(orderId, dto, user);
   }
 
   @Get()
   findAll(
-    @Query() { pageSize, currentPage, search, status, fromDate, toDate }: OrderQueryParams,
-    @CurrentUser() user: CurrentUserType
+    @Query()
+    {
+      pageSize,
+      currentPage,
+      search,
+      status,
+      fromDate,
+      toDate,
+    }: OrderQueryParams,
+    @CurrentUser() user: CurrentUserType,
   ) {
-    return this.orderService.findAll({ pageSize, currentPage, search, status, fromDate, toDate }, user);
+    return this.orderService.findAll(
+      { pageSize, currentPage, search, status, fromDate, toDate },
+      user,
+    );
   }
 
   @Get('search')
   searchOrder(
     @Query() { search }: OrderQueryParams,
-    @CurrentUser() user: CurrentUserType
+    @CurrentUser() user: CurrentUserType,
   ) {
     return this.orderService.searchOrders(search!, user);
   }
@@ -63,14 +87,14 @@ export class OrderController {
   @Get(':id')
   findOne(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @CurrentUser() user: CurrentUserType
+    @CurrentUser() user: CurrentUserType,
   ) {
     return this.orderService.findOne(id, user);
   }
 
   @Patch(':id/clear-customer')
   clearCustomerFromOrder(
-    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
   ) {
     return this.orderService.clearCustomerFromOrder(id);
   }
@@ -78,7 +102,7 @@ export class OrderController {
   @Delete(':id')
   remove(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @CurrentUser() user: CurrentUserType
+    @CurrentUser() user: CurrentUserType,
   ) {
     return this.orderService.remove(id, user);
   }

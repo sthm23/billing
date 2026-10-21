@@ -1,4 +1,10 @@
-import { Injectable, ForbiddenException, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  ForbiddenException,
+  NotFoundException,
+  BadRequestException,
+  ConflictException,
+} from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma, User, UserRole, UserType } from '@generated/client';
@@ -8,48 +14,75 @@ import { UpdateCustomerDto } from './dto/update-user.dto';
 
 @Injectable()
 export class UserService {
-
   constructor(
     private prismaService: PrismaService,
     @InjectPinoLogger(UserService.name) private readonly logger: PinoLogger,
-  ) { }
+  ) {}
 
   async create(createUserDto: CreateUserDto): Promise<User> {
     try {
       const user = await this.prismaService.user.findFirst({
         where: {
-          phone: createUserDto.phone
-        }
-      })
+          phone: createUserDto.phone,
+        },
+      });
       if (user) {
-        this.logger.warn({ phone: createUserDto.phone }, 'User creation rejected: phone already exists');
+        this.logger.warn(
+          { phone: createUserDto.phone },
+          'User creation rejected: phone already exists',
+        );
         throw new ConflictException('Phone already existing');
       }
       const userEntity = new CreateUserDto(createUserDto);
 
       const newUser = await this.prismaService.user.create({
-        data: userEntity
+        data: userEntity,
       });
       this.logger.info({ userId: newUser.id }, 'User created');
       return newUser;
     } catch (error: any) {
-      this.logger.error({ phone: createUserDto.phone, err: error.message }, 'Failed to create user');
-      throw new BadRequestException(error.response || error.message)
+      this.logger.error(
+        { phone: createUserDto.phone, err: error.message },
+        'Failed to create user',
+      );
+      throw new BadRequestException(error.response || error.message);
     }
   }
 
-  async createCustomers(createUserDto: CreateUserDto): Promise<User> {
+  /** A customer can be attached only to an order of the user's own store (admin: any). */
+  private async assertOrderInUserStore(orderId: string, user: CurrentUser) {
+    if (user.role === UserRole.ADMIN) return;
+    const order = await this.prismaService.order.findUnique({
+      where: { id: orderId },
+      select: { storeId: true },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    if (!user.staff || order.storeId !== user.staff.storeId) {
+      throw new ForbiddenException('No access to this order');
+    }
+  }
+
+  async createCustomers(
+    createUserDto: CreateUserDto,
+    user: CurrentUser,
+  ): Promise<User> {
+    if (createUserDto.orderId) {
+      await this.assertOrderInUserStore(createUserDto.orderId, user);
+    }
     try {
       const user = await this.prismaService.user.findFirst({
         where: {
-          phone: createUserDto.phone
+          phone: createUserDto.phone,
         },
         include: {
-          customer: true
-        }
-      })
+          customer: true,
+        },
+      });
       if (user) {
-        this.logger.warn({ phone: createUserDto.phone }, 'Customer creation rejected: phone already exists');
+        this.logger.warn(
+          { phone: createUserDto.phone },
+          'Customer creation rejected: phone already exists',
+        );
         throw new ConflictException('Phone already existing');
       }
 
@@ -59,25 +92,28 @@ export class UserService {
             fullName: createUserDto.fullName,
             phone: createUserDto.phone,
             type: UserType.CUSTOMER,
-          }
-        })
+          },
+        });
         const customer = await tx.customer.create({
           data: {
-            userId: newUser.id
-          }
-        })
+            userId: newUser.id,
+          },
+        });
         if (createUserDto.orderId) {
           await tx.order.update({
             where: { id: createUserDto.orderId },
-            data: { customerId: customer.id }
+            data: { customerId: customer.id },
           });
         }
         this.logger.info({ userId: newUser.id }, 'Customer created');
         return Promise.resolve({ ...newUser, customer });
-      })
+      });
     } catch (error: any) {
-      this.logger.error({ phone: createUserDto.phone, err: error.message }, 'Failed to create customer');
-      throw new BadRequestException(error.response || error.message)
+      this.logger.error(
+        { phone: createUserDto.phone, err: error.message },
+        'Failed to create customer',
+      );
+      throw new BadRequestException(error.response || error.message);
     }
   }
 
@@ -85,7 +121,10 @@ export class UserService {
     const skip = (currentPage - 1) * pageSize;
     const param = {
       role: UserRole.OWNER,
-      staff: user.role === UserRole.ADMIN ? undefined : { storeId: user.staff!.storeId }
+      staff:
+        user.role === UserRole.ADMIN
+          ? undefined
+          : { storeId: user.staff!.storeId },
     } as Prisma.UserWhereInput;
 
     try {
@@ -95,18 +134,18 @@ export class UserService {
         where: param,
         include: {
           staff: true,
-        }
+        },
       });
       const count = await this.prismaService.user.count({ where: param });
       return {
         currentPage,
         pageSize,
         total: count,
-        data: result
+        data: result,
       };
     } catch (error: any) {
       this.logger.error({ err: error.message }, 'User query failed');
-      throw new BadRequestException(error.response || error.message)
+      throw new BadRequestException(error.response || error.message);
     }
   }
 
@@ -114,7 +153,10 @@ export class UserService {
     const skip = (currentPage - 1) * pageSize;
     const param = {
       type: { not: UserType.CUSTOMER },
-      staff: user.role === UserRole.ADMIN ? undefined : { storeId: user.staff!.storeId },
+      staff:
+        user.role === UserRole.ADMIN
+          ? undefined
+          : { storeId: user.staff!.storeId },
     } as Prisma.UserWhereInput;
 
     try {
@@ -124,40 +166,38 @@ export class UserService {
         where: param,
         include: {
           staff: true,
-        }
+        },
       });
       const count = await this.prismaService.user.count({ where: param });
       return {
         currentPage,
         pageSize,
         total: count,
-        data: result
+        data: result,
       };
     } catch (error: any) {
       this.logger.error({ err: error.message }, 'User query failed');
-      throw new BadRequestException(error.response || error.message)
+      throw new BadRequestException(error.response || error.message);
     }
   }
-
 
   async findOneById(id: string): Promise<Omit<User, 'password'> | null> {
     try {
       return await this.prismaService.user.findUnique({
-        where: { id }, include: {
+        where: { id },
+        include: {
           auth: true,
           staff: {
             include: {
               store: true,
               warehouse: true,
-            }
+            },
           },
-
-        }
+        },
       });
     } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
+      throw new BadRequestException(error.response || error.message);
     }
-
   }
 
   async findOneInfo(id: string): Promise<any | null> {
@@ -170,13 +210,13 @@ export class UserService {
             include: {
               payments: true,
               orders: true,
-            }
+            },
           },
-        }
+        },
       });
       return user;
     } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
+      throw new BadRequestException(error.response || error.message);
     }
   }
 
@@ -194,28 +234,29 @@ export class UserService {
         },
       });
     } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
+      throw new BadRequestException(error.response || error.message);
     }
-
   }
 
-  async getCustomers(
-    pageSize = 10,
-    currentPage = 1,
-    search: string,
-  ) {
+  async getCustomers(pageSize = 10, currentPage = 1, search: string) {
     const skip = (currentPage - 1) * pageSize;
     const param = {
       type: UserType.CUSTOMER,
       OR: [
-        { phone: search ? { contains: search, mode: 'insensitive' } : undefined },
-        { fullName: search ? { contains: search, mode: 'insensitive' } : undefined },
-      ]
+        {
+          phone: search ? { contains: search, mode: 'insensitive' } : undefined,
+        },
+        {
+          fullName: search
+            ? { contains: search, mode: 'insensitive' }
+            : undefined,
+        },
+      ],
     } as Prisma.UserWhereInput;
 
     try {
       const count = await this.prismaService.user.count({
-        where: param
+        where: param,
       });
       const data = await this.prismaService.user.findMany({
         skip,
@@ -223,44 +264,48 @@ export class UserService {
         where: param,
         include: {
           customer: true,
-        }
-      })
+        },
+      });
       return {
         currentPage,
         pageSize,
         total: count,
-        data
-      }
+        data,
+      };
     } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
+      throw new BadRequestException(error.response || error.message);
     }
   }
 
-  async setCustomerToOrder(dto: UpdateCustomerDto) {
+  async setCustomerToOrder(dto: UpdateCustomerDto, user: CurrentUser) {
+    await this.assertOrderInUserStore(dto.orderId, user);
     try {
       const customer = await this.prismaService.customer.findUnique({
         where: { id: dto.customerId },
       });
       if (!customer) {
-        throw new NotFoundException(`Customer with ID ${dto.customerId} not found`);
+        throw new NotFoundException(
+          `Customer with ID ${dto.customerId} not found`,
+        );
       }
       await this.prismaService.order.update({
         where: { id: dto.orderId! },
-        data: { customerId: dto.customerId }
+        data: { customerId: dto.customerId },
       });
       return { message: 'Customer assigned to order successfully' };
     } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
+      throw new BadRequestException(error.response || error.message);
     }
   }
 
   async deactivate(id: string) {
     try {
       const result = await this.prismaService.user.findUnique({
-        where: { id }, include: {
+        where: { id },
+        include: {
           auth: true,
           staff: true,
-        }
+        },
       });
       if (!result) {
         throw new NotFoundException(`User with ID ${id} not found`);
@@ -268,17 +313,27 @@ export class UserService {
       let data = {};
       if (result.staff && result.staff.isActive) {
         data = { ...data, staff: { update: { isActive: false } } };
-      };
+      }
       if (result.auth && result.auth.isActive) {
         data = { ...data, auth: { update: { isActive: false } } };
       }
 
-      await this.prismaService.user.update({ where: { id }, include: { auth: true, staff: true }, data: data });
+      await this.prismaService.user.update({
+        where: { id },
+        include: { auth: true, staff: true },
+        data: data,
+      });
       this.logger.info({ userId: id }, 'User deactivated');
-      return { login: result.auth!.login, message: 'User deactivated successfully' };
+      return {
+        login: result.auth!.login,
+        message: 'User deactivated successfully',
+      };
     } catch (error: any) {
-      this.logger.error({ userId: id, err: error.message }, 'Failed to deactivate user');
-      throw new BadRequestException(error.response || error.message)
+      this.logger.error(
+        { userId: id, err: error.message },
+        'Failed to deactivate user',
+      );
+      throw new BadRequestException(error.response || error.message);
     }
   }
 }

@@ -488,7 +488,9 @@ npm run test:cov                  # Coverage report
 
 **Test Files**: `*.spec.ts` co-located with source
 
-**Current state**: most specs are generated "should be defined" stubs that don't provide their dependencies and fail. Working example with mocked `PrismaService` and Pino logger (`getLoggerToken`): `src/store/store.service.spec.ts`. Run a subset with `npx jest src/<module>`.
+**Current state**: most specs are generated "should be defined" stubs that don't provide their dependencies and fail. Working examples with mocked `PrismaService` and Pino logger (`getLoggerToken`): `src/store/store.service.spec.ts`, `src/order/order.service.spec.ts` (`$transaction` mocked as `cb => cb(prisma)`), `src/product/product.service.spec.ts`, `src/user/user.service.spec.ts`.
+
+**Error wrapping**: most services catch everything and rethrow `BadRequestException(error.response)`, which turns a 403 into a 400. Run access checks before the `try`, or rethrow `ForbiddenException` in the `catch` (see `OrderService.createOrderItems`, `ProductService.search`). Run a subset with `npx jest src/<module>`.
 
 ---
 
