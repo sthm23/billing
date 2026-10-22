@@ -65,8 +65,9 @@ export class UserController {
   getCustomers(
     @Query() { pageSize, currentPage }: PaginationParams,
     @Query('search') search: string,
+    @CurrentUser() user: CurrentUserType,
   ) {
-    return this.userService.getCustomers(pageSize, currentPage, search);
+    return this.userService.getCustomers(pageSize, currentPage, search, user);
   }
 
   @Get(':id')

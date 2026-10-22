@@ -70,7 +70,7 @@ export class UserService {
       await this.assertOrderInUserStore(createUserDto.orderId, user);
     }
     try {
-      const user = await this.prismaService.user.findFirst({
+      const existing = await this.prismaService.user.findFirst({
         where: {
           phone: createUserDto.phone,
         },
@@ -78,12 +78,15 @@ export class UserService {
           customer: true,
         },
       });
-      if (user) {
+      if (existing) {
         this.logger.warn(
           { phone: createUserDto.phone },
           'Customer creation rejected: phone already exists',
         );
-        throw new ConflictException('Phone already existing');
+        // The customer may belong to another store: they are found by the full number
+        throw new ConflictException(
+          'A customer with this phone already exists — search by the full phone number',
+        );
       }
 
       return await this.prismaService.$transaction(async (tx) => {
@@ -97,6 +100,10 @@ export class UserService {
         const customer = await tx.customer.create({
           data: {
             userId: newUser.id,
+            // The store that created the customer sees them in its search
+            ...(user.staff
+              ? { stores: { connect: { id: user.staff.storeId } } }
+              : {}),
           },
         });
         if (createUserDto.orderId) {
@@ -113,6 +120,7 @@ export class UserService {
         { phone: createUserDto.phone, err: error.message },
         'Failed to create customer',
       );
+      if (error instanceof ConflictException) throw error;
       throw new BadRequestException(error.response || error.message);
     }
   }
@@ -238,34 +246,69 @@ export class UserService {
     }
   }
 
-  async getCustomers(pageSize = 10, currentPage = 1, search: string) {
+  /**
+   * Customer search for an order. The store's own customers (linked to it,
+   * bought or owe there) — by part of the name or phone; customers of other
+   * stores — only by the full phone number, so a store can't browse another
+   * store's customer list. An admin sees all.
+   */
+  async getCustomers(
+    pageSize = 10,
+    currentPage = 1,
+    search: string | undefined,
+    user: CurrentUser,
+  ) {
     const skip = (currentPage - 1) * pageSize;
-    const param = {
-      type: UserType.CUSTOMER,
-      OR: [
-        {
-          phone: search ? { contains: search, mode: 'insensitive' } : undefined,
+    const text = search?.trim() ?? '';
+    const where: Prisma.UserWhereInput = { type: UserType.CUSTOMER };
+    const and: Prisma.UserWhereInput[] = [];
+
+    if (text) {
+      and.push({
+        OR: [
+          { phone: { contains: text, mode: 'insensitive' } },
+          { fullName: { contains: text, mode: 'insensitive' } },
+        ],
+      });
+    }
+    if (user.role !== UserRole.ADMIN) {
+      if (!user.staff) throw new ForbiddenException('Staff only');
+      const storeId = user.staff.storeId;
+      const ownCustomer: Prisma.UserWhereInput = {
+        customer: {
+          OR: [
+            { stores: { some: { id: storeId } } },
+            { orders: { some: { storeId } } },
+            { customerDebts: { some: { storeId } } },
+          ],
         },
-        {
-          fullName: search
-            ? { contains: search, mode: 'insensitive' }
-            : undefined,
-        },
-      ],
-    } as Prisma.UserWhereInput;
+      };
+      const phones = fullPhoneVariants(text);
+      // Own customers by the text; anyone else only by the full number
+      and.push(
+        phones ? { OR: [ownCustomer, { phone: { in: phones } }] } : ownCustomer,
+      );
+    }
+    if (and.length) where.AND = and;
 
     try {
-      const count = await this.prismaService.user.count({
-        where: param,
-      });
-      const data = await this.prismaService.user.findMany({
-        skip,
-        take: +pageSize,
-        where: param,
-        include: {
-          customer: true,
-        },
-      });
+      const [count, data] = await Promise.all([
+        this.prismaService.user.count({ where }),
+        this.prismaService.user.findMany({
+          skip,
+          take: +pageSize,
+          where,
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            fullName: true,
+            phone: true,
+            type: true,
+            createdAt: true,
+            customer: true,
+          },
+        }),
+      ]);
       return {
         currentPage,
         pageSize,
@@ -336,4 +379,17 @@ export class UserService {
       throw new BadRequestException(error.response || error.message);
     }
   }
+}
+
+/**
+ * Ways a full Uzbek number may be stored («+998901234567», «998901234567»,
+ * «901234567»), or null when the text is not a full number (9+ digits).
+ */
+export function fullPhoneVariants(text: string): string[] | null {
+  const digits = text.replace(/\D/g, '');
+  if (digits.length < 9) return null;
+  const local =
+    digits.length === 12 && digits.startsWith('998') ? digits.slice(3) : digits;
+  if (local.length !== 9) return [digits, `+${digits}`];
+  return [local, `998${local}`, `+998${local}`];
 }
