@@ -105,7 +105,7 @@ CREATED → HOLD → [DEBT | COMPLETED] → [REFUNDED | CANCELLED]
 
 **Что происходит**:
 1. Валидация статуса заказа:
-   - Должен быть `HOLD` или `DEBT`
+   - Должен быть `HOLD` (иначе 400 `Cannot pay an order that is not in HOLD status; repay a debt via POST /payment`). DEBT-заказ гасится только через `POST /payment` — повторная оплата здесь списывала остатки второй раз (исправлено 2026-10-22)
 
 2. Валидация суммы платежа:
    ```typescript
@@ -234,10 +234,10 @@ CREATED → HOLD → [DEBT | COMPLETED] → [REFUNDED | CANCELLED]
 **Endpoint**: `POST /cashbox`
 
 **Условия**:
-- Только OWNER/MANAGER (RolesGuard)
+- Любой сотрудник (продавец, кассир, менеджер, владелец) открывает свою кассу — с 2026-10-22 без RolesGuard
 - Body: `{ warehouseId, balance? }`; магазин берется из токена (`user.staff.storeId`), `storeId`/`status` в body игнорируются (для старых клиентов)
-- Склад принадлежит магазину staff (иначе 400 `Warehouse does not belong to the store`); MANAGER должен иметь доступ к складу (иначе 403)
-- У продавца НЕТ уже открытой кассы на этом складе/магазине
+- Склад принадлежит магазину staff (иначе 400 `Warehouse does not belong to the store`); не-владелец должен иметь доступ к складу через StaffOnWarehouse (иначе 403), владелец — любой склад магазина
+- У сотрудника НЕТ уже открытой кассы на этом складе (одна открытая касса на сотрудника и склад; иначе 400 `You already have an open cashbox on this warehouse`)
 - Можно указать начальный баланс (`balance`, default: 0)
 
 **Что происходит**:
@@ -392,9 +392,10 @@ if (type === INCOME) {
 ### Автоматические транзакции vs Ручные
 
 **Автоматические** (создаются системой):
-- Оплата заказа → INCOME, SALE
+- Оплата заказа (`POST /orders/payment/:id`) → INCOME, SALE
 - Возврат товара (из заказа) → EXPENSE, RETURN
-- Оплата старого долга → INCOME, DEBT_PAYMENT
+- Погашение долга по заказу (`POST /payment`) → INCOME, DEBT_PAYMENT (с 2026-10-22; старые погашения остаются SALE)
+- Оплата старого долга (`POST /debt/payment`) → INCOME, DEBT_PAYMENT
 
 **Ручные** (создает кассир через UI):
 - Неопознанные поступления → INCOME, OTHER
@@ -637,12 +638,25 @@ if (type === INCOME) {
 ### 1. Order Debt (долг по заказу)
 - Возникает автоматически при частичной оплате заказа
 - Order.status = `DEBT`
-- Оплата: `POST /orders/payment/:id` (добавление платежа к существующему заказу)
+- Оплата: `POST /payment` (добавление платежа к DEBT-заказу; остатки не меняются, CashTransaction — DEBT_PAYMENT). `POST /orders/payment/:id` принимает только HOLD-заказы
 
 ### 2. CustomerDebt (старые долги)
 - Создается вручную для долгов, возникших **ДО внедрения системы**
 - НЕ связан с конкретным заказом в системе
 - Позволяет перенести историю задолженностей при миграции на новую систему
+
+### Долг — перед магазином (2026-10-22)
+- **Любой** сотрудник магазина (продавец, кассир, менеджер, владелец) видит всех должников магазина и может принять погашение
+- Деньги идут в **свою открытую кассу** сотрудника (предпочтительно на складе заказа / переданном `warehouseId`) или в выбранную `cashboxId` — любую ОТКРЫТУЮ кассу магазина (`GET /cashbox/open`)
+- Нет своей открытой кассы и не передан `cashboxId` → 400 `No open cashbox: open one or choose an open cashbox of the store` (приложение предлагает открыть свою кассу или выбрать открытую)
+- CashTransaction записывается на сотрудника, принявшего деньги (`createdById`), в выбранную кассу
+- Реализация: `src/cashbox/payment-cashbox.ts` → `resolvePaymentCashbox()` (общая для `POST /payment` и `POST /debt/payment`)
+- Проверки: долг/заказ из магазина сотрудника (иначе 403); `POST /debt/payment` — долг ACTIVE (`Долг уже погашен`), сумма ≤ остатка (`Сумма оплаты больше остатка долга`); `POST /payment` — не переданный `customerId` сохраняет клиента заказа
+
+### Должники
+- `GET /debt/debtors` — DEBT-заказы с клиентом (остаток = totalAmount − returnedAmount − paidAmount) + ACTIVE CustomerDebt (totalAmount − paidAmount), сгруппированные по клиенту; `summary`: `total`, `customers`, `over30` (долги, чья дата старше 30 дней), `paidInPeriod`
+- «Погашено за месяц» (`paidInPeriod`) = Σ CashTransaction INCOME с категорией DEBT_PAYMENT в периоде `[from, to)` (по умолчанию — текущий месяц сервера)
+- `GET /debt/debtors/:customerId` — открытые долги клиента (`kind: ORDER | MANUAL`), самые старые первыми, с платежами
 
 ### Создание старого долга
 **Endpoint**: `POST /debt`
@@ -713,7 +727,7 @@ CustomerDebt {
 |----------|-----------|--------------|
 | Связь с заказом | Да (`Order.id`) | Нет |
 | Создание | Автоматически при частичной оплате | Вручную |
-| CashTransaction.category | `SALE` | `DEBT_PAYMENT` |
+| CashTransaction.category | `DEBT_PAYMENT` (`POST /payment`; до 2026-10-22 — `SALE`) | `DEBT_PAYMENT` |
 | Использование | Текущие долги | Исторические долги |
 
 ---

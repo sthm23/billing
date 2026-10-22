@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Body, Param, ParseUUIDPipe, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
+import { DebtQueryParams, DebtorsQueryParams } from './dto/param.dto';
 import { DebtService } from './debt.service';
 import { CreateDebtDto, CreateDebtPaymentDto } from './dto/create-debt.dto';
 import { CurrentUser } from '@shared/decorators/user.decorator';
@@ -30,15 +31,38 @@ export class DebtController {
   @Get()
   findAll(
     @CurrentUser() user: UserInfo,
-    @Param() params: any,
+    @Query() params: DebtQueryParams,
   ) {
     return this.debtService.findAll(params, user);
+  }
+
+  @Get('debtors')
+  getDebtors(
+    @Query() params: DebtorsQueryParams,
+    @CurrentUser() user: UserInfo,
+  ) {
+    return this.debtService.getDebtors(params, user);
+  }
+
+  /** DEBT orders without a customer (older data) */
+  @Get('debtors/unassigned')
+  getUnassignedDebts(@CurrentUser() user: UserInfo) {
+    return this.debtService.getDebtor(null, user);
+  }
+
+  @Get('debtors/:customerId')
+  getDebtor(
+    @Param('customerId', new ParseUUIDPipe({ version: '4' })) customerId: string,
+    @CurrentUser() user: UserInfo,
+  ) {
+    return this.debtService.getDebtor(customerId, user);
   }
 
   @Get(':id')
   findOne(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: UserInfo,
   ) {
-    return this.debtService.findOne(id);
+    return this.debtService.findOne(id, user);
   }
 }

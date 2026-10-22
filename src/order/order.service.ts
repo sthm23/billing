@@ -35,7 +35,7 @@ export class OrderService {
   constructor(
     private readonly prisma: PrismaService,
     @InjectPinoLogger(OrderService.name) private readonly logger: PinoLogger,
-  ) { }
+  ) {}
   async create(createOrderDto: CreateOrderDto, user: CurrentUser) {
     this.logger.debug(
       {
@@ -754,12 +754,11 @@ export class OrderService {
       if (!order) {
         throw new BadRequestException('Order not found');
       }
-      if (
-        order.status !== OrderStatus.HOLD &&
-        order.status !== OrderStatus.DEBT
-      ) {
+      // Only the sale itself: it deducts stock. A DEBT order is repaid via
+      // POST /payment, otherwise the stock would be deducted a second time.
+      if (order.status !== OrderStatus.HOLD) {
         throw new BadRequestException(
-          'Cannot add payment to an order that is not in HOLD or DEBT status',
+          'Cannot pay an order that is not in HOLD status; repay a debt via POST /payment',
         );
       }
 
@@ -1085,8 +1084,8 @@ export class OrderService {
         storeId: user.role !== UserRole.ADMIN ? user.staff.storeId : undefined,
         cashierId:
           user.type === UserType.STAFF &&
-            user.staff.role !== StaffRole.OWNER &&
-            user.staff.role !== StaffRole.MANAGER
+          user.staff.role !== StaffRole.OWNER &&
+          user.staff.role !== StaffRole.MANAGER
             ? user.staff.id
             : undefined,
       } as Prisma.OrderFindUniqueArgs['where'];

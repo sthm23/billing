@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
+import { resolvePaymentCashbox } from 'src/cashbox/payment-cashbox';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { CreatePaymentDto, CreateReturnPaymentDto } from './dto/create-payment.dto';
 import { PrismaService } from '@prisma/prisma.service';
@@ -26,6 +27,9 @@ export class PaymentService {
       if (!order) {
         throw new BadRequestException('Order not found');
       }
+      if (!user.staff || order.storeId !== user.staff.storeId) {
+        throw new ForbiddenException('No access to this order');
+      }
       if (order.status !== 'DEBT') {
         throw new BadRequestException('Cannot add payment to an order that is not in DEBT status');
       }
@@ -34,17 +38,19 @@ export class PaymentService {
       if (totalPaid + newTotalAmount > (+order.totalAmount - +order.returnedAmount)) {
         throw new BadRequestException('Payment amount exceeds order total');
       }
-      const cashBox = await this.prisma.cashbox.findFirst({
-        where: {
-          storeId: user.staff.storeId,
-          warehouseId: order.warehouseId,
-          sellerId: user.staff.id,
-          status: CashStatus.OPEN
-        }
+      // Any employee of the store: own open cashbox or the chosen open one
+      const cashBox = await resolvePaymentCashbox(this.prisma, user, {
+        cashboxId: dto.cashboxId,
+        warehouseId: order.warehouseId,
       });
-      if (!cashBox) {
-        throw new BadRequestException('Open cashbox not found for the order store');
+      // Omitted customerId keeps the order's customer
+      const customer = dto.customerId
+        ? await this.prisma.customer.findUnique({ where: { id: dto.customerId } })
+        : null;
+      if (dto.customerId && !customer) {
+        throw new BadRequestException('Customer not found');
       }
+      const customerId = customer?.id ?? order.customerId;
       await this.prisma.$transaction(async (prisma) => {
         for (const paymentDto of dto.payments) {
           await prisma.payment.create({
@@ -64,13 +70,13 @@ export class PaymentService {
             type: CashTransactionType.INCOME,
             createdById: user.staff.id,
             orderId: dto.orderId,
-            category: CashTransactionCategory.SALE,
+            // A repayment, not a sale: counted in «Погашено» of the debtors screen
+            category: CashTransactionCategory.DEBT_PAYMENT,
             paymentType: p.type as PaymentType
           }))
         })
         const status = totalPaid + newTotalAmount === +order.totalAmount - +order.returnedAmount
           ? OrderStatus.COMPLETED : OrderStatus.DEBT;
-        const customer = dto.customerId ? await prisma.customer.findUnique({ where: { id: dto.customerId } }) : null;
 
         await prisma.cashbox.update({
           where: { id: cashBox.id },
@@ -85,7 +91,7 @@ export class PaymentService {
             data: {
               status: OrderStatus.REFUNDED,
               paidAmount: totalPaid + newTotalAmount,
-              customerId: customer?.id ?? null,
+              customerId,
             }
           });
           await prisma.returnedOrder.update({
@@ -100,7 +106,7 @@ export class PaymentService {
             data: {
               status,
               paidAmount: totalPaid + newTotalAmount,
-              customerId: customer?.id ?? null,
+              customerId,
             }
           });
         }
@@ -110,6 +116,7 @@ export class PaymentService {
       return { message: 'Payment(s) added successfully' };
     } catch (error: any) {
       this.logger.error({ orderId: dto.orderId, err: error.message }, 'Failed to process debt payment');
+      if (error instanceof ForbiddenException) throw error;
       throw new BadRequestException(error.response || error.message)
     }
   }

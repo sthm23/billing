@@ -267,7 +267,7 @@ POST /cashbox
   "balance": 0  // Начальный баланс
 }
 ```
-**Результат**: Cashbox status: OPEN (магазин — из токена). `POST /cashbox` доступен только OWNER/MANAGER; касса продавца создается автоматически при `POST /orders`, если открытой нет.
+**Результат**: Cashbox status: OPEN (магазин — из токена). `POST /cashbox` доступен любому сотруднику (своя касса, одна открытая на склад; с 2026-10-22); касса продавца создается автоматически при `POST /orders`, если открытой нет.
 
 #### 2. Продавец создает новый заказ
 ```
@@ -368,18 +368,20 @@ POST /orders/payment/:orderId
 
 #### 5. Клиент приходит позже и доплачивает
 ```
-POST /orders/payment/:orderId
+POST /payment
 {
   "orderId": "uuid-order",
-  "customerId": "uuid-customer",
   "payments": [
     { "type": "CASH", "amount": 600.00 }
   ]
 }
 ```
+Доплата — только через `POST /payment` (`POST /orders/payment/:id` принимает только HOLD-заказы). Принять может любой сотрудник магазина (см. 7.1).
+
 **Что происходит**:
 - Payment создается (CASH, 600)
-- CashTransaction (INCOME, SALE, 600)
+- CashTransaction (INCOME, DEBT_PAYMENT, 600)
+- Остатки не меняются
 - Cashbox.balance += 600
 - Order.paidAmount = 400 + 600 = 1000
 - **Order.status = COMPLETED** (т.к. 1000 >= 1000)
@@ -725,12 +727,16 @@ POST /cashbox/:id/transaction
 
 **Сценарий**: Клиент должен 600 по заказу, пришел заплатить 300.
 
-**Шаги**:
+**Кто**: любой сотрудник магазина (долг — перед магазином). Деньги — в свою открытую кассу (предпочтительно на складе заказа) или в выбранную `cashboxId` — любую открытую кассу магазина (`GET /cashbox/open`). Нет ни того, ни другого → 400 `No open cashbox: open one or choose an open cashbox of the store`; мобильное приложение предлагает открыть свою кассу или выбрать открытую.
+
+**Шаги** (мобильное приложение: Профиль → «Должники» → клиент → долг → оплата):
 ```
-POST /orders/payment/:orderId
+GET /debt/debtors                 // должники магазина, summary
+GET /debt/debtors/:customerId     // открытые долги клиента (ORDER | MANUAL)
+POST /payment
 {
   "orderId": "uuid-order",
-  "customerId": "uuid-customer",
+  "cashboxId": "uuid-cashbox",    // опционально
   "payments": [
     { "type": "CASH", "amount": 300.00 }
   ]
@@ -739,7 +745,8 @@ POST /orders/payment/:orderId
 
 **Что происходит**:
 - Payment создается (300)
-- CashTransaction (INCOME, SALE, 300)
+- CashTransaction (INCOME, DEBT_PAYMENT, 300; `createdById` — сотрудник, принявший деньги)
+- Клиент заказа сохраняется (если `customerId` не передан)
 - Cashbox.balance += 300
 - Order.paidAmount = 400 + 300 = 700
 - Order.status остается DEBT (т.к. 700 < 1000)
@@ -767,12 +774,15 @@ POST /debt
 
 ### 6.3. Оплата старого долга
 
+**Кто / касса**: как в 6.1. Проверки: долг из магазина сотрудника (403), статус ACTIVE (`Долг уже погашен`), сумма ≤ остатка (`Сумма оплаты больше остатка долга`).
+
 **Шаги**:
 ```
 POST /debt/payment
 {
   "debtId": "uuid-debt",
-  "warehouseId": "uuid-warehouse",  // Для привязки к кассе
+  "warehouseId": "uuid-warehouse",  // опционально: склад своей открытой кассы
+  "cashboxId": "uuid-cashbox",      // опционально: любая открытая касса магазина
   "payments": [
     { "type": "CASH", "amount": 2000.00 }
   ]
@@ -911,7 +921,7 @@ ORDER BY i.quantity ASC;
 }
 ```
 
-**Решение**: Открыть кассу через `POST /cashbox`.
+**Решение**: Открыть кассу через `POST /cashbox`. Для погашения долга (`POST /payment`, `POST /debt/payment`) — ошибка `No open cashbox: open one or choose an open cashbox of the store`; можно передать `cashboxId` любой открытой кассы магазина.
 
 ### 8.5. Доступ к чужому складу
 

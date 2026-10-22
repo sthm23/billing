@@ -327,7 +327,7 @@ describe('OrderService', () => {
       );
     });
 
-    it('stamps soldAt on the sale and keeps it on a later debt payment', async () => {
+    it('stamps soldAt on the sale', async () => {
       await service.createPayment(
         ORDER,
         payDto(100000),
@@ -336,23 +336,21 @@ describe('OrderService', () => {
       expect(prisma.order.update.mock.calls[0][0].data.soldAt).toBeInstanceOf(
         Date,
       );
+    });
 
-      prisma.order.update.mockClear();
+    it('rejects a DEBT order so stock is not deducted twice', async () => {
       prisma.order.findUnique.mockResolvedValue(
-        makeOrder({
-          status: OrderStatus.DEBT,
-          customerId: CUSTOMER,
-          soldAt: new Date('2026-10-20T10:00:00Z'),
-        }),
+        makeOrder({ status: OrderStatus.DEBT, customerId: CUSTOMER }),
       );
-      await service.createPayment(
-        ORDER,
-        payDto(10000, CUSTOMER),
-        makeUser(StaffRole.SELLER),
-      );
-      expect(prisma.order.update.mock.calls[0][0].data).not.toHaveProperty(
-        'soldAt',
-      );
+      await expect(
+        service.createPayment(
+          ORDER,
+          payDto(10000, CUSTOMER),
+          makeUser(StaffRole.SELLER),
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(prisma.inventory.updateMany).not.toHaveBeenCalled();
     });
 
     it('rejects a partial payment without a customer', async () => {

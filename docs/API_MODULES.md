@@ -236,7 +236,7 @@ Authorization: Bearer <access_token>
 ### POST /orders/payment/:id
 **Требует JWT + Staff**
 
-Оплата заказа (`:id` — orderId).
+Оплата заказа (`:id` — orderId). Только для заказов в статусе **HOLD** (продажа: списание остатков + первая оплата). DEBT-заказ гасится через `POST /payment` (иначе остатки списывались бы второй раз — исправлено 2026-10-22).
 
 **Request**:
 ```json
@@ -268,9 +268,44 @@ Authorization: Bearer <access_token>
 - Order.status → `COMPLETED` или `DEBT`
 
 **Errors**:
+- `400 Bad Request` — `Cannot pay an order that is not in HOLD status; repay a debt via POST /payment`
 - `400 Bad Request` — сумма оплаты превышает totalAmount
 - `400 Bad Request` — недостаточно товара на складе
 - `400 Bad Request` — открытая касса не найдена
+
+---
+
+### POST /payment
+**Требует JWT + Staff** (`billing/src/payment/payment.controller.ts` → `PaymentService.create()`)
+
+Погашение долга по заказу (статус DEBT). Долг — перед магазином: принять оплату может любой сотрудник магазина.
+
+**Request**:
+```json
+{
+  "orderId": "uuid",
+  "customerId": "uuid",   // опционально; не передан → клиент заказа СОХРАНЯЕТСЯ
+  "cashboxId": "uuid",    // опционально; любая ОТКРЫТАЯ касса магазина
+  "payments": [
+    { "type": "CASH" | "CARD" | "ONLINE" | "TRANSFER", "amount": 100.00, "paidAt": "ISO (опц.)" }
+  ]
+}
+```
+
+**Response**: `{ "message": "Payment(s) added successfully" }`
+
+**Касса** (`resolvePaymentCashbox`, `src/cashbox/payment-cashbox.ts`): `cashboxId` — должна быть OPEN и в магазине сотрудника; иначе своя открытая касса сотрудника (предпочтительно на складе заказа); иначе `400 No open cashbox: open one or choose an open cashbox of the store`.
+
+**Что происходит (транзакция)**:
+- Создаются Payment (`createdBy` = staff)
+- Создаются CashTransaction (INCOME, **DEBT_PAYMENT**, `createdById` = сотрудник, принявший деньги). Старые погашения (до 2026-10-22) остаются SALE
+- Обновляется Cashbox.balance выбранной кассы
+- Order.paidAmount; полностью оплачен → `COMPLETED` (возвращенный заказ → `REFUNDED`)
+- Остатки не меняются
+
+**Errors**:
+- `403 Forbidden` — заказ не из магазина сотрудника
+- `400 Bad Request` — заказ не в статусе DEBT; сумма больше остатка (`Payment amount exceeds order total`); нет открытой кассы; выбранная касса не открыта / чужого магазина
 
 ---
 
@@ -508,9 +543,9 @@ Authorization: Bearer <access_token>
 ## 3. Cashbox Module (`/api/cashbox`)
 
 ### POST /cashbox
-**Требует JWT + Staff (OWNER/MANAGER)**
+**Требует JWT + Staff (любая роль)**
 
-Открытие кассы.
+Открытие своей кассы — любой сотрудник (продавец, кассир, менеджер, владелец), с 2026-10-22 без RolesGuard.
 
 **Request**:
 ```json
@@ -537,8 +572,8 @@ Authorization: Bearer <access_token>
 
 **Errors**:
 - `400 Bad Request` — `Warehouse does not belong to the store` (склад не из магазина staff)
-- `403 Forbidden` — не-владелец (MANAGER) без доступа к этому складу; не OWNER/MANAGER (RolesGuard)
-- `400 Bad Request` — у продавца уже есть открытая касса на этом складе
+- `403 Forbidden` — не-владелец без доступа к этому складу (`No access to this warehouse`); владелец — любой склад магазина
+- `400 Bad Request` — `You already have an open cashbox on this warehouse` (одна открытая касса на сотрудника и склад)
 
 ---
 
@@ -647,8 +682,8 @@ Authorization: Bearer <access_token>
   - `EXPENSE` → balance уменьшается
 
 **Категории транзакций**:
-- `SALE` — продажа товара (автоматически при оплате заказа)
-- `DEBT_PAYMENT` — оплата старого долга (автоматически)
+- `SALE` — продажа товара (автоматически при оплате заказа, `POST /orders/payment/:id`)
+- `DEBT_PAYMENT` — погашение долга: по заказу (`POST /payment`, с 2026-10-22; раньше SALE) и старого долга (`POST /debt/payment`) — автоматически
 - `RETURN` — возврат денег клиенту
 - `RENT` — аренда помещения
 - `DELIVERY` — доставка
@@ -727,6 +762,27 @@ Authorization: Bearer <access_token>
 - OWNER (user.role или staff.role) — все кассы магазина
 - MANAGER — кассы своих складов
 - SELLER/CASHIER — только свои кассы (`sellerId = staff.id`)
+
+---
+
+### GET /cashbox/open
+**Требует JWT + Staff (любой сотрудник)**
+
+Открытые кассы магазина — куда можно принять погашение долга.
+
+**Response**:
+```json
+[
+  {
+    "id": "uuid",
+    "balance": 1000.00,
+    "createdAt": "2026-10-22T08:00:00Z",
+    "warehouse": { "id": "uuid", "name": "string" },
+    "seller": { "id": "uuid", "fullName": "string" },
+    "isMine": true
+  }
+]
+```
 
 ---
 
@@ -1240,11 +1296,14 @@ Authorization: Bearer <access_token>
 
 Оплата старого долга.
 
+Любой сотрудник магазина. Касса — как в `POST /payment` (`resolvePaymentCashbox`).
+
 **Request**:
 ```json
 {
   "debtId": "uuid",
-  "warehouseId": "uuid",  // Для привязки к кассе
+  "warehouseId": "uuid",  // опционально: предпочтительный склад своей открытой кассы
+  "cashboxId": "uuid",    // опционально: любая ОТКРЫТАЯ касса магазина
   "payments": [
     {
       "type": "CASH" | "CARD" | "ONLINE" | "TRANSFER",
@@ -1257,23 +1316,25 @@ Authorization: Bearer <access_token>
 **Response**: обновленный CustomerDebt
 
 **Что происходит (транзакция)**:
-- Создаются DebtPayment
-- Создаются CashTransaction (INCOME, DEBT_PAYMENT)
+- Создаются DebtPayment (`createdBy` = staff)
+- Создаются CashTransaction (INCOME, DEBT_PAYMENT, `debtId` = DebtPayment.id, `createdById` = staff)
 - Обновляется Cashbox.balance
 - Обновляется CustomerDebt.paidAmount
 - Если paidAmount >= totalAmount → status: `PAID`
 
 **Errors**:
-- `400 Bad Request` — долг не найден
-- `400 Bad Request` — открытая касса не найдена
-- `400 Bad Request` — нет доступа к складу
+- `400 Bad Request` — `Долг не найден`
+- `403 Forbidden` — долг не из магазина сотрудника
+- `400 Bad Request` — `Долг уже погашен` (статус не ACTIVE)
+- `400 Bad Request` — `Сумма оплаты больше остатка долга`
+- `400 Bad Request` — `No open cashbox: open one or choose an open cashbox of the store` / `The chosen cashbox is not open or not in your store`
 
 ---
 
 ### GET /debt
 **Требует JWT + Staff**
 
-Список долгов (с пагинацией).
+Список долгов магазина (с пагинацией). Магазин — из токена; параметры привязаны через `@Query()` (раньше фильтры и пагинация игнорировались).
 
 **Query Parameters**:
 - `pageSize` (default: 10)
@@ -1316,10 +1377,74 @@ Authorization: Bearer <access_token>
 
 ---
 
+### GET /debt/debtors
+**Требует JWT + Staff (любой сотрудник)**
+
+Должники магазина: DEBT-заказы с клиентом (остаток = totalAmount − returnedAmount − paidAmount) + ACTIVE CustomerDebt (totalAmount − paidAmount), сгруппированные по клиенту.
+
+**Query Parameters**:
+- `search` — имя/телефон (фильтрует только `data`, `summary` — по всему магазину)
+- `sort` — `amount` (по умолчанию, сумма по убыванию) | `date` (самый старый долг первым)
+- `from`, `to` — период «Погашено» (ISO; по умолчанию — текущий месяц сервера; мобильное приложение передает границы своего локального месяца)
+
+**Response**:
+```json
+{
+  "summary": {
+    "total": 15000.00,
+    "customers": 4,
+    "over30": 5000.00,        // остаток долгов, чья дата старше 30 дней
+    "paidInPeriod": 3000.00,  // Σ CashTransaction INCOME DEBT_PAYMENT в [from, to)
+    "from": "ISO", "to": "ISO"
+  },
+  "data": [
+    {
+      "customerId": "uuid", "fullName": "string", "phone": "string",
+      "total": 5000.00, "ordersCount": 2, "debtsCount": 1,
+      "lastPaymentAt": "ISO | null",
+      "since": "ISO",          // самый старый открытый долг: soldAt ?? createdAt заказа / createdAt долга
+      "ageDays": 42
+    }
+  ]
+}
+```
+
+---
+
+### GET /debt/debtors/:customerId
+**Требует JWT + Staff (любой сотрудник)**
+
+Открытые долги клиента в магазине (самые старые первыми, только remaining > 0).
+
+**Response**:
+```json
+{
+  "customer": { "id": "uuid", "fullName": "string", "phone": "string" },
+  "total": 5000.00,
+  "debts": [
+    {
+      "kind": "ORDER" | "MANUAL",
+      "id": "uuid",               // orderId или id CustomerDebt
+      "date": "ISO",
+      "description": "string | null",
+      "warehouse": { "id": "uuid", "name": "string" } | null,
+      "total": 3000.00, "paid": 1000.00, "remaining": 2000.00,
+      "payments": [
+        { "id": "uuid", "amount": 1000.00, "type": "CASH", "createdAt": "ISO", "createdBy": "ФИО" }
+      ]
+    }
+  ]
+}
+```
+
+`ORDER` гасится через `POST /payment`, `MANUAL` — через `POST /debt/payment`.
+
+---
+
 ### GET /debt/:id
 **Требует JWT + Staff**
 
-Детальная информация о долге.
+Детальная информация о долге (только в магазине сотрудника, иначе `400 Долг не найден`).
 
 **Response**: та же структура, что и в списке
 

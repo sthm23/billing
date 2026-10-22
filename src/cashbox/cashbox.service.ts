@@ -49,21 +49,13 @@ export class CashboxService {
         throw new ForbiddenException('No access to this warehouse');
       }
 
-      const param: Prisma.CashboxWhereInput = {
-        storeId,
-        status: CashStatus.OPEN
-      }
-      const isAdminOrOwner = user.role === UserRole.ADMIN || user.role === UserRole.OWNER
-      if (!isAdminOrOwner) {
-        param.warehouseId = dto.warehouseId
-        param.sellerId = user.staff.id
-      }
+      // One open cashbox per employee and warehouse
       const existingCashBox = await this.prisma.cashbox.findFirst({
-        where: param
+        where: { storeId, warehouseId: dto.warehouseId, sellerId: user.staff.id, status: CashStatus.OPEN }
       })
       if (existingCashBox) {
         this.logger.warn({ storeId, warehouseId: dto.warehouseId }, 'Open cashbox already exists');
-        throw new BadRequestException('An OPEN cashbox already exists for this store and warehouse');
+        throw new BadRequestException('You already have an open cashbox on this warehouse');
       }
       const cashbox = await this.prisma.cashbox.create({
         data: {
@@ -229,6 +221,34 @@ export class CashboxService {
           lastClosedAt: lastClosed?.closedAt ?? null,
         },
       };
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message)
+    }
+  }
+
+  /** Open cashboxes of the user's store (any employee): where a debt repayment can go. */
+  async findOpen(user: CurrentUser) {
+    if (!user.staff) throw new ForbiddenException('Staff only');
+    try {
+      const cashboxes = await this.prisma.cashbox.findMany({
+        where: { storeId: user.staff.storeId, status: CashStatus.OPEN },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          balance: true,
+          createdAt: true,
+          warehouse: { select: { id: true, name: true } },
+          seller: { select: { id: true, user: { select: { fullName: true } } } },
+        },
+      });
+      return cashboxes.map((c) => ({
+        id: c.id,
+        balance: Number(c.balance),
+        createdAt: c.createdAt,
+        warehouse: c.warehouse,
+        seller: { id: c.seller.id, fullName: c.seller.user.fullName },
+        isMine: c.seller.id === user.staff.id,
+      }));
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }
