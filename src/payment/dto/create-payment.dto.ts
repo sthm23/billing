@@ -25,6 +25,11 @@ export class CreatePaymentDto {
     @IsUUID('4')
     customerId?: string
 
+    /** Open cashbox of the store to take the money; default — the employee's own open cashbox */
+    @IsOptional()
+    @IsUUID('4')
+    cashboxId?: string
+
     @IsArray()
     @ArrayMinSize(1, { message: "At least one payment is required" })
     @ValidateNested({ each: true })

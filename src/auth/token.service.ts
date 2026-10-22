@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
+import { InjectPinoLogger, PinoLogger } from "nestjs-pino";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "@prisma/prisma.service";
 import { addDays } from "@shared/helper/date.helper";
@@ -12,21 +13,22 @@ export class TokenService {
     constructor(
         private prisma: PrismaService,
         private configService: ConfigService,
-        private jwtService: JwtService
+        private jwtService: JwtService,
+        @InjectPinoLogger(TokenService.name) private readonly logger: PinoLogger,
     ) { }
 
 
     async refreshTokens(refreshToken: string): Promise<LoginResponse> {
-
+        this.logger.debug({}, 'Token refresh requested');
         try {
             const payload: RefreshTokenPayload = await this.jwtService.verifyAsync(refreshToken, {
                 secret: this.refreshTokenSecret
             });
 
-            const tokenFromDb =
-                await this.findValidToken(payload.sub, refreshToken);
+            const tokenFromDb = await this.findValidToken(payload.sub, refreshToken);
 
             if (!tokenFromDb) {
+                this.logger.warn({ userId: payload.sub }, 'Token refresh rejected: token not found or already revoked');
                 throw new UnauthorizedException('Invalid refresh token');
             }
 
@@ -49,8 +51,12 @@ export class TokenService {
                 secret: this.accessTokenSecret,
                 expiresIn: this.accessTokenExpire,
             });
+            this.logger.info({ userId: payload.sub }, 'Tokens refreshed successfully');
             return { accessToken, refreshToken: newRefreshToken };
         } catch (error: any) {
+            if (!(error instanceof UnauthorizedException)) {
+                this.logger.error({ err: error.message }, 'Token refresh error');
+            }
             throw new UnauthorizedException(error.response || error.message)
         }
     }

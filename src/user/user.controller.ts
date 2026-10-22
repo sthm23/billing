@@ -1,4 +1,17 @@
-import { Controller, Get, Post, Body, Param, Delete, ValidationPipe, UseGuards, NotFoundException, Put, ParseUUIDPipe, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Delete,
+  ValidationPipe,
+  UseGuards,
+  NotFoundException,
+  Put,
+  ParseUUIDPipe,
+  Query,
+} from '@nestjs/common';
 import { UserService } from './user.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateCustomerDto, UpdateUserDto } from './dto/update-user.dto';
@@ -24,21 +37,30 @@ export class UserController {
   @Get('owners')
   findOwners(
     @Query() { pageSize, currentPage }: PaginationParams,
-    @CurrentUser() user: CurrentUserType
+    @CurrentUser() user: CurrentUserType,
   ) {
     return this.userService.findAllOwners(pageSize, currentPage, user);
   }
 
+  @UseGuards(AuthJWTGuard)
   @Post('customers')
-  createCustomers(@Body(new ValidationPipe()) createUserDto: CreateUserDto) {
-    return this.userService.createCustomers(createUserDto);
+  createCustomers(
+    @Body(new ValidationPipe()) createUserDto: CreateUserDto,
+    @CurrentUser() user: CurrentUserType,
+  ) {
+    return this.userService.createCustomers(createUserDto, user);
   }
 
+  @UseGuards(AuthJWTGuard)
   @Put('customers/set-to-order')
-  setCustomerToOrder(@Body(new ValidationPipe()) updateCustomerDto: UpdateCustomerDto) {
-    return this.userService.setCustomerToOrder(updateCustomerDto);
+  setCustomerToOrder(
+    @Body(new ValidationPipe()) updateCustomerDto: UpdateCustomerDto,
+    @CurrentUser() user: CurrentUserType,
+  ) {
+    return this.userService.setCustomerToOrder(updateCustomerDto, user);
   }
 
+  @UseGuards(AuthJWTGuard)
   @Get('customers')
   getCustomers(
     @Query() { pageSize, currentPage }: PaginationParams,
@@ -57,7 +79,9 @@ export class UserController {
   }
 
   @Get(':id/info')
-  async findOneInfo(@Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
+  async findOneInfo(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+  ) {
     const user = await this.userService.findOneInfo(id);
     if (!user) {
       return new NotFoundException('User not found');
@@ -70,20 +94,10 @@ export class UserController {
   @Get()
   findAll(
     @Query() { pageSize, currentPage }: PaginationParams,
-    @CurrentUser() user: CurrentUserType
+    @CurrentUser() user: CurrentUserType,
   ) {
     return this.userService.findAll(pageSize, currentPage, user);
   }
-
-  // @UseGuards(AuthJWTGuard, RolesGuard)
-  // @Put(':id')
-  // @Roles(UserRole.OWNER)
-  // update(
-  //   @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-  //   @Body(new ValidationPipe()) updateUserDto: UpdateUserDto
-  // ) {
-  //   return this.userService.update(id, updateUserDto);
-  // }
 
   @UseGuards(AuthJWTGuard, RolesGuard)
   @Delete(':id')

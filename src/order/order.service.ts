@@ -1,31 +1,63 @@
-import { BadRequestException, NotFoundException, Injectable } from '@nestjs/common';
-import { CreateOrderDto, CreateOrderItemDto, CreateOrderPaymentDto } from './dto/create-order.dto';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+  Injectable,
+} from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
+import {
+  CreateOrderDto,
+  CreateOrderItemDto,
+  CreateOrderPaymentDto,
+} from './dto/create-order.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { CurrentUser } from '@auth/models/auth.model';
 import {
-  CashStatus, CashTransactionCategory, CashTransactionType,
-  OrderStatus, PaymentType, ReturnOrderStatus, StaffRole,
-  StockMovementReason, StockMovementType, UserRole, UserType
+  CashStatus,
+  CashTransactionCategory,
+  CashTransactionType,
+  OrderStatus,
+  PaymentType,
+  ReturnOrderStatus,
+  StaffRole,
+  StockMovementReason,
+  StockMovementType,
+  UserRole,
+  UserType,
 } from '@generated/enums';
 import { OrderItem, Prisma } from '@generated/client';
 import { CreateReturnOrderDto, ReturnItemDto } from './dto/create-return.dto';
 import { OrderQueryParams } from './entities/order.entity';
-
+import { DateRangeParams, resolveDateRange } from '@shared/dto/date-range.dto';
 
 @Injectable()
 export class OrderService {
   constructor(
     private readonly prisma: PrismaService,
-  ) { }
+    @InjectPinoLogger(OrderService.name) private readonly logger: PinoLogger,
+  ) {}
   async create(createOrderDto: CreateOrderDto, user: CurrentUser) {
+    this.logger.debug(
+      {
+        storeId: createOrderDto.storeId,
+        warehouseId: createOrderDto.warehouseId,
+        userId: user?.id,
+      },
+      'Creating order',
+    );
     try {
       if (!user || !user.staff) {
         throw new BadRequestException('Staff not found');
       }
 
-      const warehouseIds = user.staff.warehouse.map(w => w.warehouseId);
-      if (user.staff.storeId !== createOrderDto.storeId || !warehouseIds.includes(createOrderDto.warehouseId)) {
-        throw new BadRequestException('Staff does not belong to the store or warehouse');
+      const warehouseIds = user.staff.warehouse.map((w) => w.warehouseId);
+      if (
+        user.staff.storeId !== createOrderDto.storeId ||
+        !warehouseIds.includes(createOrderDto.warehouseId)
+      ) {
+        throw new BadRequestException(
+          'Staff does not belong to the store or warehouse',
+        );
       }
       if (user.auth && !user.auth.isActive) {
         throw new BadRequestException('User is not active');
@@ -36,19 +68,19 @@ export class OrderService {
           storeId: createOrderDto.storeId,
           warehouseId: createOrderDto.warehouseId,
           sellerId: user.staff.id,
-          status: CashStatus.OPEN
-        }
-      })
-      return await this.prisma.$transaction(async (prisma) => {
+          status: CashStatus.OPEN,
+        },
+      });
+      const order = await this.prisma.$transaction(async (prisma) => {
         if (!cashBox) {
           await prisma.cashbox.create({
             data: {
               status: CashStatus.OPEN,
               storeId: createOrderDto.storeId,
               warehouseId: createOrderDto.warehouseId,
-              sellerId: user.staff.id
-            }
-          })
+              sellerId: user.staff.id,
+            },
+          });
         }
         return await prisma.order.create({
           data: {
@@ -59,22 +91,42 @@ export class OrderService {
             channel: createOrderDto.channel,
             status: OrderStatus.CREATED,
             totalAmount: 0,
-          }
-        })
-      })
+          },
+        });
+      });
+      this.logger.info(
+        { orderId: order.id, storeId: order.storeId, cashierId: user.staff.id },
+        'Order created',
+      );
+      return order;
     } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
+      this.logger.error(
+        {
+          storeId: createOrderDto.storeId,
+          userId: user?.id,
+          err: error.message,
+        },
+        'Failed to create order',
+      );
+      throw new BadRequestException(error.response || error.message);
     }
   }
 
-  private validateReturnItems(returnItems: ReturnItemDto[], orderItemsById: Map<string, OrderItem>) {
+  private validateReturnItems(
+    returnItems: ReturnItemDto[],
+    orderItemsById: Map<string, OrderItem>,
+  ) {
     for (const returnItem of returnItems) {
       const orderItem = orderItemsById.get(returnItem.itemId);
       if (!orderItem) {
-        throw new BadRequestException(`Order item not found: ${returnItem.itemId}`);
+        throw new BadRequestException(
+          `Order item not found: ${returnItem.itemId}`,
+        );
       }
       if (returnItem.quantity > orderItem.quantity) {
-        throw new BadRequestException(`Return quantity exceeds purchased quantity for item: ${returnItem.itemId}`);
+        throw new BadRequestException(
+          `Return quantity exceeds purchased quantity for item: ${returnItem.itemId}`,
+        );
       }
     }
   }
@@ -87,38 +139,49 @@ export class OrderService {
     customerTotalPaid: number, // общая оплата клиента,
     additionalServiceAmount: number, // общая сумма доп услуг,
   ): ReturnOrderStatus {
-
     if (refundAmount > orderTotalAmount) {
-      throw new BadRequestException(`Total return amount cannot exceed original order total amount`);
+      throw new BadRequestException(
+        `Total return amount cannot exceed original order total amount`,
+      );
     }
     if (cashierTotalPayment > refundAmount) {
-      throw new BadRequestException(`Total amount returned by cashier cannot be more than total return amount`);
+      throw new BadRequestException(
+        `Total amount returned by cashier cannot be more than total return amount`,
+      );
     }
 
     if (refundAmount === orderTotalAmount && customerTotalPaid > 0) {
-      throw new BadRequestException(`Total return amount cannot be equal to original order total amount for DEBT orders, because the order is not fully paid`);
+      throw new BadRequestException(
+        `Total return amount cannot be equal to original order total amount for DEBT orders, because the order is not fully paid`,
+      );
     }
 
     switch (orderStatus) {
       case OrderStatus.COMPLETED:
-        if (refundAmount === (orderTotalAmount - additionalServiceAmount)) {
+        if (refundAmount === orderTotalAmount - additionalServiceAmount) {
           if (cashierTotalPayment === refundAmount) {
-            return ReturnOrderStatus.COMPLETED
+            return ReturnOrderStatus.COMPLETED;
           } else if (cashierTotalPayment < refundAmount) {
-            return ReturnOrderStatus.CREDIT
+            return ReturnOrderStatus.CREDIT;
           } else {
-            throw new BadRequestException(`Total amount returned by cashier cannot be more than total return amount for COMPLETED orders`);
+            throw new BadRequestException(
+              `Total amount returned by cashier cannot be more than total return amount for COMPLETED orders`,
+            );
           }
-        } else if (refundAmount < (orderTotalAmount - additionalServiceAmount)) {
+        } else if (refundAmount < orderTotalAmount - additionalServiceAmount) {
           if (refundAmount > cashierTotalPayment) {
-            return ReturnOrderStatus.CREDIT
+            return ReturnOrderStatus.CREDIT;
           } else if (refundAmount === cashierTotalPayment) {
-            return ReturnOrderStatus.COMPLETED
+            return ReturnOrderStatus.COMPLETED;
           } else {
-            throw new BadRequestException(`Total amount returned by cashier cannot be more than total return amount for COMPLETED orders`);
+            throw new BadRequestException(
+              `Total amount returned by cashier cannot be more than total return amount for COMPLETED orders`,
+            );
           }
         } else {
-          throw new BadRequestException('Total amount returned by cashier cannot be more than total return amount for COMPLETED orders');
+          throw new BadRequestException(
+            'Total amount returned by cashier cannot be more than total return amount for COMPLETED orders',
+          );
         }
       case OrderStatus.DEBT:
         const debt = orderTotalAmount - customerTotalPaid;
@@ -126,31 +189,41 @@ export class OrderService {
 
         if (newRefound === 0) {
           if (cashierTotalPayment > 0) {
-            throw new BadRequestException('Refund amount equal to debt for DEBT orders cannot have cashier payments');
+            throw new BadRequestException(
+              'Refund amount equal to debt for DEBT orders cannot have cashier payments',
+            );
           } else {
-            return ReturnOrderStatus.COMPLETED
+            return ReturnOrderStatus.COMPLETED;
           }
         } else if (newRefound > 0) {
           // ReturnOrderStatus.CREDIT
           if (cashierTotalPayment - newRefound === 0) {
-            return ReturnOrderStatus.COMPLETED
+            return ReturnOrderStatus.COMPLETED;
           } else if (cashierTotalPayment - newRefound < 0) {
-            return ReturnOrderStatus.CREDIT
+            return ReturnOrderStatus.CREDIT;
           } else if (cashierTotalPayment - newRefound > 0) {
-            throw new BadRequestException('Total amount returned by cashier cannot be more than total return amount for DEBT orders with refund amount more than debt');
+            throw new BadRequestException(
+              'Total amount returned by cashier cannot be more than total return amount for DEBT orders with refund amount more than debt',
+            );
           } else {
-            throw new BadRequestException('Invalid return payments for DEBT orders');
+            throw new BadRequestException(
+              'Invalid return payments for DEBT orders',
+            );
           }
         } else {
           // ReturnOrderStatus.DEBT
           if (cashierTotalPayment > 0) {
-            throw new BadRequestException('Refund amount less than or equal to debt for DEBT orders cannot have cashier payments');
+            throw new BadRequestException(
+              'Refund amount less than or equal to debt for DEBT orders cannot have cashier payments',
+            );
           } else {
-            return ReturnOrderStatus.DEBT
+            return ReturnOrderStatus.DEBT;
           }
         }
       default:
-        throw new BadRequestException('Only completed or debt orders can be returned');
+        throw new BadRequestException(
+          'Only completed or debt orders can be returned',
+        );
     }
   }
 
@@ -158,32 +231,40 @@ export class OrderService {
     orderStatus: OrderStatus,
     orderTotalAmount: number,
     refundAmount: number,
-    customerTotalPaid: number
+    customerTotalPaid: number,
   ): ReturnOrderStatus {
     switch (orderStatus) {
       case OrderStatus.COMPLETED:
-        return ReturnOrderStatus.CREDIT
+        return ReturnOrderStatus.CREDIT;
 
       case OrderStatus.DEBT:
         const newTotalAmount = orderTotalAmount - refundAmount;
         const result = newTotalAmount - customerTotalPaid;
         if (result > 0) {
-          return ReturnOrderStatus.DEBT
+          return ReturnOrderStatus.DEBT;
         } else if (result === 0) {
-          return ReturnOrderStatus.COMPLETED
+          return ReturnOrderStatus.COMPLETED;
         } else {
-          return ReturnOrderStatus.CREDIT
+          return ReturnOrderStatus.CREDIT;
         }
       default:
-        throw new BadRequestException('Only completed or debt orders can be returned');
+        throw new BadRequestException(
+          'Only completed or debt orders can be returned',
+        );
     }
   }
 
-
   async createReturn(createOrderDto: CreateReturnOrderDto, user: CurrentUser) {
+    this.logger.debug(
+      {
+        orderId: createOrderDto.orderId,
+        itemCount: createOrderDto.items.length,
+      },
+      'Processing order return',
+    );
     const order = await this.prisma.order.findUnique({
       where: { id: createOrderDto.orderId },
-      include: { items: true, payments: true, services: true }
+      include: { items: true, payments: true, services: true },
     });
 
     if (!order) {
@@ -194,27 +275,48 @@ export class OrderService {
       throw new BadRequestException('Order is already returned');
     }
 
-    if (order.status !== OrderStatus.COMPLETED && order.status !== OrderStatus.DEBT) {
-      throw new BadRequestException('Only completed or debt orders can be returned');
+    if (
+      order.status !== OrderStatus.COMPLETED &&
+      order.status !== OrderStatus.DEBT
+    ) {
+      throw new BadRequestException(
+        'Only completed or debt orders can be returned',
+      );
     }
-    const customerPayments = order.payments.reduce((sum, p) => sum + +p.amount, 0);
-    const refundAmount = createOrderDto.items.reduce((sum, item) => sum + (item.retailPrice - item.sale) * item.quantity, 0);
-    const cashierPayments = createOrderDto.returnPayments.reduce((sum, p) => sum + +p.amount, 0);
+    const customerPayments = order.payments.reduce(
+      (sum, p) => sum + +p.amount,
+      0,
+    );
+    const refundAmount = createOrderDto.items.reduce(
+      (sum, item) => sum + (item.retailPrice - item.sale) * item.quantity,
+      0,
+    );
+    const cashierPayments = createOrderDto.returnPayments.reduce(
+      (sum, p) => sum + +p.amount,
+      0,
+    );
     const servicesAmount = order.services.reduce((sum, s) => sum + +s.price, 0);
 
-    const initialReturnStatus = this.returnInitialStatus(order.status, +order.totalAmount, refundAmount, customerPayments);
+    const initialReturnStatus = this.returnInitialStatus(
+      order.status,
+      +order.totalAmount,
+      refundAmount,
+      customerPayments,
+    );
 
     const cashBox = await this.prisma.cashbox.findFirst({
       where: {
         storeId: order.storeId,
         warehouseId: order.warehouseId,
         sellerId: user.staff.id,
-        status: CashStatus.OPEN
-      }
-    })
+        status: CashStatus.OPEN,
+      },
+    });
 
     if (!cashBox) {
-      throw new BadRequestException('Open cashbox not found for the order store and warehouse');
+      throw new BadRequestException(
+        'Open cashbox not found for the order store and warehouse',
+      );
     }
     try {
       return await this.prisma.$transaction(async (prisma) => {
@@ -224,26 +326,28 @@ export class OrderService {
             createdBy: user.staff.id,
             status: initialReturnStatus,
             totalAmount: refundAmount,
-          }
+          },
         });
 
-        const orderItemsById = new Map(order.items.map(item => [item.id, item]));
+        const orderItemsById = new Map(
+          order.items.map((item) => [item.id, item]),
+        );
 
-        const returnItemsData = createOrderDto.items.map(item => {
+        const returnItemsData = createOrderDto.items.map((item) => {
           return {
             returnId: returnOrder.id,
             itemId: item.itemId,
             quantity: item.quantity,
-          }
+          };
         });
 
         this.validateReturnItems(createOrderDto.items, orderItemsById);
 
         await prisma.returnItem.createMany({
-          data: returnItemsData
+          data: returnItemsData,
         });
 
-        const stockMovementsData = createOrderDto.items.map(returnedItem => {
+        const stockMovementsData = createOrderDto.items.map((returnedItem) => {
           const orderItem = orderItemsById.get(returnedItem.itemId)!;
           return {
             type: StockMovementType.IN,
@@ -252,32 +356,32 @@ export class OrderService {
             unitCost: new Prisma.Decimal(returnedItem.costAtSale),
             variantId: orderItem.variantId,
             warehouseId: order.warehouseId,
-            createdById: user.staff.id
-          }
+            createdById: user.staff.id,
+          };
         });
         await prisma.stockMovement.createMany({
-          data: stockMovementsData
+          data: stockMovementsData,
         });
 
-        const createdPayments = createOrderDto.returnPayments.map(payment => {
+        const createdPayments = createOrderDto.returnPayments.map((payment) => {
           return {
             returnOrderId: returnOrder.id,
             type: payment.type,
             amount: payment.amount,
-            createdBy: user.staff.id
-          }
-        })
+            createdBy: user.staff.id,
+          };
+        });
         await prisma.cashTransaction.createMany({
-          data: createdPayments.map(p => ({
+          data: createdPayments.map((p) => ({
             cashboxId: cashBox.id,
             amount: p.amount,
             type: CashTransactionType.EXPENSE,
             createdById: user.staff.id,
             orderId: order.id,
             category: CashTransactionCategory.RETURN,
-            paymentType: p.type as PaymentType
-          }))
-        })
+            paymentType: p.type as PaymentType,
+          })),
+        });
 
         const returnStatus = this.validateReturnPayments(
           order.status, // статус заказа
@@ -285,45 +389,93 @@ export class OrderService {
           cashierPayments, // сумма возврата который внес кассир
           +order.totalAmount, //обшая сумма заказа
           customerPayments, // общая оплата клиента
-          servicesAmount // общая сумма доп услуг
+          servicesAmount, // общая сумма доп услуг
         );
 
         await prisma.returnPayment.createMany({
-          data: createdPayments
+          data: createdPayments,
         });
 
         await prisma.order.update({
           where: { id: order.id },
           data: {
-            status: returnStatus === ReturnOrderStatus.DEBT ? OrderStatus.DEBT : OrderStatus.REFUNDED,
+            status:
+              returnStatus === ReturnOrderStatus.DEBT
+                ? OrderStatus.DEBT
+                : OrderStatus.REFUNDED,
             returnedAmount: refundAmount,
             returnedAt: new Date().toISOString(),
             isReturned: true,
-          }
+          },
         });
 
         await prisma.returnedOrder.update({
           where: { id: returnOrder.id },
           data: {
-            status: returnStatus
-          }
+            status: returnStatus,
+          },
         });
 
         await prisma.cashbox.update({
           where: { id: cashBox.id },
           data: {
-            balance: { increment: new Prisma.Decimal(-cashierPayments) }
-          }
-        })
+            balance: { increment: new Prisma.Decimal(-cashierPayments) },
+          },
+        });
 
+        this.logger.info(
+          {
+            orderId: createOrderDto.orderId,
+            returnOrderId: returnOrder.id,
+            refundAmount,
+            returnStatus,
+          },
+          'Order return completed',
+        );
         return Promise.resolve({ message: 'Order returned successfully' });
       });
     } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
+      this.logger.error(
+        { orderId: createOrderDto.orderId, err: error.message },
+        'Failed to process order return',
+      );
+      throw new BadRequestException(error.response || error.message);
     }
   }
 
-  async createOrderItems(dto: CreateOrderItemDto) {
+  /** Owner/manager (or admin) may lower prices and work with any order of their store. */
+  private canManageStore(user: CurrentUser) {
+    return (
+      user.role === UserRole.ADMIN ||
+      user.role === UserRole.OWNER ||
+      user.staff?.role === StaffRole.OWNER ||
+      user.staff?.role === StaffRole.MANAGER
+    );
+  }
+
+  /** Same scope as findOne: own store; sellers and cashiers only their own orders. */
+  private async assertOrderAccess(orderId: string, user: CurrentUser) {
+    if (user.role === UserRole.ADMIN) return;
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { storeId: true, cashierId: true },
+    });
+    if (!order) throw new BadRequestException('Order not found');
+    if (!user.staff || order.storeId !== user.staff.storeId) {
+      throw new ForbiddenException('No access to this order');
+    }
+    if (!this.canManageStore(user) && order.cashierId !== user.staff.id) {
+      throw new ForbiddenException('No access to this order');
+    }
+  }
+
+  async createOrderItems(dto: CreateOrderItemDto, user: CurrentUser) {
+    this.logger.debug(
+      { orderId: dto.orderId, itemCount: dto.items.length },
+      'Updating order items',
+    );
+    await this.assertOrderAccess(dto.orderId, user);
+    const canLowerPrice = this.canManageStore(user);
     try {
       await this.prisma.$transaction(async (prisma) => {
         const order = await prisma.order.findUnique({
@@ -332,8 +484,13 @@ export class OrderService {
         });
 
         if (!order) throw new BadRequestException('Order not found');
-        if (order.status !== OrderStatus.CREATED && order.status !== OrderStatus.HOLD) {
-          throw new BadRequestException('Cannot add items to an order that is not in CREATED or HOLD status');
+        if (
+          order.status !== OrderStatus.CREATED &&
+          order.status !== OrderStatus.HOLD
+        ) {
+          throw new BadRequestException(
+            'Cannot add items to an order that is not in CREATED or HOLD status',
+          );
         }
 
         // 1) Суммируем входящие количества по variantId
@@ -343,23 +500,79 @@ export class OrderService {
         for (const item of dto.items) {
           if (item.quantity >= 1) {
             const stock = incomingQuantityByVariant.get(item.variantId) ?? 0;
-            incomingQuantityByVariant.set(item.variantId, stock + item.quantity);
+            incomingQuantityByVariant.set(
+              item.variantId,
+              stock + item.quantity,
+            );
             variantIds.push(item.variantId);
           }
         }
 
         // 2) Проверяем, что варианты существуют и принадлежат магазину заказа
         const variants = await prisma.productVariant.findMany({
-          where: { id: { in: Array.from(new Set(variantIds)) } },
-          select: { id: true, storeId: true },
+          where: {
+            id: {
+              in: Array.from(
+                new Set([...variantIds, ...dto.items.map((i) => i.variantId)]),
+              ),
+            },
+          },
+          select: {
+            id: true,
+            storeId: true,
+            price: true,
+            product: { select: { isArchived: true } },
+          },
         });
 
-        const variantById = new Map(variants.map(v => [v.id, v]));
+        const variantById = new Map(variants.map((v) => [v.id, v]));
         for (const variantId of incomingQuantityByVariant.keys()) {
           const variant = variantById.get(variantId);
-          if (!variant) throw new BadRequestException(`Product variant not found: ${variantId}`);
+          if (!variant)
+            throw new BadRequestException(
+              `Product variant not found: ${variantId}`,
+            );
           if (variant.storeId !== order.storeId) {
-            throw new BadRequestException(`Variant ${variantId} does not belong to this store`);
+            throw new BadRequestException(
+              `Variant ${variantId} does not belong to this store`,
+            );
+          }
+          // An archived product cannot be added; lines already in the order stay.
+          if (
+            variant.product.isArchived &&
+            !order.items.some((i) => i.variantId === variantId)
+          ) {
+            throw new BadRequestException(
+              `Product of variant ${variantId} is archived`,
+            );
+          }
+        }
+
+        // 2.1) Цена: скидка не больше цены; ниже цены варианта может ставить только владелец/менеджер.
+        // Уже сохранённую позицию с той же ценой пропускаем (её мог снизить менеджер).
+        for (const item of dto.items) {
+          if (+item.sale > +item.retailPrice) {
+            throw new BadRequestException(
+              'Discount cannot exceed the item price',
+            );
+          }
+          if (canLowerPrice) continue;
+          const variant = variantById.get(item.variantId);
+          if (!variant || +item.retailPrice - +item.sale >= +variant.price) {
+            continue;
+          }
+          const saved = item.itemId
+            ? order.items.find((i) => i.id === item.itemId)
+            : undefined;
+          const unchanged =
+            !!saved &&
+            saved.variantId === item.variantId &&
+            +saved.retailPrice === +item.retailPrice &&
+            +saved.sale === +item.sale;
+          if (!unchanged) {
+            throw new ForbiddenException(
+              'Only an owner or a manager can lower the price',
+            );
           }
         }
 
@@ -372,16 +585,27 @@ export class OrderService {
           select: { variantId: true, quantity: true },
         });
 
-        const invQtyByVariant = new Map(inventories.map(i => [i.variantId, i.quantity]));
+        const invQtyByVariant = new Map(
+          inventories.map((i) => [i.variantId, i.quantity]),
+        );
 
         // 4) Валидация: после добавления позиций в заказ, не превышаем остаток на складе
-        for (const [variantId, incomingQty] of incomingQuantityByVariant.entries()) {
+        for (const [
+          variantId,
+          incomingQty,
+        ] of incomingQuantityByVariant.entries()) {
           const invQty = invQtyByVariant.get(variantId);
           if (invQty === undefined) {
-            throw new BadRequestException(`Inventory row not found for variant: ${variantId}`);
+            throw new BadRequestException(
+              `Inventory row not found for variant: ${variantId}`,
+            );
           }
 
           if (invQty < incomingQty) {
+            this.logger.warn(
+              { variantId, available: invQty, requested: incomingQty },
+              'Insufficient stock for order item',
+            );
             throw new BadRequestException(
               `Insufficient stock for variant: ${variantId} (available: ${invQty}, requested total in order: ${incomingQty})`,
             );
@@ -399,7 +623,8 @@ export class OrderService {
           totalAmountToAdd += priceAtSale * item.quantity;
 
           if (item.itemId) {
-            const existingItem = await prisma.orderItem.findUnique({ where: { id: item.itemId } });
+            // только позиции этого заказа
+            const existingItem = order.items.find((i) => i.id === item.itemId);
 
             if (!existingItem) {
               await prisma.orderItem.create({
@@ -420,8 +645,8 @@ export class OrderService {
                   quantity: item.quantity,
                   retailPrice: item.retailPrice,
                   sale: item.sale,
-                  costAtSale: item.costAtSale
-                }
+                  costAtSale: item.costAtSale,
+                },
               });
             }
           } else {
@@ -441,7 +666,9 @@ export class OrderService {
         let additionalServicesAmount = 0;
 
         if (dto.additionalServices.length > 0) {
-          const removedIds = order.services.filter(s => !dto.additionalServices.some(as => as.id === s.id)).map(s => s.id);
+          const removedIds = order.services
+            .filter((s) => !dto.additionalServices.some((as) => as.id === s.id))
+            .map((s) => s.id);
           if (removedIds.length > 0) {
             await prisma.additionalService.deleteMany({
               where: { id: { in: removedIds } },
@@ -450,7 +677,7 @@ export class OrderService {
           for (const service of dto.additionalServices) {
             additionalServicesAmount += +service.price;
             if (service.id) {
-              const existing = order.services.find(s => s.id === service.id);
+              const existing = order.services.find((s) => s.id === service.id);
               if (existing) {
                 await prisma.additionalService.update({
                   where: { id: service.id },
@@ -458,7 +685,7 @@ export class OrderService {
                     name: service.name,
                     price: +service.price,
                     description: service.description ?? null,
-                  }
+                  },
                 });
               }
             } else {
@@ -468,14 +695,18 @@ export class OrderService {
                   name: service.name,
                   price: +service.price,
                   description: service.description ?? null,
-                }
-              })
+                },
+              });
             }
           }
         }
 
-        const existingItemIds = dto.items.filter(i => i.itemId).map(i => i.itemId) as string[];
-        const removedItemIds = order.items.filter(existingItem => !existingItemIds.includes(existingItem.id)).map(i => i.id);
+        const existingItemIds = dto.items
+          .filter((i) => i.itemId)
+          .map((i) => i.itemId) as string[];
+        const removedItemIds = order.items
+          .filter((existingItem) => !existingItemIds.includes(existingItem.id))
+          .map((i) => i.id);
         if (removedItemIds.length > 0) {
           await prisma.orderItem.deleteMany({
             where: { id: { in: removedItemIds } },
@@ -486,95 +717,130 @@ export class OrderService {
           where: { id: dto.orderId },
           data: {
             totalAmount: totalAmountToAdd + additionalServicesAmount,
-            customerId: dto.customerId ?? null,
-            status: OrderStatus.HOLD
+            // undefined — оставить клиента; null — убрать
+            customerId:
+              dto.customerId !== undefined ? dto.customerId : order.customerId,
+            status: OrderStatus.HOLD,
           },
         });
       });
 
+      this.logger.info({ orderId: dto.orderId }, 'Order items updated');
       return Promise.resolve({ message: 'Order items created successfully' });
     } catch (error: any) {
+      this.logger.error(
+        { orderId: dto.orderId, err: error.message },
+        'Failed to update order items',
+      );
+      if (error instanceof ForbiddenException) throw error;
       throw new BadRequestException(error.response || error.message);
     }
   }
 
-  async createPayment(orderId: string, dto: CreateOrderPaymentDto, user: CurrentUser) {
+  async createPayment(
+    orderId: string,
+    dto: CreateOrderPaymentDto,
+    user: CurrentUser,
+  ) {
+    this.logger.debug(
+      { orderId, paymentCount: dto.payments.length },
+      'Processing order payment',
+    );
     try {
       const order = await this.prisma.order.findUnique({
         where: { id: orderId },
-        include: { payments: true, items: true }
+        include: { payments: true, items: true },
       });
       if (!order) {
         throw new BadRequestException('Order not found');
       }
-      if (order.status !== OrderStatus.HOLD && order.status !== OrderStatus.DEBT) {
-        throw new BadRequestException('Cannot add payment to an order that is not in HOLD or DEBT status');
+      // Only the sale itself: it deducts stock. A DEBT order is repaid via
+      // POST /payment, otherwise the stock would be deducted a second time.
+      if (order.status !== OrderStatus.HOLD) {
+        throw new BadRequestException(
+          'Cannot pay an order that is not in HOLD status; repay a debt via POST /payment',
+        );
       }
 
-      const totalPaidBefore = order.payments.reduce((sum, payment) => (sum + +payment.amount), 0);
-      const newPaid = dto.payments.reduce((sum, payment) => (sum + +payment.amount), 0);
+      const totalPaidBefore = order.payments.reduce(
+        (sum, payment) => sum + +payment.amount,
+        0,
+      );
+      const newPaid = dto.payments.reduce(
+        (sum, payment) => sum + +payment.amount,
+        0,
+      );
       const totalPaid = totalPaidBefore + newPaid;
 
       if (totalPaid > +order.totalAmount) {
         throw new BadRequestException('Payment amount exceeds order total');
+      }
+      // Клиент из запроса, иначе уже привязанный к заказу; без клиента долг не создаём
+      const customerId = dto.customerId ?? order.customerId ?? null;
+      if (totalPaid < +order.totalAmount && !customerId) {
+        throw new BadRequestException(
+          'A customer is required to leave part of the order as debt',
+        );
       }
       const cashBox = await this.prisma.cashbox.findFirst({
         where: {
           storeId: order.storeId,
           warehouseId: order.warehouseId,
           sellerId: user.staff.id,
-          status: CashStatus.OPEN
-        }
+          status: CashStatus.OPEN,
+        },
       });
 
       if (!cashBox) {
-        throw new BadRequestException('Open cashbox not found for the order store and warehouse');
+        throw new BadRequestException(
+          'Open cashbox not found for the order store and warehouse',
+        );
       }
       await this.prisma.$transaction(async (prisma) => {
-
-        const paymentsData = dto.payments.map(payment => ({
+        const paymentsData = dto.payments.map((payment) => ({
           orderId: orderId,
           amount: payment.amount,
           type: payment.type,
-          createdBy: user.staff.id
+          createdBy: user.staff.id,
         }));
 
         await prisma.payment.createMany({
-          data: paymentsData
+          data: paymentsData,
         });
 
         await prisma.cashTransaction.createMany({
-          data: paymentsData.map(p => ({
+          data: paymentsData.map((p) => ({
             cashboxId: cashBox.id,
             amount: p.amount,
             type: CashTransactionType.INCOME,
             createdById: user.staff.id,
             orderId: orderId,
             category: CashTransactionCategory.SALE,
-            paymentType: p.type as PaymentType
-          }))
-        })
+            paymentType: p.type as PaymentType,
+          })),
+        });
 
         // Суммируем количество по variantId, чтобы списывать один раз на вариант
         const qtyByVariantId = new Map<string, number>();
         for (const item of order.items) {
-          qtyByVariantId.set(item.variantId, (qtyByVariantId.get(item.variantId) ?? 0) + item.quantity);
+          qtyByVariantId.set(
+            item.variantId,
+            (qtyByVariantId.get(item.variantId) ?? 0) + item.quantity,
+          );
         }
 
-        const stockMovementsData = order.items.map(item => ({
+        const stockMovementsData = order.items.map((item) => ({
           variantId: item.variantId,
           quantity: item.quantity,
           reason: StockMovementReason.SALE,
           type: StockMovementType.OUT,
           createdById: user.staff.id,
           warehouseId: order.warehouseId,
-          unitCost: item.costAtSale
-        })
-        );
+          unitCost: item.costAtSale,
+        }));
         await prisma.stockMovement.createMany({
-          data: stockMovementsData
-        })
-
+          data: stockMovementsData,
+        });
 
         // А списание делаем атомарно и с валидацией "не уйти в минус"
         for (const [variantId, needQty] of qtyByVariantId.entries()) {
@@ -586,97 +852,129 @@ export class OrderService {
             },
             data: {
               quantity: { decrement: needQty },
-            }
+            },
           });
 
-          // если 0 — значит либо нет строки инвентаря, либо остатка не хватает
           if (updated.count !== 1) {
-            throw new BadRequestException(`Insufficient stock for variant: ${variantId}`);
+            this.logger.warn(
+              { variantId, warehouseId: order.warehouseId },
+              'Insufficient stock during payment — inventory update failed',
+            );
+            throw new BadRequestException(
+              `Insufficient stock for variant: ${variantId}`,
+            );
           }
         }
 
-        const status = totalPaid >= +order.totalAmount ? OrderStatus.COMPLETED : OrderStatus.DEBT;
-        const customer = dto.customerId ? await prisma.customer.findUnique({ where: { id: dto.customerId } }) : null;
+        const status =
+          totalPaid >= +order.totalAmount
+            ? OrderStatus.COMPLETED
+            : OrderStatus.DEBT;
+        const customer = customerId
+          ? await prisma.customer.findUnique({ where: { id: customerId } })
+          : null;
+        if (customerId && !customer) {
+          throw new BadRequestException('Customer not found');
+        }
         await prisma.order.update({
           where: { id: orderId },
           data: {
             status,
             customerId: customer?.id ?? null,
-            paidAmount: status === OrderStatus.COMPLETED ? +order.totalAmount : totalPaid
-          }
+            paidAmount:
+              status === OrderStatus.COMPLETED ? +order.totalAmount : totalPaid,
+            // The sale moment; a later debt payment keeps it
+            ...(order.soldAt ? {} : { soldAt: new Date() }),
+          },
         });
 
         await prisma.cashbox.update({
           where: { id: cashBox.id },
           data: {
-            balance: { increment: new Prisma.Decimal(newPaid) }
-          }
-        })
+            balance: { increment: new Prisma.Decimal(newPaid) },
+          },
+        });
       });
 
+      this.logger.info(
+        { orderId, newPaid, cashboxId: cashBox.id },
+        'Order payment processed',
+      );
       return Promise.resolve({ message: 'Payment created successfully' });
     } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
+      this.logger.error(
+        { orderId, err: error.message },
+        'Failed to process order payment',
+      );
+      throw new BadRequestException(error.response || error.message);
     }
   }
 
-  async findAll({ pageSize = 10, currentPage = 1, status, fromDate, toDate }: OrderQueryParams, user: CurrentUser) {
+  async findAll(
+    {
+      pageSize = 10,
+      currentPage = 1,
+      status,
+      fromDate,
+      toDate,
+    }: OrderQueryParams,
+    user: CurrentUser,
+  ) {
     const skip = (currentPage - 1) * pageSize;
     try {
-      const params = {}
+      const params = {};
 
       if (user.type === UserType.STAFF) {
-        params['storeId'] = user.staff.storeId
+        params['storeId'] = user.staff.storeId;
       }
 
       if (status) {
         params['status'] = {
-          in: status.split(',') as OrderStatus[]
-        }
+          in: status.split(',') as OrderStatus[],
+        };
       }
 
       if (fromDate || toDate) {
-        params['createdAt'] = {}
+        params['createdAt'] = {};
         if (fromDate) {
-          params['createdAt']['gte'] = new Date(fromDate)
+          params['createdAt']['gte'] = new Date(fromDate);
         }
         if (toDate) {
-          params['createdAt']['lte'] = new Date(toDate)
+          params['createdAt']['lte'] = new Date(toDate);
         }
       }
 
       const orders = await this.prisma.order.findMany({
         where: {
           ...params,
-
         },
         include: {
           cashier: {
             include: {
               user: true,
-            }
+            },
           },
           customer: {
             include: {
-              user: true
-            }
+              user: true,
+            },
           },
           store: true,
-          warehouse: true
+          warehouse: true,
         },
         skip: skip,
         take: +pageSize,
         orderBy: { createdAt: 'desc' },
-      })
+      });
       const totalOrders = await this.prisma.order.count({
         where: params,
         orderBy: { createdAt: 'desc' },
-      })
+      });
       return {
         currentPage,
         pageSize,
         total: totalOrders,
-        data: orders.map(order => ({
+        data: orders.map((order) => ({
           id: order.id,
           store: order.store,
           warehouse: order.warehouse,
@@ -687,18 +985,62 @@ export class OrderService {
           totalAmount: order.totalAmount,
           paidAmount: order.paidAmount,
           createdAt: order.createdAt,
-        }))
+        })),
       };
     } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
+      throw new BadRequestException(error.response || error.message);
+    }
+  }
+
+  /**
+   * Orders sold in `[from, to)`: COMPLETED or DEBT with `soldAt` in the period.
+   * Owner/admin — the whole store; manager — their warehouses; seller/cashier — own sales.
+   */
+  async getSummary(range: DateRangeParams, user: CurrentUser) {
+    const { from, to } = resolveDateRange(range);
+    const where: Prisma.OrderWhereInput = {
+      status: { in: [OrderStatus.COMPLETED, OrderStatus.DEBT] },
+      soldAt: { gte: from, lt: to },
+    };
+    if (user.role !== UserRole.ADMIN) {
+      if (!user.staff) throw new ForbiddenException('Staff only');
+      where.storeId = user.staff.storeId;
+      if (user.role !== UserRole.OWNER && user.staff.role !== StaffRole.OWNER) {
+        if (user.staff.role === StaffRole.MANAGER) {
+          where.warehouseId = {
+            in: user.staff.warehouse.map((w) => w.warehouseId),
+          };
+        } else {
+          where.cashierId = user.staff.id;
+        }
+      }
+    }
+    try {
+      const result = await this.prisma.order.aggregate({
+        where,
+        _count: { _all: true },
+        _sum: { totalAmount: true, paidAmount: true },
+      });
+      const total = Number(result._sum.totalAmount ?? 0);
+      const paid = Number(result._sum.paidAmount ?? 0);
+      return {
+        from,
+        to,
+        count: result._count._all,
+        total,
+        paid,
+        debt: total - paid,
+      };
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message);
     }
   }
 
   async searchOrders(search: string, user: CurrentUser) {
     try {
-      const params = {}
+      const params = {};
       if (user.type === UserType.STAFF) {
-        params['storeId'] = user.staff.storeId
+        params['storeId'] = user.staff.storeId;
       }
       if (search) {
         params['customer'] = {
@@ -711,13 +1053,13 @@ export class OrderService {
                   },
                   {
                     phone: { contains: search, mode: 'insensitive' },
-                  }
-                ]
-              }
-            }
-          ]
-        }
-      };
+                  },
+                ],
+              },
+            },
+          ],
+        };
+      }
 
       return this.prisma.order.findMany({
         where: params,
@@ -725,13 +1067,13 @@ export class OrderService {
           customer: {
             include: {
               user: true,
-            }
+            },
           },
         },
         orderBy: { createdAt: 'desc' },
       });
     } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
+      throw new BadRequestException(error.response || error.message);
     }
   }
 
@@ -740,9 +1082,14 @@ export class OrderService {
       const params = {
         id,
         storeId: user.role !== UserRole.ADMIN ? user.staff.storeId : undefined,
-        cashierId: user.type === UserType.STAFF && (user.staff.role !== StaffRole.OWNER && user.staff.role !== StaffRole.MANAGER) ? user.staff.id : undefined
+        cashierId:
+          user.type === UserType.STAFF &&
+          user.staff.role !== StaffRole.OWNER &&
+          user.staff.role !== StaffRole.MANAGER
+            ? user.staff.id
+            : undefined,
       } as Prisma.OrderFindUniqueArgs['where'];
-
+      this.logger.debug({ orderId: id, params }, 'Finding order');
       const order = await this.prisma.order.findUnique({
         where: params,
         include: {
@@ -751,31 +1098,51 @@ export class OrderService {
               variant: {
                 include: {
                   inventory: true,
-                }
+                  product: { select: { id: true, name: true } },
+                  attributes: {
+                    include: {
+                      value: {
+                        include: { attribute: { select: { name: true } } },
+                      },
+                    },
+                  },
+                },
               },
-            }
+            },
           },
           customer: {
             include: {
               user: true,
-            }
+            },
           },
+          warehouse: { select: { id: true, name: true } },
           payments: true,
           services: true,
-        }
+        },
       });
       if (!order) {
         throw new BadRequestException('Order not found');
       }
+      this.logger.debug({ orderId: id, order }, 'Order found');
       return Promise.resolve({
         ...order,
-        items: order.items.map(item => ({
+        items: order.items.map((item) => ({
           ...item,
-          variant: { ...item.variant, quantity: item.variant.inventory.reduce((sum, inv) => sum + inv.quantity, 0) }
-        }))
+          variant: {
+            ...item.variant,
+            quantity: item.variant.inventory.reduce(
+              (sum, inv) => sum + inv.quantity,
+              0,
+            ),
+          },
+        })),
       });
     } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
+      this.logger.error(
+        { orderId: id, err: error.message },
+        'Failed to find order',
+      );
+      throw new BadRequestException(error.response || error.message);
     }
   }
 
@@ -784,36 +1151,49 @@ export class OrderService {
     if (!order) {
       throw new BadRequestException('Order not found');
     }
-    if (order.status === OrderStatus.COMPLETED || order.status === OrderStatus.DEBT || order.status === OrderStatus.REFUNDED) {
-      throw new BadRequestException('Cannot clear customer from a completed, debt, or refunded order');
+    if (
+      order.status === OrderStatus.COMPLETED ||
+      order.status === OrderStatus.DEBT ||
+      order.status === OrderStatus.REFUNDED
+    ) {
+      throw new BadRequestException(
+        'Cannot clear customer from a completed, debt, or refunded order',
+      );
     }
     return this.prisma.order.update({
       where: { id },
-      data: { customerId: null }
+      data: { customerId: null },
     });
   }
 
   async remove(id: string, user: CurrentUser) {
+    this.logger.debug({ orderId: id }, 'Cancelling order');
     try {
-      const params = {}
+      const params = {};
       if (user.type === UserType.STAFF) {
-        params['storeId'] = user.staff.storeId
+        params['storeId'] = user.staff.storeId;
       }
       if (user.type === UserType.STAFF && user.role !== UserRole.OWNER) {
-        params['cashierId'] = user.staff.id
+        params['cashierId'] = user.staff.id;
       }
       const order = await this.prisma.order.findUnique({
         where: {
           id,
-          ...params
+          ...params,
         },
-        include: { items: true, payments: true }
+        include: { items: true, payments: true },
       });
       if (!order) {
         throw new BadRequestException('Order not found');
       }
-      if (order.status === OrderStatus.COMPLETED || order.status === OrderStatus.DEBT || order.status === OrderStatus.REFUNDED) {
-        throw new BadRequestException('Cannot cancel a completed, debt, or refunded order');
+      if (
+        order.status === OrderStatus.COMPLETED ||
+        order.status === OrderStatus.DEBT ||
+        order.status === OrderStatus.REFUNDED
+      ) {
+        throw new BadRequestException(
+          'Cannot cancel a completed, debt, or refunded order',
+        );
       }
       if (order.payments.length > 0) {
         throw new BadRequestException('Cannot cancel an order with payments');
@@ -821,12 +1201,18 @@ export class OrderService {
       if (order.status === OrderStatus.CANCELLED) {
         throw new BadRequestException('Order is already cancelled');
       }
-      return this.prisma.order.update({
+      const result = await this.prisma.order.update({
         where: { id },
-        data: { status: OrderStatus.CANCELLED }
+        data: { status: OrderStatus.CANCELLED },
       });
+      this.logger.info({ orderId: id }, 'Order cancelled');
+      return result;
     } catch (error: any) {
-      throw new BadRequestException(error.response || error.message)
+      this.logger.error(
+        { orderId: id, err: error.message },
+        'Failed to cancel order',
+      );
+      throw new BadRequestException(error.response || error.message);
     }
   }
 }
