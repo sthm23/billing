@@ -75,7 +75,7 @@ describe('OrderService', () => {
   let service: OrderService;
   const prisma = {
     $transaction: jest.fn(),
-    order: { findUnique: jest.fn(), update: jest.fn() },
+    order: { findUnique: jest.fn(), update: jest.fn(), aggregate: jest.fn() },
     productVariant: { findMany: jest.fn() },
     inventory: { findMany: jest.fn(), updateMany: jest.fn() },
     orderItem: { create: jest.fn(), update: jest.fn(), deleteMany: jest.fn() },
@@ -327,6 +327,34 @@ describe('OrderService', () => {
       );
     });
 
+    it('stamps soldAt on the sale and keeps it on a later debt payment', async () => {
+      await service.createPayment(
+        ORDER,
+        payDto(100000),
+        makeUser(StaffRole.SELLER),
+      );
+      expect(prisma.order.update.mock.calls[0][0].data.soldAt).toBeInstanceOf(
+        Date,
+      );
+
+      prisma.order.update.mockClear();
+      prisma.order.findUnique.mockResolvedValue(
+        makeOrder({
+          status: OrderStatus.DEBT,
+          customerId: CUSTOMER,
+          soldAt: new Date('2026-10-20T10:00:00Z'),
+        }),
+      );
+      await service.createPayment(
+        ORDER,
+        payDto(10000, CUSTOMER),
+        makeUser(StaffRole.SELLER),
+      );
+      expect(prisma.order.update.mock.calls[0][0].data).not.toHaveProperty(
+        'soldAt',
+      );
+    });
+
     it('rejects a partial payment without a customer', async () => {
       await expect(
         service.createPayment(ORDER, payDto(40000), makeUser(StaffRole.SELLER)),
@@ -373,6 +401,50 @@ describe('OrderService', () => {
           makeUser(StaffRole.SELLER),
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('getSummary', () => {
+    const range = {
+      from: '2026-10-20T19:00:00.000Z',
+      to: '2026-10-21T19:00:00.000Z',
+    };
+
+    beforeEach(() => {
+      prisma.order.aggregate.mockResolvedValue({
+        _count: { _all: 3 },
+        _sum: { totalAmount: '300000', paidAmount: '220000' },
+      });
+    });
+
+    it('sums orders sold in the period and derives the debt', async () => {
+      const res = await service.getSummary(range, makeUser(StaffRole.OWNER));
+      const where = prisma.order.aggregate.mock.calls[0][0].where;
+      expect(where).toEqual({
+        status: { in: [OrderStatus.COMPLETED, OrderStatus.DEBT] },
+        soldAt: { gte: new Date(range.from), lt: new Date(range.to) },
+        storeId: STORE,
+      });
+      expect(res).toMatchObject({
+        count: 3,
+        total: 300000,
+        paid: 220000,
+        debt: 80000,
+      });
+    });
+
+    it('limits a manager to their warehouses and a seller to own sales', async () => {
+      await service.getSummary(range, makeUser(StaffRole.MANAGER));
+      expect(prisma.order.aggregate.mock.calls[0][0].where).toMatchObject({
+        warehouseId: { in: [WAREHOUSE] },
+      });
+      await service.getSummary(range, makeUser(StaffRole.SELLER));
+      expect(prisma.order.aggregate.mock.calls[1][0].where).toMatchObject({
+        cashierId: 'seller-staff',
+      });
+      expect(prisma.order.aggregate.mock.calls[1][0].where).not.toHaveProperty(
+        'warehouseId',
+      );
     });
   });
 });

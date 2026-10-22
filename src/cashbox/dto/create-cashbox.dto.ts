@@ -1,5 +1,6 @@
 import { CashStatus, CashTransactionType, CashTransactionCategory, PaymentType } from "@generated/enums"
-import { IsOptional, IsNumber, Min, IsEnum, IsNotEmpty, IsString, IsUUID } from "class-validator"
+import { IsOptional, IsNumber, Min, IsEnum, IsNotEmpty, IsString, IsUUID, IsDateString } from "class-validator"
+import { PaginationParams } from "@shared/dto/pagination-params.dto"
 
 export class CreateCashBoxDto {
     @IsOptional()
@@ -41,4 +42,14 @@ export class CreateCashTransactionDto {
     @IsOptional()
     @IsUUID('4')
     orderId?: string
+}
+/** `GET /cashbox`: pagination + the day for the `today` block (client's local bounds). */
+export class CashboxListParams extends PaginationParams {
+  @IsOptional()
+  @IsDateString()
+  from?: string
+
+  @IsOptional()
+  @IsDateString()
+  to?: string
 }

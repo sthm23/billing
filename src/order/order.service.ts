@@ -28,13 +28,14 @@ import {
 import { OrderItem, Prisma } from '@generated/client';
 import { CreateReturnOrderDto, ReturnItemDto } from './dto/create-return.dto';
 import { OrderQueryParams } from './entities/order.entity';
+import { DateRangeParams, resolveDateRange } from '@shared/dto/date-range.dto';
 
 @Injectable()
 export class OrderService {
   constructor(
     private readonly prisma: PrismaService,
     @InjectPinoLogger(OrderService.name) private readonly logger: PinoLogger,
-  ) {}
+  ) { }
   async create(createOrderDto: CreateOrderDto, user: CurrentUser) {
     this.logger.debug(
       {
@@ -883,6 +884,8 @@ export class OrderService {
             customerId: customer?.id ?? null,
             paidAmount:
               status === OrderStatus.COMPLETED ? +order.totalAmount : totalPaid,
+            // The sale moment; a later debt payment keeps it
+            ...(order.soldAt ? {} : { soldAt: new Date() }),
           },
         });
 
@@ -990,6 +993,50 @@ export class OrderService {
     }
   }
 
+  /**
+   * Orders sold in `[from, to)`: COMPLETED or DEBT with `soldAt` in the period.
+   * Owner/admin — the whole store; manager — their warehouses; seller/cashier — own sales.
+   */
+  async getSummary(range: DateRangeParams, user: CurrentUser) {
+    const { from, to } = resolveDateRange(range);
+    const where: Prisma.OrderWhereInput = {
+      status: { in: [OrderStatus.COMPLETED, OrderStatus.DEBT] },
+      soldAt: { gte: from, lt: to },
+    };
+    if (user.role !== UserRole.ADMIN) {
+      if (!user.staff) throw new ForbiddenException('Staff only');
+      where.storeId = user.staff.storeId;
+      if (user.role !== UserRole.OWNER && user.staff.role !== StaffRole.OWNER) {
+        if (user.staff.role === StaffRole.MANAGER) {
+          where.warehouseId = {
+            in: user.staff.warehouse.map((w) => w.warehouseId),
+          };
+        } else {
+          where.cashierId = user.staff.id;
+        }
+      }
+    }
+    try {
+      const result = await this.prisma.order.aggregate({
+        where,
+        _count: { _all: true },
+        _sum: { totalAmount: true, paidAmount: true },
+      });
+      const total = Number(result._sum.totalAmount ?? 0);
+      const paid = Number(result._sum.paidAmount ?? 0);
+      return {
+        from,
+        to,
+        count: result._count._all,
+        total,
+        paid,
+        debt: total - paid,
+      };
+    } catch (error: any) {
+      throw new BadRequestException(error.response || error.message);
+    }
+  }
+
   async searchOrders(search: string, user: CurrentUser) {
     try {
       const params = {};
@@ -1038,8 +1085,8 @@ export class OrderService {
         storeId: user.role !== UserRole.ADMIN ? user.staff.storeId : undefined,
         cashierId:
           user.type === UserType.STAFF &&
-          user.staff.role !== StaffRole.OWNER &&
-          user.staff.role !== StaffRole.MANAGER
+            user.staff.role !== StaffRole.OWNER &&
+            user.staff.role !== StaffRole.MANAGER
             ? user.staff.id
             : undefined,
       } as Prisma.OrderFindUniqueArgs['where'];

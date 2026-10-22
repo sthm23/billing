@@ -4,7 +4,7 @@ import { CreateCashBoxDto, CreateCashTransactionDto } from './dto/create-cashbox
 import { CurrentUser } from '@shared/decorators/user.decorator';
 import { type CurrentUser as CurrentUserType } from '@auth/models/auth.model';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
-import { PaginationParams } from '@shared/dto/pagination-params.dto';
+import { CashboxListParams } from './dto/create-cashbox.dto';
 import { UserRole, StaffRole } from '@generated/enums';
 import { Roles } from '@shared/decorators/role.decorator';
 import { RolesGuard } from '@shared/guards/role.guard';
@@ -42,7 +42,7 @@ export class CashboxController {
 
   @Get()
   findAll(
-    @Query() query: PaginationParams,
+    @Query() query: CashboxListParams,
     @CurrentUser() user: CurrentUserType
   ) {
     return this.cashboxService.findAll(query, user);

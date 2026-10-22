@@ -21,6 +21,7 @@ import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { CurrentUser } from '@shared/decorators/user.decorator';
 import { type CurrentUser as CurrentUserType } from '@auth/models/auth.model';
 import { OrderQueryParams } from './entities/order.entity';
+import { DateRangeParams } from '@shared/dto/date-range.dto';
 
 @UseGuards(AuthJWTGuard)
 @Controller('orders')
@@ -74,6 +75,14 @@ export class OrderController {
       { pageSize, currentPage, search, status, fromDate, toDate },
       user,
     );
+  }
+
+  @Get('summary')
+  getSummary(
+    @Query() range: DateRangeParams,
+    @CurrentUser() user: CurrentUserType,
+  ) {
+    return this.orderService.getSummary(range, user);
   }
 
   @Get('search')

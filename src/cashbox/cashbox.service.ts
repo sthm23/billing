@@ -1,11 +1,26 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { CreateCashBoxDto, CreateCashTransactionDto } from './dto/create-cashbox.dto';
 import { PrismaService } from '@prisma/prisma.service';
-import { CashStatus, CashTransactionType, PaymentType, UserRole } from '@generated/enums';
+import { CashStatus, CashTransactionType, PaymentType, StaffRole, UserRole } from '@generated/enums';
 import { CurrentUser } from '@auth/models/auth.model';
 import { Prisma } from '@generated/client';
-import { CashboxWhereUniqueInput } from '@generated/internal/prismaNamespace';
+import { PaginationParams } from '@shared/dto/pagination-params.dto';
+import { DateRangeParams, resolveDateRange } from '@shared/dto/date-range.dto';
+
+const PAYMENT_TYPES: PaymentType[] = [PaymentType.CASH, PaymentType.CARD, PaymentType.ONLINE, PaymentType.TRANSFER];
+
+/** Cashboxes a user may see: owner/admin — the store; manager — their warehouses; others — their own. */
+function cashboxScope(user: CurrentUser): Prisma.CashboxWhereInput {
+  if (user.role === UserRole.ADMIN) return {};
+  if (!user.staff) throw new ForbiddenException('Staff only');
+  const where: Prisma.CashboxWhereInput = { storeId: user.staff.storeId };
+  if (user.role === UserRole.OWNER || user.staff.role === StaffRole.OWNER) return where;
+  if (user.staff.role === StaffRole.MANAGER) {
+    return { ...where, warehouseId: { in: user.staff.warehouse.map((w) => w.warehouseId) } };
+  }
+  return { ...where, sellerId: user.staff.id };
+}
 
 @Injectable()
 export class CashboxService {
@@ -89,7 +104,8 @@ export class CashboxService {
       const closed = await this.prisma.cashbox.update({
         where: { id: existingCashBox.id },
         data: {
-          status: CashStatus.CLOSED
+          status: CashStatus.CLOSED,
+          closedAt: new Date(),
         }
       })
       this.logger.info({ cashboxId: existingCashBox.id, storeId: user.staff.storeId }, 'Cashbox closed');
@@ -149,66 +165,79 @@ export class CashboxService {
     }
   }
 
-  async findAll(params: any, user: CurrentUser) {
+  /**
+   * Cashboxes in the user's scope, newest first, plus `today`: open cashboxes
+   * (count, balance), their income/expense in `[from, to)` (all payment
+   * methods) and the last closing time.
+   */
+  async findAll(params: PaginationParams & DateRangeParams, user: CurrentUser) {
+    const scope = cashboxScope(user);
     try {
       const { currentPage = 1, pageSize = 10 } = params
       const skip = (currentPage - 1) * pageSize;
-      const paramsSchema = {}
-      if (user.staff.storeId) {
-        paramsSchema['storeId'] = user.staff.storeId
-      }
-      const isAdminOrOwner = user.role === UserRole.ADMIN || user.role === UserRole.OWNER
-      if (!isAdminOrOwner) {
-        if (user.staff.warehouse[0]?.warehouseId) {
-          paramsSchema['warehouseId'] = user.staff.warehouse[0].warehouseId
-        }
+      const { from, to } = resolveDateRange(params);
+      const openWhere: Prisma.CashboxWhereInput = { ...scope, status: CashStatus.OPEN };
 
-      }
-      const totalItems = await this.prisma.cashbox.count({
-        where: paramsSchema
-      })
-      const cashboxes = await this.prisma.cashbox.findMany({
-        where: paramsSchema,
-        include: {
-          transactions: {
-            orderBy: { createdAt: 'desc' }
+      const [totalItems, cashboxes, open, todayByType, lastClosed] = await Promise.all([
+        this.prisma.cashbox.count({ where: scope }),
+        this.prisma.cashbox.findMany({
+          where: scope,
+          include: {
+            transactions: {
+              orderBy: { createdAt: 'desc' }
+            },
+            seller: {
+              include: {
+                user: true
+              }
+            },
+            warehouse: true
           },
-          seller: {
-            include: {
-              user: true
-            }
-          },
-          warehouse: true
+          skip: skip,
+          take: +pageSize,
+          orderBy: { createdAt: 'desc' },
+        }),
+        this.prisma.cashbox.aggregate({ where: openWhere, _count: { _all: true }, _sum: { balance: true } }),
+        this.prisma.cashTransaction.groupBy({
+          by: ['type'],
+          where: { cashbox: openWhere, createdAt: { gte: from, lt: to } },
+          _sum: { amount: true },
+        }),
+        this.prisma.cashbox.findFirst({
+          where: { ...scope, status: CashStatus.CLOSED, closedAt: { not: null } },
+          orderBy: { closedAt: 'desc' },
+          select: { closedAt: true },
+        }),
+      ]);
+      const sumOf = (type: CashTransactionType) =>
+        Number(todayByType.find((g) => g.type === type)?._sum.amount ?? 0);
+
+      return {
+        data: cashboxes,
+        total: totalItems,
+        currentPage,
+        pageSize,
+        today: {
+          from,
+          to,
+          openCount: open._count._all,
+          balance: Number(open._sum.balance ?? 0),
+          income: sumOf(CashTransactionType.INCOME),
+          expense: sumOf(CashTransactionType.EXPENSE),
+          lastClosedAt: lastClosed?.closedAt ?? null,
         },
-        skip: skip,
-        take: +pageSize,
-        orderBy: { createdAt: 'desc' },
-      });
-      return { data: cashboxes, total: totalItems, currentPage, pageSize };
+      };
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }
   }
 
+  /** One cashbox with its transactions and `summary`: income, expense and net per payment method. */
   async findOne(id: string, user: CurrentUser) {
+    const scope = cashboxScope(user);
     try {
-
-      const paramsSchema: CashboxWhereUniqueInput = {
-        id
-      }
-
-      if (user.staff.storeId) {
-        paramsSchema['storeId'] = user.staff.storeId
-      }
-      const isAdminOrOwner = user.role === UserRole.ADMIN || user.role === UserRole.OWNER
-      if (!isAdminOrOwner) {
-        if (user.staff.warehouse[0]?.warehouseId) {
-          paramsSchema['warehouseId'] = user.staff.warehouse[0].warehouseId
-        }
-        paramsSchema['sellerId'] = user.staff.id
-      }
-      const cashbox = await this.prisma.cashbox.findUnique({
-        where: { ...paramsSchema },
+      const cashbox = await this.prisma.cashbox.findFirst({
+        where: { ...scope, id },
         include: {
           transactions: {
             orderBy: { createdAt: 'desc' }
@@ -224,7 +253,27 @@ export class CashboxService {
       if (!cashbox) {
         throw new BadRequestException('Cashbox not found');
       }
-      return cashbox;
+      const groups = await this.prisma.cashTransaction.groupBy({
+        by: ['type', 'paymentType'],
+        where: { cashboxId: cashbox.id },
+        _sum: { amount: true },
+      });
+      const amountOf = (type: CashTransactionType, paymentType?: PaymentType) =>
+        groups
+          .filter((g) => g.type === type && (!paymentType || g.paymentType === paymentType))
+          .reduce((sum, g) => sum + Number(g._sum.amount ?? 0), 0);
+
+      return {
+        ...cashbox,
+        summary: {
+          income: amountOf(CashTransactionType.INCOME),
+          expense: amountOf(CashTransactionType.EXPENSE),
+          byMethod: PAYMENT_TYPES.map((paymentType) => ({
+            paymentType,
+            net: amountOf(CashTransactionType.INCOME, paymentType) - amountOf(CashTransactionType.EXPENSE, paymentType),
+          })),
+        },
+      };
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message)
     }

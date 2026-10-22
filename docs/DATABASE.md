@@ -473,6 +473,7 @@ model Order {
   status      OrderStatus   // CREATED | HOLD | DEBT | COMPLETED | CANCELLED | REFUNDED
   totalAmount Decimal
   paidAmount  Decimal      @default(0)
+  soldAt      DateTime?    // момент продажи (COMPLETED/DEBT), ставится один раз
   createdAt   DateTime     @default(now())
   
   // Возврат
@@ -494,6 +495,7 @@ model Order {
   
   @@index([storeId, createdAt])
   @@index([warehouseId, createdAt])
+  @@index([storeId, soldAt])
 }
 ```
 
@@ -504,6 +506,9 @@ model Order {
 **Индексы**:
 - По магазину + дате (для отчетов по магазину)
 - По складу + дате (для отчетов по складу)
+- По магазину + `soldAt` (сводка продаж `GET /orders/summary`)
+
+**`soldAt`**: ставится в `POST /orders/payment/:id`, когда заказ становится COMPLETED или DEBT; последующая оплата долга его не меняет. Нужен, потому что продажа полностью в долг не имеет Payment. Миграция `20261021120000_sales_summaries` заполнила COMPLETED/DEBT/REFUNDED: `createdAt` первого платежа, иначе `createdAt` заказа.
 
 **Жизненный цикл**:
 ```
@@ -688,6 +693,7 @@ model Cashbox {
   status      CashStatus  // OPEN | CLOSED
   balance     Decimal    @default(0)
   createdAt   DateTime   @default(now())
+  closedAt    DateTime?  // ставится в PATCH /cashbox/:id/close
   
   seller Staff @relation(fields: [sellerId], references: [id])
   store  Store @relation(fields: [storeId], references: [id])
@@ -705,8 +711,9 @@ model Cashbox {
 
 **Логика**:
 - Один продавец на одном складе может иметь только одну открытую кассу
-- `balance` обновляется при каждой транзакции
+- `balance` обновляется при каждой транзакции — все способы оплаты (CASH, CARD, ONLINE, TRANSFER)
 - После закрытия (`CLOSED`) нельзя добавлять транзакции
+- `closedAt` — время закрытия; `null` у открытых и у касс, закрытых до миграции `20261021120000_sales_summaries`
 
 ---
 
