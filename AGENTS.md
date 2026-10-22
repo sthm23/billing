@@ -571,7 +571,7 @@ if (current.quantity >= needed) {
 - **Root entry point**: `../AGENTS.md`
 - **Business concepts**: `../docs/business-domain.md`
 - **API map**: `../docs/api-map.md`
-- **Database schema**: `../docs/data-model.md`
+- **Database schema**: `docs/DATABASE.md`
 - **Workflows**: `../docs/workflows/`
 - **Detailed backend docs**: `docs/` (legacy, for reference)
 

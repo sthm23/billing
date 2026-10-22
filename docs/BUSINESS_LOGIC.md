@@ -26,7 +26,7 @@ CREATED → HOLD → [DEBT | COMPLETED] → [REFUNDED | CANCELLED]
 6. **REFUNDED** — возвращен
 
 ### Этап 1: Создание заказа
-**Endpoint**: `POST /order`
+**Endpoint**: `POST /orders`
 
 **Что происходит**:
 1. Валидация staff:
@@ -60,7 +60,7 @@ CREATED → HOLD → [DEBT | COMPLETED] → [REFUNDED | CANCELLED]
    ```
 
 ### Этап 2: Добавление товаров
-**Endpoint**: `POST /order/:id/items`
+**Endpoint**: `POST /orders/items`
 
 **Что происходит**:
 1. Валидация статуса заказа:
@@ -101,7 +101,7 @@ CREATED → HOLD → [DEBT | COMPLETED] → [REFUNDED | CANCELLED]
 **Важно**: На этом этапе inventory НЕ списывается! Это происходит только при оплате.
 
 ### Этап 3: Оплата заказа
-**Endpoint**: `POST /order/:id/pay`
+**Endpoint**: `POST /orders/payment/:id`
 
 **Что происходит**:
 1. Валидация статуса заказа:
@@ -210,7 +210,7 @@ CREATED → HOLD → [DEBT | COMPLETED] → [REFUNDED | CANCELLED]
    ```
 
 ### Отмена заказа
-**Endpoint**: `DELETE /order/:id`
+**Endpoint**: `DELETE /orders/:id`
 
 **Условия**:
 - Статус НЕ `COMPLETED`, `DEBT`, `REFUNDED`
@@ -249,14 +249,14 @@ Cashbox {
 ```
 
 ### Закрытие кассы
-**Endpoint**: `POST /cashbox/:id/close`
+**Endpoint**: `PATCH /cashbox/:id/close`
 
 **Условия**:
-- Касса должна быть `OPEN`
+- Касса должна быть `OPEN` и принадлежать магазину staff
 - Staff должен быть владельцем кассы (или ADMIN/OWNER может закрыть любую)
 
 **Что происходит**:
-- Статус → `CLOSED`
+- Статус → `CLOSED`, `closedAt = now()`
 - После закрытия **НЕЛЬЗЯ** добавлять новые транзакции
 
 **Важно**: Логика с остатками (что делать с `balance` после закрытия) пока не реализована и требует отдельной проработки.
@@ -378,7 +378,7 @@ if (type === INCOME) {
 - Согласование крупных расходов
 
 ### Автоматическое создание кассы
-При создании заказа (`POST /order`), если у продавца нет открытой кассы на этом складе — она создается автоматически с `balance = 0`.
+При создании заказа (`POST /orders`), если у продавца нет открытой кассы на этом складе — она создается автоматически с `balance = 0`.
 
 ### Несколько касс одновременно
 **Да**, может быть несколько открытых касс одновременно:
@@ -413,7 +413,7 @@ if (type === INCOME) {
 - **COMPLETED** — расчет полностью завершен
 
 ### Endpoint
-`POST /order/return/:orderId`
+`POST /orders/return`
 
 ### Условия
 - Заказ должен быть в статусе `COMPLETED` или `DEBT`
@@ -634,7 +634,7 @@ if (type === INCOME) {
 ### 1. Order Debt (долг по заказу)
 - Возникает автоматически при частичной оплате заказа
 - Order.status = `DEBT`
-- Оплата: `POST /order/:id/pay` (добавление платежа к существующему заказу)
+- Оплата: `POST /orders/payment/:id` (добавление платежа к существующему заказу)
 
 ### 2. CustomerDebt (старые долги)
 - Создается вручную для долгов, возникших **ДО внедрения системы**
@@ -746,31 +746,37 @@ StockMovement {
 ### Типы движений
 
 #### 1. PURCHASE (приход товара)
-**Endpoint**: `POST /warehouse/:id/inventory-movement`
+**Endpoint**: `POST /warehouse/:id/inventory` (`:id` — склад)
 
 ```typescript
 {
   type: IN,
   reason: PURCHASE,
   variantId: string,
-  quantity: number,
-  costPrice: Decimal,  // Закупочная цена
-  price: Decimal       // Розничная цена (обновляется в ProductVariant)
+  quantity: number,     // целое, ≥ 1
+  costPrice: Decimal,   // Закупочная цена — обязательна для PURCHASE
+  price?: Decimal,      // Розничная цена — опционально; обновляется в ProductVariant только если передана
+  warehouseId?: string  // опционально, игнорируется (склад берется из URL)
 }
 ```
 
+**Правила endpoint'а**:
+- Разрешены только `IN + PURCHASE`, `IN + ADJUSTMENT`, `OUT + ADJUSTMENT`; `SALE` и `RETURN` отклоняются (они идут только через заказы)
+- Только OWNER/MANAGER; склад должен принадлежать магазину staff, MANAGER — только свои склады (StaffOnWarehouse), OWNER — любой склад магазина
+- Списание (`OUT`) атомарное и никогда не уводит остаток ниже нуля (`Insufficient stock for write-off`)
+
 **Что происходит (транзакция)**:
 1. Inventory увеличивается на `quantity`
-2. StockMovement создается с `reason: PURCHASE`
-3. ProductVariant.price обновляется
+2. StockMovement создается с `reason: PURCHASE` (`unitCost = costPrice`)
+3. ProductVariant.price обновляется, если передан `price`
 
 #### 2. SALE (продажа)
-Автоматически при оплате заказа (`POST /order/:id/pay`):
+Автоматически при оплате заказа (`POST /orders/payment/:id`):
 - Inventory уменьшается
 - StockMovement создается с `reason: SALE`
 
 #### 3. RETURN (возврат от клиента)
-Автоматически при возврате товара (`POST /order/return/:id`):
+Автоматически при возврате товара (`POST /orders/return`):
 - Inventory увеличивается
 - StockMovement создается с `reason: RETURN`
 
@@ -780,7 +786,7 @@ StockMovement {
 - Списание брака
 - Пересортица
 
-**Может быть как IN, так и OUT**:
+**Может быть как IN, так и OUT** (тот же endpoint `POST /warehouse/:id/inventory`):
 ```typescript
 // Нашли на складе 5 лишних единиц
 StockMovement { type: IN, reason: ADJUSTMENT, quantity: 5 }
@@ -926,7 +932,7 @@ if (!hasAccess) {
    ```
 
 ### Создание вариантов
-**Endpoint**: `POST /product/variant`
+**Endpoint**: `POST /product/variants`
 
 **Что происходит (транзакция для каждого варианта)**:
 1. Генерация уникального баркода:
@@ -996,7 +1002,7 @@ if (!hasAccess) {
 - Товар остается в БД, но не показывается в списках (фильтр `where: { isArchived: false }`)
 
 ### Обновление цены варианта
-**Endpoint**: `PATCH /product/variant/:id`
+**Endpoint**: `PUT /product/variants/:id`
 
 **Права**:
 - OWNER или MANAGER
@@ -1042,7 +1048,7 @@ WHERE (
 - И т.д.
 
 ### Создание
-Создаются вручную при добавлении товаров в заказ (`POST /order/:id/items`):
+Создаются вручную при добавлении товаров в заказ (`POST /orders/items`):
 ```typescript
 AdditionalService {
   orderId: order.id,

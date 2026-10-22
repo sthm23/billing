@@ -674,7 +674,7 @@ model Payment {
 - `PaymentType`: CASH, CARD, ONLINE, TRANSFER
 
 **Логика**:
-- Создается при оплате заказа (`POST /order/:id/pay`)
+- Создается при оплате заказа (`POST /orders/payment/:id`)
 - Одновременно создается `CashTransaction` для кассы
 
 ---
@@ -751,10 +751,10 @@ model CashTransaction {
 **Логика**:
 
 **Автоматические транзакции** (создаются системой):
-- **Оплата заказа**: `POST /order/:id/pay`
+- **Оплата заказа**: `POST /orders/payment/:id`
   - Создается: INCOME, SALE, orderId
   - Cashbox.balance увеличивается
-- **Возврат товара**: `POST /order/return/:id`
+- **Возврат товара**: `POST /orders/return`
   - Создается: EXPENSE, RETURN, orderId
   - Cashbox.balance уменьшается
 - **Оплата старого долга**: `POST /debt/payment`

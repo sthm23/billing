@@ -68,7 +68,7 @@ Build new backend features (API endpoints, services, business logic) for the **b
    - If adding order endpoint → read `docs/features/orders.md`
    - If adding payment logic → read `docs/features/payments.md`
    - If adding inventory → read `docs/features/inventory.md`
-4. ✅ Read `docs/data-model.md` (understand database schema)
+4. ✅ Read `docs/DATABASE.md` (understand database schema)
 5. ✅ Read `docs/security.md` (understand permissions)
 6. ✅ Check `docs/api-map.md` (avoid duplicate endpoints)
 
@@ -261,10 +261,9 @@ if (order.paidAmount === 0) {
   await this.deductInventory(orderId);
 }
 
-// Rule: Only CASH/CARD create CashTransaction
-if (type === PaymentType.CASH || type === PaymentType.CARD) {
-  await this.createCashTransaction(cashboxId, amount, orderId);
-}
+// Rule: every payment method (CASH, CARD, ONLINE, TRANSFER) creates a
+// CashTransaction with its paymentType and changes the cashbox balance
+await this.createCashTransaction(cashboxId, amount, orderId, type);
 ```
 
 ---

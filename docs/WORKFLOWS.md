@@ -168,7 +168,7 @@ POST /product
 
 #### Шаг 2: Создание вариантов товара
 ```
-POST /product/variant
+POST /product/variants
 {
   "productId": "uuid-product",
   "category": "Одежда",
@@ -211,21 +211,23 @@ POST /product/variant
 **Кто**: OWNER или MANAGER
 
 **Шаги**:
-1. `POST /warehouse/:id/inventory-movement`
+1. `POST /warehouse/:id/inventory`
    ```json
    {
      "variantId": "uuid-variant",
      "type": "IN",
      "reason": "PURCHASE",
      "quantity": 20,
-     "costPrice": 280.00,
-     "price": 520.00  // Новая розничная цена
+     "costPrice": 280.00,  // Обязателен для PURCHASE
+     "price": 520.00       // Опционально: новая розничная цена
    }
    ```
 2. **Транзакция**:
    - `Inventory.quantity += 20`
    - `StockMovement` создается (IN, PURCHASE, unitCost: 280)
-   - `ProductVariant.price = 520` (обновление розничной цены)
+   - `ProductVariant.price = 520` (только если передан `price`)
+
+**Правила**: разрешены только `IN + PURCHASE`, `IN + ADJUSTMENT`, `OUT + ADJUSTMENT` (SALE/RETURN — только через заказы); склад должен принадлежать магазину пользователя, MANAGER — только свои склады; `warehouseId` в body не нужен (берется из URL).
 
 ### 3.3. Корректировка остатков (инвентаризация)
 
@@ -234,19 +236,17 @@ POST /product/variant
 **Сценарий**: При инвентаризации обнаружили, что физически на складе 8 единиц, а в системе 10.
 
 **Шаги**:
-1. `POST /warehouse/:id/inventory-movement`
+1. `POST /warehouse/:id/inventory`
    ```json
    {
      "variantId": "uuid-variant",
      "type": "OUT",
      "reason": "ADJUSTMENT",
-     "quantity": 2,
-     "costPrice": 300.00,
-     "price": 500.00
+     "quantity": 2
    }
    ```
 2. **Транзакция**:
-   - `Inventory.quantity -= 2`
+   - `Inventory.quantity -= 2` (атомарно; если остаток меньше 2 — `400 Insufficient stock for write-off`, ниже нуля не уходит)
    - `StockMovement` создается (OUT, ADJUSTMENT)
 
 ---
@@ -265,6 +265,7 @@ POST /cashbox
 {
   "storeId": "uuid-store",
   "warehouseId": "uuid-warehouse",
+  "status": "OPEN",
   "balance": 0  // Начальный баланс
 }
 ```
@@ -272,7 +273,7 @@ POST /cashbox
 
 #### 2. Продавец создает новый заказ
 ```
-POST /order
+POST /orders
 {
   "storeId": "uuid-store",
   "warehouseId": "uuid-warehouse",
@@ -284,7 +285,7 @@ POST /order
 
 #### 3. Продавец сканирует товары или добавляет вручную
 ```
-POST /order/:orderId/items
+POST /orders/items
 {
   "orderId": "uuid-order",
   "customerId": null,
@@ -316,8 +317,9 @@ POST /order/:orderId/items
 
 #### 4. Клиент оплачивает
 ```
-POST /order/:orderId/pay
+POST /orders/payment/:orderId
 {
+  "orderId": "uuid-order",
   "customerId": null,
   "payments": [
     { "type": "CASH", "amount": 1700.00 }
@@ -336,9 +338,9 @@ POST /order/:orderId/pay
 
 #### 5. В конце смены продавец закрывает кассу
 ```
-POST /cashbox/:id/close
+PATCH /cashbox/:id/close
 ```
-**Результат**: Cashbox status: CLOSED, нельзя больше добавлять транзакции
+**Результат**: Cashbox status: CLOSED, `closedAt` проставлен, нельзя больше добавлять транзакции
 
 ### 4.2. Частичная оплата (долг)
 
@@ -348,8 +350,9 @@ POST /cashbox/:id/close
 
 #### 4. Клиент оплачивает частично
 ```
-POST /order/:orderId/pay
+POST /orders/payment/:orderId
 {
+  "orderId": "uuid-order",
   "customerId": "uuid-customer",  // Обязательно указать клиента!
   "payments": [
     { "type": "CASH", "amount": 400.00 }
@@ -367,8 +370,9 @@ POST /order/:orderId/pay
 
 #### 5. Клиент приходит позже и доплачивает
 ```
-POST /order/:orderId/pay
+POST /orders/payment/:orderId
 {
+  "orderId": "uuid-order",
   "customerId": "uuid-customer",
   "payments": [
     { "type": "CASH", "amount": 600.00 }
@@ -392,7 +396,7 @@ POST /order/:orderId/pay
 
 #### 3. Добавление товаров + услуги
 ```
-POST /order/:orderId/items
+POST /orders/items
 {
   "orderId": "uuid-order",
   "items": [...],  // Товары на 1000
@@ -409,8 +413,9 @@ POST /order/:orderId/items
 
 #### 4. Оплата
 ```
-POST /order/:orderId/pay
+POST /orders/payment/:orderId
 {
+  "orderId": "uuid-order",
   "payments": [
     { "type": "CASH", "amount": 1100.00 }
   ]
@@ -430,12 +435,12 @@ POST /order/:orderId/pay
 
 #### 1. Продавец открывает заказ клиента
 ```
-GET /order/:orderId
+GET /orders/:orderId
 ```
 
 #### 2. Продавец создает возврат
 ```
-POST /order/return/:orderId
+POST /orders/return
 {
   "orderId": "uuid-order",
   "items": [
@@ -481,7 +486,7 @@ POST /order/return/:orderId
 
 #### 1. Создание возврата
 ```
-POST /order/return/:orderId
+POST /orders/return
 {
   "orderId": "uuid-order",
   "items": [
@@ -517,7 +522,7 @@ POST /order/return/:orderId
 
 #### 1. Создание возврата (без денег)
 ```
-POST /order/return/:orderId
+POST /orders/return
 {
   "orderId": "uuid-order",
   "items": [...],  // Товары на 700
@@ -689,7 +694,7 @@ POST /cashbox/:id/transaction
 - Создается CashTransaction (EXPENSE, PURCHASE)
 - Cashbox.balance -= 50000
 
-**Примечание**: Это НЕ создает автоматически inventory! Товар нужно добавить отдельно через `POST /warehouse/:id/inventory-movement`.
+**Примечание**: Это НЕ создает автоматически inventory! Товар нужно добавить отдельно через `POST /warehouse/:id/inventory`.
 
 ### 6.6. Возврат денег клиенту (кредит по заказу)
 
@@ -725,8 +730,9 @@ POST /cashbox/:id/transaction
 
 **Шаги**:
 ```
-POST /order/:orderId/pay
+POST /orders/payment/:orderId
 {
+  "orderId": "uuid-order",
   "customerId": "uuid-customer",
   "payments": [
     { "type": "CASH", "amount": 300.00 }
@@ -850,7 +856,7 @@ ORDER BY i.quantity ASC;
 
 **Сценарий**: Продавец добавляет 10 единиц товара, а на складе только 5.
 
-**Этап ошибки**: `POST /order/:id/items`
+**Этап ошибки**: `POST /orders/items`
 
 **Ошибка**:
 ```json
@@ -866,7 +872,7 @@ ORDER BY i.quantity ASC;
 
 **Сценарий**: Заказ на 1000, клиент хочет заплатить 1500.
 
-**Этап ошибки**: `POST /order/:id/pay`
+**Этап ошибки**: `POST /orders/payment/:id`
 
 **Ошибка**:
 ```json
@@ -882,7 +888,7 @@ ORDER BY i.quantity ASC;
 
 **Сценарий**: Продавец пытается создать второй возврат для уже возвращенного заказа.
 
-**Этап ошибки**: `POST /order/return/:id`
+**Этап ошибки**: `POST /orders/return`
 
 **Ошибка**:
 ```json
@@ -898,7 +904,7 @@ ORDER BY i.quantity ASC;
 
 **Сценарий**: Продавец пытается оплатить заказ, но забыл открыть кассу.
 
-**Этап ошибки**: `POST /order/:id/pay`
+**Этап ошибки**: `POST /orders/payment/:id`
 
 **Ошибка**:
 ```json
@@ -914,7 +920,7 @@ ORDER BY i.quantity ASC;
 
 **Сценарий**: Продавец со склада A пытается продать товар со склада B.
 
-**Этап ошибки**: `POST /order`
+**Этап ошибки**: `POST /orders`
 
 **Ошибка**:
 ```json

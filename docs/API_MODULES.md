@@ -146,9 +146,9 @@ Authorization: Bearer <access_token>
 
 ---
 
-## 2. Order Module (`/api/order`)
+## 2. Order Module (`/api/orders`)
 
-### POST /order
+### POST /orders
 **Требует JWT + Staff**
 
 Создание нового заказа.
@@ -183,10 +183,10 @@ Authorization: Bearer <access_token>
 
 ---
 
-### POST /order/:id/items
+### POST /orders/items
 **Требует JWT + Staff**
 
-Добавление/обновление товаров в заказ.
+Добавление/обновление товаров в заказ (`orderId` — в body).
 
 **Request**:
 ```json
@@ -233,14 +233,15 @@ Authorization: Bearer <access_token>
 
 ---
 
-### POST /order/:id/pay
+### POST /orders/payment/:id
 **Требует JWT + Staff**
 
-Оплата заказа.
+Оплата заказа (`:id` — orderId).
 
 **Request**:
 ```json
 {
+  "orderId": "uuid",
   "customerId": "uuid | null",
   "payments": [
     {
@@ -260,7 +261,7 @@ Authorization: Bearer <access_token>
 
 **Что происходит**:
 - Создаются Payment записи
-- Создаются CashTransaction (INCOME, SALE)
+- Создаются CashTransaction (INCOME, SALE) с `paymentType` — для всех способов оплаты (CASH, CARD, ONLINE, TRANSFER)
 - Создаются StockMovement (OUT, SALE)
 - Списывается Inventory
 - Обновляется Cashbox.balance
@@ -273,10 +274,10 @@ Authorization: Bearer <access_token>
 
 ---
 
-### POST /order/return/:id
+### POST /orders/return
 **Требует JWT + Staff**
 
-Возврат товара.
+Возврат товара (`orderId` — в body).
 
 **Request**:
 ```json
@@ -324,7 +325,7 @@ Authorization: Bearer <access_token>
 
 ---
 
-### GET /order
+### GET /orders
 **Требует JWT + Staff**
 
 Список заказов (с пагинацией).
@@ -372,7 +373,38 @@ Authorization: Bearer <access_token>
 
 ---
 
-### GET /order/search?search=:query
+### GET /orders/summary
+**Требует JWT + Staff (или ADMIN)**
+
+Сводка продаж за период (HeroCard «Продажи сегодня» в мобильном).
+
+**Query Parameters** (`DateRangeParams`):
+- `from` — ISO, начало периода (локальное начало дня клиента); default — начало текущего дня сервера
+- `to` — ISO, конец периода (не включается); default — `from` + 24 ч
+
+**Response**:
+```json
+{
+  "from": "2026-08-14T19:00:00.000Z",
+  "to": "2026-08-15T19:00:00.000Z",
+  "count": 12,
+  "total": 15000.00,
+  "paid": 12000.00,
+  "debt": 3000.00
+}
+```
+
+**Что считается**: заказы в статусе `COMPLETED` или `DEBT` с `soldAt` в `[from, to)`; `total` = Σ totalAmount, `paid` = Σ paidAmount, `debt` = total − paid.
+
+**Фильтрация** (по токену, не по параметрам клиента):
+- ADMIN — все заказы
+- OWNER (user.role или staff.role) — весь магазин
+- MANAGER — заказы своих складов
+- SELLER/CASHIER — только свои продажи (`cashierId = staff.id`)
+
+---
+
+### GET /orders/search?search=:query
 **Требует JWT + Staff**
 
 Поиск заказов по клиенту.
@@ -384,7 +416,7 @@ Authorization: Bearer <access_token>
 
 ---
 
-### GET /order/:id
+### GET /orders/:id
 **Требует JWT + Staff**
 
 Детальная информация о заказе.
@@ -448,7 +480,7 @@ Authorization: Bearer <access_token>
 
 ---
 
-### PATCH /order/:id/clear-customer
+### PATCH /orders/:id/clear-customer
 **Требует JWT + Staff**
 
 Удаление клиента из заказа.
@@ -460,7 +492,7 @@ Authorization: Bearer <access_token>
 
 ---
 
-### DELETE /order/:id
+### DELETE /orders/:id
 **Требует JWT + Staff**
 
 Отмена заказа.
@@ -485,9 +517,12 @@ Authorization: Bearer <access_token>
 {
   "storeId": "uuid",
   "warehouseId": "uuid",
+  "status": "OPEN",   // обязателен в CreateCashBoxDto (CashStatus); касса всегда создается OPEN
   "balance": 1000.00  // Начальный баланс (опционально, default: 0)
 }
 ```
+
+**Примечание**: `storeId` сейчас берется из body (проверяется, что магазин существует и склад принадлежит ему).
 
 **Response**:
 ```json
@@ -507,16 +542,17 @@ Authorization: Bearer <access_token>
 
 ---
 
-### POST /cashbox/:id/close
+### PATCH /cashbox/:id/close
 **Требует JWT + Staff**
 
-Закрытие кассы.
+Закрытие кассы: `status → CLOSED`, `closedAt = now()`.
 
-**Response**: касса со статусом `CLOSED`
+**Response**: касса со статусом `CLOSED` и заполненным `closedAt`
+
+**Доступ**: касса должна быть OPEN и принадлежать магазину пользователя. OWNER/ADMIN (user.role) закрывают любую кассу магазина, остальные — только свою (`sellerId = staff.id`) на своем складе.
 
 **Errors**:
-- `400 Bad Request` — касса не найдена или уже закрыта
-- `403 Forbidden` — нельзя закрыть чужую кассу (только OWNER/MANAGER могут)
+- `400 Bad Request` — касса не найдена, уже закрыта или чужая (`No OPEN cashbox found for this store and warehouse`)
 
 ---
 
@@ -633,11 +669,13 @@ Authorization: Bearer <access_token>
 ### GET /cashbox
 **Требует JWT + Staff**
 
-Список касс (с пагинацией).
+Список касс (с пагинацией, новые сверху) + блок `today`.
 
-**Query Parameters**:
+**Query Parameters** (`CashboxListParams`):
 - `pageSize` (default: 10)
 - `currentPage` (default: 1)
+- `from` — ISO, начало дня клиента (опционально; default — начало текущего дня сервера)
+- `to` — ISO, конец периода, не включается (опционально; default — `from` + 24 ч)
 
 **Response**:
 ```json
@@ -645,12 +683,22 @@ Authorization: Bearer <access_token>
   "currentPage": 1,
   "pageSize": 10,
   "total": 50,
+  "today": {
+    "from": "2026-08-14T19:00:00.000Z",
+    "to": "2026-08-15T19:00:00.000Z",
+    "openCount": 2,
+    "balance": 8000.00,
+    "income": 12000.00,
+    "expense": 500.00,
+    "lastClosedAt": "2026-08-14T18:00:00.000Z"
+  },
   "data": [
     {
       "id": "uuid",
       "status": "OPEN",
       "balance": 5000.00,
       "createdAt": "2026-08-15T10:00:00Z",
+      "closedAt": null,
       "seller": {
         "id": "uuid",
         "role": "SELLER",
@@ -672,18 +720,42 @@ Authorization: Bearer <access_token>
 }
 ```
 
-**Фильтрация**:
-- OWNER/MANAGER видят все кассы магазина
-- Другие роли видят только свои кассы
+**`today`**: `openCount`/`balance` — количество OPEN касс в области видимости и сумма их балансов; `income`/`expense` — транзакции этих OPEN касс с `createdAt` в `[from, to)`, все способы оплаты (CASH, CARD, ONLINE, TRANSFER); `lastClosedAt` — последний `closedAt` в области видимости (или `null`).
+
+**Фильтрация** (по токену; storeId от клиента не принимается):
+- ADMIN — все кассы
+- OWNER (user.role или staff.role) — все кассы магазина
+- MANAGER — кассы своих складов
+- SELLER/CASHIER — только свои кассы (`sellerId = staff.id`)
 
 ---
 
 ### GET /cashbox/:id
 **Требует JWT + Staff**
 
-Детальная информация о кассе.
+Детальная информация о кассе. Та же область видимости, что и у списка; касса вне ее → `400 Cashbox not found`.
 
-**Response**: та же структура, что и в списке, но одна касса
+**Response**: касса (как элемент списка: `transactions`, `seller`, `warehouse`) + `summary`:
+```json
+{
+  "id": "uuid",
+  "status": "OPEN",
+  "balance": 5000.00,
+  "transactions": [ ... ],
+  "summary": {
+    "income": 6000.00,
+    "expense": 1000.00,
+    "byMethod": [
+      { "paymentType": "CASH", "net": 3000.00 },
+      { "paymentType": "CARD", "net": 2000.00 },
+      { "paymentType": "ONLINE", "net": 0 },
+      { "paymentType": "TRANSFER", "net": 0 }
+    ]
+  }
+}
+```
+
+`summary.byMethod` — income − expense по каждому способу оплаты (всегда все четыре).
 
 ---
 
@@ -716,7 +788,7 @@ Authorization: Bearer <access_token>
 
 ---
 
-### POST /product/variant
+### POST /product/variants
 **Требует JWT + Staff (OWNER/MANAGER)**
 
 Создание вариантов товара.
@@ -757,18 +829,23 @@ Authorization: Bearer <access_token>
 ### GET /product
 **Требует JWT + Staff**
 
-Список товаров (с пагинацией).
+Список товаров (с пагинацией, без архивных, новые сверху).
 
-**Query Parameters**:
+**Query Parameters** (`ProductListParams`):
 - `pageSize` (default: 10)
 - `currentPage` (default: 1)
+- `search` — название товара, SKU или штрихкод варианта (до 100 символов)
+- `categoryId` — категория или ее родитель (включаются подкатегории)
+- `lowStock` — `true`: только товары с общим остатком ≤ `lowStockThreshold`
 
 **Response**:
 ```json
 {
   "currentPage": 1,
   "pageSize": 10,
-  "total": 200,
+  "total": 200,                          // с учетом lowStock
+  "counts": { "all": 200, "lowStock": 7 }, // для чипов «Все» / «Мало» (search + categoryId, без lowStock)
+  "lowStockThreshold": 5,
   "data": [
     {
       "id": "uuid",
@@ -808,6 +885,7 @@ Authorization: Bearer <access_token>
 ```
 
 **Фильтрация**:
+- ADMIN видит все товары
 - OWNER видит все товары своего магазина
 - MANAGER/SELLER видят товары складов, к которым есть доступ
 
@@ -885,14 +963,48 @@ Authorization: Bearer <access_token>
 
 ---
 
-### GET /product/search
+### GET /product/variants/:id/stock-movements
+**Требует JWT + Staff**
+
+История движений склада одного варианта (новые сверху). Доступ — как к товару (магазин + склад; OWNER — любой склад магазина).
+
+**Query Parameters**:
+- `pageSize` (default: 20)
+- `currentPage` (default: 1)
+
+**Response**:
+```json
+{
+  "currentPage": 1,
+  "pageSize": 20,
+  "total": 3,
+  "data": [
+    {
+      "id": "uuid",
+      "type": "IN",
+      "reason": "PURCHASE",
+      "quantity": 10,
+      "unitCost": 300.00,
+      "createdAt": "2026-08-15T10:00:00Z",
+      "createdBy": "string | null"   // fullName сотрудника
+    }
+  ]
+}
+```
+
+**Errors**:
+- `404 Not Found` — вариант не найден
+- `403 Forbidden` — нет доступа к складу варианта
+
+---
+
+### GET /product/search/:warehouseId
 **Требует JWT + Staff**
 
 Поиск товаров по SKU, barcode или названию.
 
 **Query Parameters**:
 - `text` — поисковый запрос
-- `warehouseId` — склад для поиска
 - `pageSize` (default: 20)
 - `currentPage` (default: 1)
 
@@ -900,7 +1012,7 @@ Authorization: Bearer <access_token>
 
 ---
 
-### PATCH /product/variant/:id
+### PUT /product/variants/:id
 **Требует JWT + Staff (OWNER/MANAGER)**
 
 Обновление цены варианта.
@@ -927,7 +1039,7 @@ Authorization: Bearer <access_token>
 ### DELETE /product/:id
 **Требует JWT + Staff (OWNER/MANAGER)**
 
-Архивирование товара.
+Архивирование товара (физически не удаляется).
 
 **Response**:
 ```json
@@ -936,7 +1048,10 @@ Authorization: Bearer <access_token>
 }
 ```
 
-**Что происходит**: Product.isArchived → `true`
+**Что происходит**: Product.isArchived → `true`; архивные товары не попадают в `GET /product`
+
+**Errors**:
+- `403 Forbidden` — нет доступа к магазину/складу товара
 
 ---
 
@@ -974,10 +1089,17 @@ Authorization: Bearer <access_token>
 
 ---
 
-### POST /warehouse/:id/inventory-movement
+### POST /warehouse/:id/inventory
 **Требует JWT + Staff (OWNER/MANAGER)**
 
-Приход товара или корректировка остатков.
+Приход товара или корректировка остатков (`:id` — склад).
+
+**Разрешенные комбинации**:
+- `IN` + `PURCHASE` — приход от поставщика, `costPrice` обязателен
+- `IN` + `ADJUSTMENT` — корректировка вверх
+- `OUT` + `ADJUSTMENT` — списание
+
+`SALE` и `RETURN` отклоняются (`400`) — они проходят только через заказы.
 
 **Request**:
 ```json
@@ -985,27 +1107,31 @@ Authorization: Bearer <access_token>
   "variantId": "uuid",
   "type": "IN" | "OUT",
   "reason": "PURCHASE" | "ADJUSTMENT",
-  "quantity": 10,
-  "costPrice": 300.00,
-  "price": 500.00  // Новая розничная цена
+  "quantity": 10,           // целое, ≥ 1
+  "costPrice": 300.00,      // обязателен для PURCHASE, иначе опционален (→ StockMovement.unitCost)
+  "price": 500.00,          // опционально: новая цена продажи; если не передан — цена не меняется
+  "warehouseId": "uuid"     // опционально, игнорируется (склад берется из URL)
 }
 ```
 
 **Response**:
 ```json
 {
-  "message": "Inventory added successfully"
+  "message": "Inventory movement recorded"
 }
 ```
 
+**Доступ**: склад должен принадлежать магазину пользователя; OWNER — любой склад магазина, MANAGER — только свои склады (StaffOnWarehouse).
+
 **Что происходит (транзакция)**:
-- Inventory обновляется (+ или -)
+- Inventory обновляется (+ или -); списание атомарно и никогда не уводит остаток ниже нуля
 - StockMovement создается
-- ProductVariant.price обновляется
+- ProductVariant.price обновляется только если передан `price`
 
 **Errors**:
-- `404 Not Found` — variant или warehouse не найден
-- `400 Bad Request` — warehouse не принадлежит варианту
+- `400 Bad Request` — недопустимая комбинация type/reason, нет `costPrice` для PURCHASE, `Insufficient stock for write-off`
+- `400 Bad Request` — variant или warehouse не найден / склад не совпадает со складом варианта
+- `403 Forbidden` — нет доступа к складу
 
 ---
 
