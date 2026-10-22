@@ -234,13 +234,16 @@ CREATED → HOLD → [DEBT | COMPLETED] → [REFUNDED | CANCELLED]
 **Endpoint**: `POST /cashbox`
 
 **Условия**:
+- Только OWNER/MANAGER (RolesGuard)
+- Body: `{ warehouseId, balance? }`; магазин берется из токена (`user.staff.storeId`), `storeId`/`status` в body игнорируются (для старых клиентов)
+- Склад принадлежит магазину staff (иначе 400 `Warehouse does not belong to the store`); MANAGER должен иметь доступ к складу (иначе 403)
 - У продавца НЕТ уже открытой кассы на этом складе/магазине
 - Можно указать начальный баланс (`balance`, default: 0)
 
 **Что происходит**:
 ```typescript
 Cashbox {
-  storeId: dto.storeId,
+  storeId: user.staff.storeId,
   warehouseId: dto.warehouseId,
   sellerId: staff.id,
   status: OPEN,

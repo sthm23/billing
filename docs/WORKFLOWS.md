@@ -263,13 +263,11 @@ POST /product/variants
 ```
 POST /cashbox
 {
-  "storeId": "uuid-store",
   "warehouseId": "uuid-warehouse",
-  "status": "OPEN",
   "balance": 0  // Начальный баланс
 }
 ```
-**Результат**: Cashbox status: OPEN
+**Результат**: Cashbox status: OPEN (магазин — из токена). `POST /cashbox` доступен только OWNER/MANAGER; касса продавца создается автоматически при `POST /orders`, если открытой нет.
 
 #### 2. Продавец создает новый заказ
 ```
@@ -568,7 +566,6 @@ POST /cashbox/:id/transaction
 ```
 POST /cashbox
 {
-  "storeId": "uuid-store",
   "warehouseId": "uuid-warehouse",
   "balance": 0
 }

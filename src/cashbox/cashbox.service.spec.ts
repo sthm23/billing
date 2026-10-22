@@ -34,7 +34,9 @@ function makeUser(staffRole: StaffRole): CurrentUser {
 describe('CashboxService', () => {
   let service: CashboxService;
   const prisma = {
+    warehouse: { findFirst: jest.fn() },
     cashbox: {
+      create: jest.fn(),
       count: jest.fn(),
       findMany: jest.fn(),
       findFirst: jest.fn(),
@@ -174,6 +176,46 @@ describe('CashboxService', () => {
           { paymentType: PaymentType.TRANSFER, net: 0 },
         ],
       });
+    });
+  });
+
+  describe('createCashBox', () => {
+    const FOREIGN_STORE = '22222222-2222-4222-8222-222222222222';
+
+    it('opens in the store from the token, ignoring storeId and status from the body', async () => {
+      prisma.warehouse.findFirst.mockResolvedValue({ id: WAREHOUSE, storeId: STORE });
+      prisma.cashbox.findFirst.mockResolvedValue(null);
+      prisma.cashbox.create.mockResolvedValue({ id: CASHBOX });
+      await service.createCashBox(
+        { warehouseId: WAREHOUSE, storeId: FOREIGN_STORE, status: CashStatus.CLOSED, balance: 0 },
+        makeUser(StaffRole.MANAGER),
+      );
+      expect(prisma.warehouse.findFirst).toHaveBeenCalledWith({
+        where: { id: WAREHOUSE, storeId: STORE },
+      });
+      expect(prisma.cashbox.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          storeId: STORE,
+          status: CashStatus.OPEN,
+          sellerId: 'staff',
+        }),
+      });
+    });
+
+    it('rejects a warehouse of another store', async () => {
+      prisma.warehouse.findFirst.mockResolvedValue(null);
+      await expect(
+        service.createCashBox({ warehouseId: WAREHOUSE, balance: 0 }, makeUser(StaffRole.OWNER)),
+      ).rejects.toThrow('Warehouse does not belong to the store');
+      expect(prisma.cashbox.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects a manager outside the warehouse', async () => {
+      prisma.warehouse.findFirst.mockResolvedValue({ id: 'other', storeId: STORE });
+      await expect(
+        service.createCashBox({ warehouseId: 'other', balance: 0 }, makeUser(StaffRole.MANAGER)),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.cashbox.create).not.toHaveBeenCalled();
     });
   });
 

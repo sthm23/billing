@@ -515,14 +515,12 @@ Authorization: Bearer <access_token>
 **Request**:
 ```json
 {
-  "storeId": "uuid",
-  "warehouseId": "uuid",
-  "status": "OPEN",   // обязателен в CreateCashBoxDto (CashStatus); касса всегда создается OPEN
+  "warehouseId": "uuid",  // склад должен принадлежать магазину staff
   "balance": 1000.00  // Начальный баланс (опционально, default: 0)
 }
 ```
 
-**Примечание**: `storeId` сейчас берется из body (проверяется, что магазин существует и склад принадлежит ему).
+**Примечание**: магазин берется из токена (`user.staff.storeId`). `storeId` и `status` в body опциональны и игнорируются (оставлены для старых клиентов — веб их еще отправляет). Новая касса всегда `OPEN`.
 
 **Response**:
 ```json
@@ -538,6 +536,8 @@ Authorization: Bearer <access_token>
 ```
 
 **Errors**:
+- `400 Bad Request` — `Warehouse does not belong to the store` (склад не из магазина staff)
+- `403 Forbidden` — не-владелец (MANAGER) без доступа к этому складу; не OWNER/MANAGER (RolesGuard)
 - `400 Bad Request` — у продавца уже есть открытая касса на этом складе
 
 ---

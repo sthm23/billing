@@ -29,54 +29,56 @@ export class CashboxService {
     @InjectPinoLogger(CashboxService.name) private readonly logger: PinoLogger,
   ) { }
 
+  /**
+   * Opens a cashbox for the current employee. The store comes from the token;
+   * the warehouse must belong to it (a manager — one of their warehouses).
+   */
   async createCashBox(dto: CreateCashBoxDto, user: CurrentUser) {
-    this.logger.debug({ storeId: dto.storeId, warehouseId: dto.warehouseId, sellerId: user.staff.id }, 'Opening cashbox');
+    if (!user.staff) throw new ForbiddenException('Staff only');
+    const storeId = user.staff.storeId;
+    this.logger.debug({ storeId, warehouseId: dto.warehouseId, sellerId: user.staff.id }, 'Opening cashbox');
     try {
-      const store = await this.prisma.store.findFirst({
-        where: {
-          id: dto.storeId,
-        },
-        include: {
-          warehouse: true
-        }
+      const warehouse = await this.prisma.warehouse.findFirst({
+        where: { id: dto.warehouseId, storeId },
       })
-      if (!store) {
-        throw new BadRequestException('Store not found');
-      }
-
-      if (store.warehouse && store.warehouse.length > 0 && !store.warehouse.find(w => w.id === dto.warehouseId)) {
+      if (!warehouse) {
         throw new BadRequestException('Warehouse does not belong to the store');
       }
+      const isOwner = user.role === UserRole.ADMIN || user.role === UserRole.OWNER || user.staff.role === StaffRole.OWNER
+      if (!isOwner && !user.staff.warehouse.some((w) => w.warehouseId === dto.warehouseId)) {
+        throw new ForbiddenException('No access to this warehouse');
+      }
 
-      const param = {
-        storeId: dto.storeId,
+      const param: Prisma.CashboxWhereInput = {
+        storeId,
         status: CashStatus.OPEN
       }
       const isAdminOrOwner = user.role === UserRole.ADMIN || user.role === UserRole.OWNER
       if (!isAdminOrOwner) {
-        param['warehouseId'] = dto.warehouseId
-        param['sellerId'] = user.staff.id
+        param.warehouseId = dto.warehouseId
+        param.sellerId = user.staff.id
       }
       const existingCashBox = await this.prisma.cashbox.findFirst({
-        where: { ...param }
+        where: param
       })
       if (existingCashBox) {
-        this.logger.warn({ storeId: dto.storeId, warehouseId: dto.warehouseId }, 'Open cashbox already exists');
+        this.logger.warn({ storeId, warehouseId: dto.warehouseId }, 'Open cashbox already exists');
         throw new BadRequestException('An OPEN cashbox already exists for this store and warehouse');
       }
       const cashbox = await this.prisma.cashbox.create({
         data: {
-          storeId: dto.storeId,
+          storeId,
           sellerId: user.staff.id,
           warehouseId: dto.warehouseId,
           balance: dto.balance ?? 0,
           status: CashStatus.OPEN
         }
       });
-      this.logger.info({ cashboxId: cashbox.id, storeId: dto.storeId, sellerId: user.staff.id }, 'Cashbox opened');
+      this.logger.info({ cashboxId: cashbox.id, storeId, sellerId: user.staff.id }, 'Cashbox opened');
       return cashbox;
     } catch (error: any) {
-      this.logger.error({ storeId: dto.storeId, err: error.message }, 'Failed to open cashbox');
+      this.logger.error({ storeId, err: error.message }, 'Failed to open cashbox');
+      if (error instanceof ForbiddenException) throw error;
       throw new BadRequestException(error.response || error.message)
     }
   }

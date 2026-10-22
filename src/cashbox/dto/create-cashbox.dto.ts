@@ -8,12 +8,15 @@ export class CreateCashBoxDto {
     @Min(0)
     balance!: number
 
+    /** Ignored: a new cashbox is always OPEN (kept for older clients) */
+    @IsOptional()
     @IsEnum(CashStatus)
-    status!: CashStatus
+    status?: CashStatus
 
-    @IsNotEmpty()
+    /** Ignored: the store comes from the token (kept for older clients) */
+    @IsOptional()
     @IsUUID('4')
-    storeId!: string
+    storeId?: string
 
     @IsNotEmpty()
     @IsUUID('4')
