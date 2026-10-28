@@ -1,8 +1,25 @@
-import { Controller, Get, Post, Body, Param, UseGuards, ParseUUIDPipe, Query, Put } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  UseGuards,
+  ParseUUIDPipe,
+  Query,
+  Put,
+} from '@nestjs/common';
 import { StoreService } from './store.service';
-import { CreateOwnerDto, CreateStaffDto, CreateStoreDto } from './dto/create-store.dto';
+import {
+  CreateOwnerDto,
+  CreateStaffDto,
+  CreateStoreDto,
+} from './dto/create-store.dto';
 import { CurrentUser } from '@shared/decorators/user.decorator';
-import type { CurrentUser as UserInfo, UserAuth } from '@auth/models/auth.model';
+import type {
+  CurrentUser as UserInfo,
+  UserAuth,
+} from '@auth/models/auth.model';
 import { AdminGuard } from '@shared/guards/admin.guard';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { RolesGuard } from '@shared/guards/role.guard';
@@ -14,14 +31,13 @@ import { UpdateStoreDto } from './dto/update-store.dto';
 @UseGuards(AuthJWTGuard, RolesGuard)
 @Controller('store')
 export class StoreController {
-  constructor(private readonly storeService: StoreService) { }
-
+  constructor(private readonly storeService: StoreService) {}
 
   @Roles(UserRole.OWNER)
   @Post()
   createStore(
     @CurrentUser() user: UserAuth,
-    @Body() createStoreDto: CreateStoreDto
+    @Body() createStoreDto: CreateStoreDto,
   ) {
     return this.storeService.createStore(createStoreDto, user.id);
   }
@@ -30,7 +46,7 @@ export class StoreController {
   @Put(':id')
   updateStore(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: UpdateStoreDto
+    @Body() dto: UpdateStoreDto,
   ) {
     return this.storeService.updateStore(id, dto);
   }
@@ -38,18 +54,17 @@ export class StoreController {
   @Roles(UserRole.OWNER)
   @UseGuards(AdminGuard)
   @Post('owner')
-  createOwner(
-    @Body() createStoreDto: CreateOwnerDto
-  ) {
+  createOwner(@Body() createStoreDto: CreateOwnerDto) {
     return this.storeService.createOwner(createStoreDto);
   }
 
   @Roles(UserRole.OWNER)
   @Post('staff')
   createStaff(
-    @Body() createStoreDto: CreateStaffDto
+    @Body() createStoreDto: CreateStaffDto,
+    @CurrentUser() user: UserInfo,
   ) {
-    return this.storeService.createStaff(createStoreDto);
+    return this.storeService.createStaff(createStoreDto, user);
   }
 
   @Roles(UserRole.OWNER)
@@ -57,20 +72,25 @@ export class StoreController {
   @Get()
   findAll(
     @Query() { pageSize, currentPage }: PaginationParams,
-    @CurrentUser() user: UserInfo
+    @CurrentUser() user: UserInfo,
   ) {
     return this.storeService.findAll(pageSize, currentPage, user);
   }
 
   @Roles(UserRole.OWNER)
   @Get(':id')
-  findStoreById(@Param('id', ParseUUIDPipe) id: string,
-    @CurrentUser() user: UserInfo) {
+  findStoreById(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: UserInfo,
+  ) {
     return this.storeService.findStoreById(id, user);
   }
 
   @Get(':id/stock-movements')
-  findStockMovements(@Param('id', ParseUUIDPipe) userId: string, @CurrentUser() user: UserInfo) {
+  findStockMovements(
+    @Param('id', ParseUUIDPipe) userId: string,
+    @CurrentUser() user: UserInfo,
+  ) {
     return this.storeService.findStaffStockMovements(userId, user);
   }
 }

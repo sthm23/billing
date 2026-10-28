@@ -4,18 +4,14 @@ import { CreateCashBoxDto, CreateCashTransactionDto } from './dto/create-cashbox
 import { CurrentUser } from '@shared/decorators/user.decorator';
 import { type CurrentUser as CurrentUserType } from '@auth/models/auth.model';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
-import { PaginationParams } from '@shared/dto/pagination-params.dto';
-import { UserRole, StaffRole } from '@generated/enums';
-import { Roles } from '@shared/decorators/role.decorator';
-import { RolesGuard } from '@shared/guards/role.guard';
+import { CashboxListParams } from './dto/create-cashbox.dto';
 
 @UseGuards(AuthJWTGuard)
 @Controller('cashbox')
 export class CashboxController {
   constructor(private readonly cashboxService: CashboxService) { }
 
-  @UseGuards(RolesGuard)
-  @Roles(UserRole.OWNER, StaffRole.MANAGER)
+  /** Any employee opens their own cashbox on one of their warehouses */
   @Post()
   createCashbox(
     @Body() dto: CreateCashBoxDto,
@@ -42,10 +38,16 @@ export class CashboxController {
 
   @Get()
   findAll(
-    @Query() query: PaginationParams,
+    @Query() query: CashboxListParams,
     @CurrentUser() user: CurrentUserType
   ) {
     return this.cashboxService.findAll(query, user);
+  }
+
+  /** Open cashboxes of the store — to choose where a debt repayment goes */
+  @Get('open')
+  findOpen(@CurrentUser() user: CurrentUserType) {
+    return this.cashboxService.findOpen(user);
   }
 
   @Get(':id')

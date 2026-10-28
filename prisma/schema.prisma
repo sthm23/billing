@@ -422,6 +422,8 @@ model Order {
   totalAmount Decimal
   paidAmount  Decimal      @default(0)
   createdAt   DateTime     @default(now())
+  /// Set once when the order becomes COMPLETED or DEBT (the sale)
+  soldAt      DateTime?
 
   isReturned     Boolean             @default(false)
   returnedAt     DateTime?
@@ -440,6 +442,7 @@ model Order {
 
   @@index([storeId, createdAt])
   @@index([warehouseId, createdAt])
+  @@index([storeId, soldAt])
   @@map("orders")
 }
 
@@ -544,6 +547,8 @@ model Cashbox {
   warehouseId String
   balance     Decimal    @default(0)
   createdAt   DateTime   @default(now())
+  /// Set when the cashbox (shift) is closed
+  closedAt    DateTime?
 
   seller Staff @relation(fields: [sellerId], references: [id])
   store  Store @relation(fields: [storeId], references: [id])

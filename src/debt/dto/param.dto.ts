@@ -1,7 +1,7 @@
 import { DebtStatus } from "@generated/enums";
 import { PaginationParams } from "@shared/dto/pagination-params.dto";
 import { Type } from "class-transformer";
-import { IsDateString, IsNumber, IsOptional, IsString, IsUUID, Max, Min } from "class-validator";
+import { IsDateString, IsIn, IsNumber, IsOptional, IsString, IsUUID, Max, Min } from "class-validator";
 
 export class DebtQueryParams extends PaginationParams {
     @IsOptional()
@@ -36,4 +36,23 @@ export class DebtQueryParams extends PaginationParams {
     @IsOptional()
     @IsDateString()
     toDate?: string;
+}
+
+/** `GET /debt/debtors`: search by name/phone, sort, period of «paid» (client's month bounds). */
+export class DebtorsQueryParams {
+    @IsOptional()
+    @IsString()
+    search?: string;
+
+    @IsOptional()
+    @IsIn(['amount', 'date'])
+    sort?: 'amount' | 'date';
+
+    @IsOptional()
+    @IsDateString()
+    from?: string;
+
+    @IsOptional()
+    @IsDateString()
+    to?: string;
 }

@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { CreateAttributeDto, CreateAttributeValueDto } from './dto/create-category-attribute.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { AttributeType } from '@generated/enums';
@@ -7,7 +8,10 @@ import { AttributeParams } from './dto/attribute-params.dto';
 
 @Injectable()
 export class CategoryAttributesService {
-  constructor(private prisma: PrismaService,) { }
+  constructor(
+    private prisma: PrismaService,
+    @InjectPinoLogger(CategoryAttributesService.name) private readonly logger: PinoLogger,
+  ) { }
 
   async findBrands() {
     try {
@@ -170,13 +174,16 @@ export class CategoryAttributesService {
 
   async createAttribute(dto: CreateAttributeDto) {
     try {
-      return this.prisma.attribute.create({
+      const attribute = await this.prisma.attribute.create({
         data: {
           name: dto.name,
           type: dto.type
         }
       })
+      this.logger.info({ attributeId: attribute.id, name: dto.name }, 'Attribute created');
+      return attribute;
     } catch (error: any) {
+      this.logger.error({ name: dto.name, err: error.message }, 'Failed to create attribute');
       throw new BadRequestException(error.response || error.message)
     }
   }
@@ -199,6 +206,7 @@ export class CategoryAttributesService {
           valueNumber: valueType === 'number' ? Number(dto.value) : null
         }
       })
+      this.logger.info({ attributeValueId: result.id, attributeId: dto.attributeId }, 'Attribute value created');
       return Promise.resolve({
         id: result.id,
         attributeId: result.attributeId,
@@ -207,6 +215,7 @@ export class CategoryAttributesService {
             : valueType === 'number' ? Number(result.valueNumber) : null
       })
     } catch (error: any) {
+      this.logger.error({ attributeId: dto.attributeId, err: error.message }, 'Failed to create attribute value');
       throw new BadRequestException(error.response || error.message)
     }
   }

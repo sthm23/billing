@@ -36,13 +36,20 @@ export class CreateDebtPaymentDto {
     @IsUUID('4')
     debtId!: string;
 
-    @IsNotEmpty()
+    /** Preferred warehouse of the employee's own open cashbox (optional) */
+    @IsOptional()
     @IsUUID('4')
-    warehouseId!: string;
+    warehouseId?: string;
+
+    /** Open cashbox of the store to take the money; default — the employee's own open cashbox */
+    @IsOptional()
+    @IsUUID('4')
+    cashboxId?: string;
 
     @IsArray()
     @ArrayMinSize(1, { message: "At least one debt payment is required" })
     @ValidateNested({ each: true })
+    @Type(() => CreateDebtPaymentItemDto)
     payments!: CreateDebtPaymentItemDto[];
 }
 

@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 
 import { LoginResponse, RefreshTokenPayload, type AccessTokenPayload } from './models/auth.model';
 import { UserType } from '@generated/client';
@@ -13,10 +14,12 @@ import { LogoutDto } from './dto/logout-dto';
 export class AuthService {
   constructor(
     private prisma: PrismaService,
-    private tokenService: TokenService
+    private tokenService: TokenService,
+    @InjectPinoLogger(AuthService.name) private readonly logger: PinoLogger,
   ) { }
 
   async validateUser(email: string, password: string) {
+    this.logger.debug({ email }, 'Validating user credentials');
     try {
       const user = await this.prisma.user.findFirst({
         where: { auth: { login: email } },
@@ -40,14 +43,21 @@ export class AuthService {
           }
         },
       });
-      if (!user) return null;
+      if (!user) {
+        this.logger.warn({ email }, 'Login failed: user not found');
+        return null;
+      }
       const userAuth = user?.auth;
-      if (!user || !userAuth) return null;
+      if (!userAuth) return null;
       const isValid = await HashingHelper.isMatch(password, userAuth.passwordHash);
-      if (!isValid) return null;
-
+      if (!isValid) {
+        this.logger.warn({ userId: user.id }, 'Login failed: invalid password');
+        return null;
+      }
+      this.logger.info({ userId: user.id }, 'User credentials validated');
       return user;
     } catch (error) {
+      this.logger.error({ email, err: (error as Error).message }, 'Error during credential validation');
       return null;
     }
   }
@@ -56,7 +66,7 @@ export class AuthService {
     const session = await this.prisma.refreshSession.create({
       data: {
         userId: userId,
-        refreshHash: '', // временно
+        refreshHash: '',
         ip: meta.ip,
         userAgent: meta.ua,
         expiresAt: addDays(new Date(), 7),
@@ -89,6 +99,7 @@ export class AuthService {
       data: { refreshHash },
     });
 
+    this.logger.info({ userId, sessionId: session.id }, 'User session created');
     return { accessToken, refreshToken };
   }
 
@@ -97,22 +108,20 @@ export class AuthService {
   }
 
   async signUp(dto: SignInDto): Promise<LoginResponse> {
-
     try {
       const existingUser = await this.prisma.user.findFirst({
         where: {
           OR: [
-            {
-              auth: {
-                login: dto.login
-              }
-            },
+            { auth: { login: dto.login } },
             { phone: dto.phone }
           ]
         },
         include: { auth: true },
       });
-      if (existingUser) throw new ConflictException('Login or Phone is exist!');
+      if (existingUser) {
+        this.logger.warn({ login: dto.login }, 'Signup rejected: login or phone already exists');
+        throw new ConflictException('Login or Phone is exist!');
+      }
       const passwordHash = await HashingHelper.hash(dto.password, 10);
       const newUser = await this.prisma.user.create({
         data: {
@@ -128,21 +137,26 @@ export class AuthService {
         }
       });
 
+      this.logger.info({ userId: newUser.id, login: dto.login }, 'New user registered');
       return this.login(newUser.id, {});
     } catch (error: any) {
+      if (!(error instanceof ConflictException)) {
+        this.logger.error({ login: dto.login, err: error.message }, 'Signup failed');
+      }
       throw new BadRequestException(error.response || error.message)
     }
   }
 
   async logout(dto: LogoutDto) {
     try {
-      const result = await this.prisma.refreshSession.update({
+      await this.prisma.refreshSession.update({
         where: { id: dto.sessionId },
         data: { isRevoked: true },
       });
-
+      this.logger.info({ sessionId: dto.sessionId }, 'Session revoked');
       return true;
     } catch (error: any) {
+      this.logger.error({ sessionId: dto.sessionId, err: error.message }, 'Logout failed');
       throw new BadRequestException(error.response || error.message)
     }
   }
@@ -157,6 +171,7 @@ export class AuthService {
         isRevoked: true,
       },
     });
+    this.logger.info({ userId }, 'All sessions revoked');
   }
 
   async getMe(userId: string) {

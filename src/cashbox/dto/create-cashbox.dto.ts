@@ -1,5 +1,6 @@
 import { CashStatus, CashTransactionType, CashTransactionCategory, PaymentType } from "@generated/enums"
-import { IsOptional, IsNumber, Min, IsEnum, IsNotEmpty, IsString, IsUUID } from "class-validator"
+import { IsOptional, IsNumber, Min, IsEnum, IsNotEmpty, IsString, IsUUID, IsDateString } from "class-validator"
+import { PaginationParams } from "@shared/dto/pagination-params.dto"
 
 export class CreateCashBoxDto {
     @IsOptional()
@@ -7,12 +8,15 @@ export class CreateCashBoxDto {
     @Min(0)
     balance!: number
 
+    /** Ignored: a new cashbox is always OPEN (kept for older clients) */
+    @IsOptional()
     @IsEnum(CashStatus)
-    status!: CashStatus
+    status?: CashStatus
 
-    @IsNotEmpty()
+    /** Ignored: the store comes from the token (kept for older clients) */
+    @IsOptional()
     @IsUUID('4')
-    storeId!: string
+    storeId?: string
 
     @IsNotEmpty()
     @IsUUID('4')
@@ -41,4 +45,14 @@ export class CreateCashTransactionDto {
     @IsOptional()
     @IsUUID('4')
     orderId?: string
+}
+/** `GET /cashbox`: pagination + the day for the `today` block (client's local bounds). */
+export class CashboxListParams extends PaginationParams {
+  @IsOptional()
+  @IsDateString()
+  from?: string
+
+  @IsOptional()
+  @IsDateString()
+  to?: string
 }

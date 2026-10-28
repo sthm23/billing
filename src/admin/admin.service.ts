@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { CreateAdminDto } from './dto/create-admin.dto';
 import { PrismaService } from '@prisma/prisma.service';
 import { UserRole, UserType } from '@generated/enums';
@@ -8,7 +9,8 @@ import { HashingHelper } from '@shared/helper/hash.helper';
 export class AdminService {
 
   constructor(
-    private prisma: PrismaService
+    private prisma: PrismaService,
+    @InjectPinoLogger(AdminService.name) private readonly logger: PinoLogger,
   ) { }
 
   async create(dto: CreateAdminDto) {
@@ -27,7 +29,10 @@ export class AdminService {
         include: { auth: true },
       });
 
-      if (existingUser) throw new ConflictException('Login or Phone is exist!');
+      if (existingUser) {
+        this.logger.warn({ login: dto.login }, 'Admin creation rejected: login or phone already exists');
+        throw new ConflictException('Login or Phone is exist!');
+      }
       const passwordHash = await HashingHelper.hash(dto.password, 10);
       const newUser = await this.prisma.user.create({
         data: {
@@ -44,9 +49,10 @@ export class AdminService {
         },
 
       })
-
+      this.logger.info({ userId: newUser.id, login: dto.login }, 'Admin created');
       return newUser
-    } catch (error) {
+    } catch (error: any) {
+      this.logger.error({ login: dto.login, err: error.message }, 'Failed to create admin');
       throw new BadRequestException('Error with creating admin.')
     }
   }
@@ -88,8 +94,10 @@ export class AdminService {
         include: { auth: true },
         data: { auth: { update: { isActive: false } } }
       })
+      this.logger.info({ userId: id, login: user.auth?.login }, 'Admin deactivated');
       return { message: `Admin ${user.auth?.login} successfully deactivated!` }
-    } catch (error) {
+    } catch (error: any) {
+      this.logger.error({ userId: id, err: error.message }, 'Failed to deactivate admin');
       throw new NotFoundException('Error with removing admin.')
     }
   }
