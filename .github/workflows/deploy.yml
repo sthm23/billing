@@ -44,6 +44,10 @@ jobs:
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          if ! ssh-keygen -lf ~/.ssh/known_hosts; then
+            echo "::error::SSH_KNOWN_HOSTS secret is empty or invalid (paste ssh-keyscan output)"
+            exit 1
+          fi
 
       - name: Run deploy script on server
         env:
