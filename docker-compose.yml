@@ -1,60 +1,60 @@
 services:
-  nodejs:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: production
-    image: billing:latest
-    container_name: billing_api
-    restart: unless-stopped
-    networks:
-      - my_network
-    ports:
-      - "${PORT:-4000}:${PORT:-4000}"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    env_file:
-      - .env
-    environment:
-      # Database
-      - DATABASE_URL=${DATABASE_URL}
-      # Server
-      - PORT=${PORT:-4000}
-      - NODE_ENV=production
-      # JWT
-      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET}
-      - JWT_ACCESS_EXPIRE=${JWT_ACCESS_EXPIRE:-15m}
-      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
-      - JWT_REFRESH_EXPIRE=${JWT_REFRESH_EXPIRE:-7d}
-      # AWS/S3
-      - AWS_REGION=${AWS_REGION}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - AWS_BUCKET=${AWS_BUCKET}
-    # For development: mount source code (comment out for production)
-    # volumes:
-    #   - ./src:/app/src
-    #   - ./prisma:/app/prisma
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-          cpus: "0.5"
-        reservations:
-          memory: 256M
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:${PORT:-4000}/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-        labels: "service=billing-api"
+  # nodejs:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #     target: production
+  #   image: billing:latest
+  #   container_name: billing_api
+  #   restart: unless-stopped
+  #   networks:
+  #     - my_network
+  #   ports:
+  #     - "${PORT:-4000}:${PORT:-4000}"
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   env_file:
+  #     - .env
+  #   environment:
+  #     # Database
+  #     - DATABASE_URL=${DATABASE_URL}
+  #     # Server
+  #     - PORT=${PORT:-4000}
+  #     - NODE_ENV=production
+  #     # JWT
+  #     - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET}
+  #     - JWT_ACCESS_EXPIRE=${JWT_ACCESS_EXPIRE:-15m}
+  #     - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
+  #     - JWT_REFRESH_EXPIRE=${JWT_REFRESH_EXPIRE:-7d}
+  #     # AWS/S3
+  #     - AWS_REGION=${AWS_REGION}
+  #     - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+  #     - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+  #     - AWS_BUCKET=${AWS_BUCKET}
+  #   # For development: mount source code (comment out for production)
+  #   # volumes:
+  #   #   - ./src:/app/src
+  #   #   - ./prisma:/app/prisma
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 1G
+  #         cpus: "0.5"
+  #       reservations:
+  #         memory: 256M
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:${PORT:-4000}/health || exit 1"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 40s
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "10m"
+  #       max-file: "3"
+  #       labels: "service=billing-api"
   postgres:
     image: postgres:18-alpine
     container_name: dev_postgres
@@ -71,7 +71,7 @@ services:
       # For production: comment out this line to prevent external access
       - "${POSTGRES_OUTPUT_PORT}:${POSTGRES_PORT}"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
       - ./backups:/backups
       - ./postgres-init:/docker-entrypoint-initdb.d
     deploy:
