@@ -17,9 +17,15 @@ if [[ "$(git branch --show-current)" != "$BRANCH" ]]; then
 fi
 
 echo "📥 Pulling latest changes..."
+OLD_HEAD=$(git rev-parse HEAD)
 git fetch origin "$BRANCH"
 # Fails instead of overwriting manual edits made on the server.
 git merge --ff-only "origin/$BRANCH"
+
+# Bash keeps running the old script after git replaces it, so restart with the pulled version.
+if [[ "$(git rev-parse HEAD)" != "$OLD_HEAD" && -z "${DEPLOY_REEXEC:-}" ]]; then
+  DEPLOY_REEXEC=1 exec bash "$APP_DIR/deploy.sh"
+fi
 
 echo "📦 Installing dependencies..."
 npm ci
