@@ -10,7 +10,7 @@
 | PATCH | `/rental/:id` | Изменить бронь (BOOKED) | все; снижение цены — OWNER/MANAGER |
 | GET | `/rental` | Список: `status`, `from`, `to`, `customerId`, `overdue`, пагинация | все |
 | GET | `/rental/:id` | Детали: заказ, позиции, услуги, платежи, залоги, возвраты | все |
-| POST | `/rental/:id/payments` | Предоплата/доплата (BOOKED, ISSUED, PARTIALLY_RETURNED) | все, открытая касса |
+| POST | `/rental/:id/payments` | Предоплата/доплата (BOOKED, ISSUED, PARTIALLY_RETURNED) + опц. `collaterals[]` | все, открытая касса (если есть деньги) |
 | POST | `/rental/:id/issue` | Выдача + залоги + опц. платежи | все |
 | GET | `/rental/:id/cleaning-conflicts` | Конфликты химчистки (предупреждение) | все |
 | POST | `/rental/:id/returns/preview` | План/факт дней, итог, к оплате/к выдаче (без записи) | все |
@@ -45,7 +45,6 @@
     { "variantId": "suit-50", "quantity": 1, "sale": 18750 }
   ],
   "services": [{ "name": "Макияж", "price": 900000, "sale": 56250 }],
-  "payments": [{ "type": "CASH", "amount": 500000 }],
   "notes": "Свадьба 15.05"
 }
 ```
