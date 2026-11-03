@@ -1,0 +1,290 @@
+# Аренда — дизайн и бизнес-правила
+
+## Главная идея
+
+Аренда **переиспользует** `Order` / `OrderItem` / `AdditionalService` / `Payment` / `CashTransaction` и добавляет запись `Rental` (1:1 с заказом), которая хранит даты и физическое состояние вещей. Финансы живут в заказе, физика — в аренде.
+
+```
+Order (деньги: totalAmount, paidAmount, status HOLD/DEBT/COMPLETED/CANCELLED)
+ ├── OrderItem[]          платье, костюм  (вещи, которые выдаются и возвращаются)
+ ├── AdditionalService[]  макияж, цветы, торт (не возвращаются)
+ ├── Payment[]            предоплата, доплаты
+ └── Rental (1:1)         даты, статус BOOKED → ISSUED → PARTIALLY_RETURNED → RETURNED
+      ├── RentalCollateral[]  паспорт / золото
+      └── RentalReturn[]      события возврата (частичные), химчистка, штраф
+           └── RentalReturnItem[]
+```
+
+---
+
+## Уровни настройки
+
+### Магазин
+
+```prisma
+model Store {
+  // ...
+  salesEnabled  Boolean @default(true)
+  rentalEnabled Boolean @default(false)
+}
+```
+
+- Хотя бы один флаг `true` (валидация на бэкенде).
+- `rentalEnabled = false` → любые `/rental/*` операции отклоняются.
+- Клиенты (web/mobile) по флагам показывают/прячут разделы. Это UX; права проверяет бэкенд.
+- Включать/выключать может только OWNER (и ADMIN платформы).
+
+### Вариант товара
+
+```prisma
+model ProductVariant {
+  // ...
+  canSell         Boolean  @default(true)
+  canRent         Boolean  @default(false)
+  rentPricePerDay Decimal?
+}
+```
+
+- `canRent = true` ⇒ `rentPricePerDay > 0` обязателен.
+- `price` остаётся ценой **продажи**, не смешиваем.
+- В магазине только с арендой форма товара по умолчанию ставит `canRent = true, canSell = false` и прячет поля продажи.
+- Продажа варианта с `canSell = false` отклоняется бэкендом (существующий поток заказов).
+
+---
+
+## Модель данных
+
+```prisma
+model Rental {
+  id          String       @id @default(uuid())
+  orderId     String       @unique
+  storeId     String
+  warehouseId String
+  customerId  String       // обязателен: бронь, залог и долг требуют клиента
+
+  startDate   DateTime     // плановая дата выдачи
+  endDate     DateTime     // плановая дата возврата
+  plannedDays Int          // дни, по которым посчитана цена при бронировании
+
+  status      RentalStatus @default(BOOKED)
+  issuedAt    DateTime?
+  issuedBy    String?      // staffId
+  closedAt    DateTime?    // все вещи возвращены
+
+  cancelledAt  DateTime?
+  cancelledBy  String?
+  refundAmount Decimal?    // сколько предоплаты вернули при отмене
+  cancelReason String?
+
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  order       Order              @relation(fields: [orderId], references: [id])
+  collaterals RentalCollateral[]
+  returns     RentalReturn[]
+
+  @@index([storeId, startDate])
+  @@index([warehouseId, status])
+  @@map("rentals")
+}
+
+model RentalCollateral {
+  id          String         @id @default(uuid())
+  rentalId    String
+  type        CollateralType // PASSPORT, GOLD, OTHER
+  description String         // "Паспорт AA1234567", "Золотая цепочка 15г"
+  receivedAt  DateTime       @default(now())
+  receivedBy  String
+  returnedAt  DateTime?
+  returnedBy  String?
+
+  rental Rental @relation(fields: [rentalId], references: [id])
+
+  @@index([rentalId])
+  @@map("rental_collaterals")
+}
+
+model RentalReturn {
+  id              String   @id @default(uuid())
+  rentalId        String
+  returnedAt        DateTime // фактическое время возврата
+  penaltyAmount     Decimal  @default(0) // штраф (повреждение, просрочка) — вводит продавец
+  penaltyComment    String?              // обязателен, если penaltyAmount > 0
+  earlyReturnRefund Decimal  @default(0) // уменьшение суммы при раннем возврате — решает OWNER/MANAGER
+  createdBy       String
+  createdAt       DateTime @default(now())
+
+  rental Rental             @relation(fields: [rentalId], references: [id])
+  items  RentalReturnItem[]
+
+  @@index([rentalId])
+  @@map("rental_returns")
+}
+
+model RentalReturnItem {
+  id             String   @id @default(uuid())
+  returnId       String
+  orderItemId    String
+  quantity       Int
+  cleaningDays   Int      @default(0) // 0 = без химчистки
+  availableFrom  DateTime             // returnedAt + cleaningDays — с этого момента единица снова свободна
+
+  return    RentalReturn @relation(fields: [returnId], references: [id])
+  orderItem OrderItem    @relation(fields: [orderItemId], references: [id])
+
+  @@index([orderItemId])
+  @@map("rental_return_items")
+}
+
+model AdditionalService {
+  // ...
+  sale Decimal @default(0) // скидка, распределённая клиентом
+}
+
+enum RentalStatus {
+  BOOKED              // забронировано, вещи в салоне
+  ISSUED              // выдано клиенту
+  PARTIALLY_RETURNED  // часть вещей возвращена
+  RETURNED            // все вещи возвращены
+  CANCELLED           // бронь отменена до выдачи
+}
+
+enum CollateralType {
+  PASSPORT
+  GOLD
+  OTHER
+}
+
+enum CashTransactionCategory {
+  // ...существующие
+  RENTAL // НОВОЕ: доход по заказу аренды (предоплата, доплата при выдаче/возврате)
+}
+```
+
+> ⚠️ `CashTransactionCategory.RENT` **уже существует** и используется как **расход** «аренда помещения» (`billing_ui/.../incoming-expense-dialog.ts`). Для дохода от аренды — новая категория `RENTAL`, иначе отчёты смешаются.
+
+`Inventory.quantity` для арендного варианта = **сколько единиц магазин владеет**. Выдача/возврат его **не меняют** и `StockMovement` не создают (собственность не меняется). Приход новых платьев — как сейчас (PURCHASE).
+
+---
+
+## Бизнес-правила
+
+### R1. Доступность на даты (backend)
+
+Единица варианта **занята** на интервале:
+
+| Состояние | Занятость |
+|-----------|-----------|
+| Невозвращённое кол-во позиции (BOOKED / ISSUED / PARTIALLY_RETURNED) | `[startDate, max(endDate, now)]` — просроченная вещь продолжает занимать единицу |
+| Возвращённое кол-во (`RentalReturnItem`) | `[startDate, availableFrom)` |
+| CANCELLED | не занимает |
+
+`свободно(variant, [s, e]) = Inventory.quantity − max_по_дням(сумма занятых единиц в этот день)`
+
+— считается **пиковое** одновременное занятие внутри интервала, а не сумма всех пересекающихся броней (две последовательные брони внутри длинного интервала занимают одну единицу).
+
+Проверка при бронировании/изменении позиций выполняется в транзакции с блокировкой строки `Inventory` (`SELECT ... FOR UPDATE`), чтобы два продавца не забронировали последнюю единицу на одну дату.
+
+### R2. Подсчёт дней
+
+- Граница — **12:00 по времени Ташкента** (`Asia/Tashkent`, константа; все расчёты дат — на бэкенде).
+- `дни(start, return) = календарная_разница(дата start, дата return) + (время return ≥ 12:00 ? 1 : 0)`, минимум 1.
+- При бронировании: `plannedDays = дни(startDate, endDate)` (endDate без времени → считается «до обеда»).
+- При возврате: `actualDays` считается от `startDate` до `returnedAt` **для каждой возвращаемой позиции** и показывается продавцу как **подсказка** (сколько дней сверх/меньше плана). Автоматически сумма не меняется — см. R4.
+
+Пример: start 14-е, возврат 16-е 11:00 → 2 дня; 16-е 15:00 → 3 дня.
+
+### R3. Цена
+
+- Базовая цена позиции: `rentPricePerDay × plannedDays` → `OrderItem.retailPrice` (за единицу). **Считает бэкенд**, клиент её не задаёт.
+- Скидка: клиент присылает `sale` по каждой позиции и услуге (уже распределённую — авто-распределение от итоговой суммы делает web/mobile, менеджер может поправить).
+- Бэкенд валидирует как в существующем потоке: `sale ≤ retailPrice`; итог ниже базовой цены — только OWNER/MANAGER (`canManageStore`).
+- `Order.totalAmount = Σ(retailPrice − sale) × qty + Σ(service.price − service.sale) + Σ returns(penaltyAmount − earlyReturnRefund)`.
+
+### R4. Просрочка и ранний возврат
+
+- **Просрочка** (в т.ч. возврат после 12:00) автоматически сумму **не меняет**. Продавец видит `actualDays` vs `plannedDays` в предпросмотре и при необходимости вносит доплату как **штраф** (R10).
+- **Ранний возврат** (`returnedAt` раньше `endDate`): OWNER/MANAGER может указать `earlyReturnRefund` — от 0 до `Σ (retailPrice − sale) × qty` возвращаемых позиций. Сумма уменьшает `totalAmount`.
+  - Если после уменьшения `paidAmount > totalAmount` — разница выдаётся клиенту из кассы: `CashTransaction EXPENSE / RETURN`, `paidAmount` уменьшается до `totalAmount`.
+  - Если клиент ещё не доплатил — просто уменьшается остаток к оплате.
+  - По умолчанию 0; продавец без роли OWNER/MANAGER передать > 0 не может (403).
+
+### R5. Деньги и залог
+
+- **Залог деньгами = предоплата**: обычный `Payment` по заказу → `CashTransaction INCOME / RENTAL` → баланс кассы и отчёт дня.
+- Платежи принимаются в статусах BOOKED / ISSUED / PARTIALLY_RETURNED через `/rental/:id/payments`; `Σ payments ≤ totalAmount` (правило платежей сохраняется).
+- **Паспорт / золото** — `RentalCollateral`, в кассу не попадает.
+- Вернуть `RentalCollateral` (паспорт, драгоценности и т.п.) можно, когда `paidAmount ≥ totalAmount`. Статус возврата вещей не проверяется; если какие-то вещи ещё у клиента, UI показывает предупреждение перед возвратом залога.
+
+### R6. Статус заказа для аренды
+
+| Rental.status | Order.status |
+|---------------|--------------|
+| BOOKED, ISSUED | HOLD (принимает предоплату/доплаты) |
+| после любого события возврата | `paidAmount ≥ totalAmount ? COMPLETED : DEBT` |
+| CANCELLED | CANCELLED |
+
+- Штраф при следующем возврате увеличивает `totalAmount`, ранний возврат — уменьшает → статус пересчитывается (COMPLETED может стать DEBT и наоборот).
+- Долг погашается **существующим** `POST /payment` (заказ в DEBT уже виден в должниках `debt.service.getDebtors`).
+- `soldAt` выставляется при **выдаче** — с этого момента аренда попадает в сводку продаж `GET /orders/summary`. Сейчас сводка берёт только COMPLETED/DEBT, поэтому для арендных заказов условие расширяется: `soldAt` в периоде и статус не CANCELLED (выданный заказ ещё может быть в HOLD).
+
+### R7. Химчистка
+
+- При возврате для каждой позиции продавец указывает `cleaningDays` (по умолчанию в UI: 1; 0 = без химчистки; можно 2–3).
+- `availableFrom = returnedAt + cleaningDays`.
+- Перед подтверждением клиент запрашивает **конфликты**: брони тех же вариантов, у которых в период `[returnedAt, availableFrom)` не хватит свободных единиц. Это **предупреждение**, не блокировка — продавец решает сам.
+
+### R8. Частичный возврат
+
+- Возврат принимается по позициям и количеству; `Σ возвращённого ≤ OrderItem.quantity`.
+- Остались невозвращённые → `PARTIALLY_RETURNED`; всё вернули → `RETURNED`, `closedAt = now`.
+- Финансы при каждом событии возврата — по R6 (неоплаченный остаток = долг).
+
+### R9. Отмена брони
+
+- Только из статуса `BOOKED` (выданное отменить нельзя — только вернуть).
+- Сумму возврата `refundAmount` (0 … `paidAmount`) вводит **OWNER или MANAGER**.
+- `refundAmount > 0` → `CashTransaction EXPENSE / RETURN` из открытой кассы, баланс кассы уменьшается.
+- Удержанная часть остаётся доходом (уже в кассе с момента предоплаты).
+- Order → CANCELLED, Rental → CANCELLED, единицы освобождаются.
+
+### R10. Штраф
+
+- Поля `penaltyAmount` + `penaltyComment` в событии возврата; комментарий обязателен, если сумма > 0.
+- Добавляется к `totalAmount` заказа.
+- Используется и для повреждений, и для просрочки (R4).
+
+### R11. Изменение брони
+
+- В статусе `BOOKED` можно менять даты, позиции, кол-во, скидки, услуги.
+- Бэкенд перепроверяет доступность на **новые** даты, не считая саму эту бронь (`excludeRentalId`). Если варианта не хватает — `409 NOT_AVAILABLE` с `variantId`; клиент выбирает другой вариант (другое платье) и повторяет запрос.
+- При смене дат пересчитываются `plannedDays` и базовые `retailPrice`; скидки присылает клиент заново.
+- Новый `totalAmount` не может быть меньше уже оплаченного (`paidAmount`) — иначе `400`; сначала нужен возврат денег.
+
+### R12. Безопасность
+
+- `storeId` / `warehouseId` — из заказа и авторизованного сотрудника, никогда из тела запроса.
+- Доступ к складу — `StaffOnWarehouse`.
+- Все операции изменения — в `prisma.$transaction`.
+- Операции с деньгами требуют открытой кассы сотрудника (как в существующем потоке оплаты).
+
+---
+
+## Что НЕ меняется
+
+- Существующие продажи, возвраты продаж (`ReturnedOrder`), долги, кассы.
+- Правило «склад списывается только при оплате» — для **продаж**. Для аренды склад не списывается вовсе (R1).
+
+## Решённые вопросы (2026-11-02)
+
+| # | Вопрос | Решение |
+|---|--------|---------|
+| Q1 | Лишние дни / ранний возврат | Просрочку продавец вносит как штраф; при раннем возврате сумму возврата (0 или часть) решает OWNER/MANAGER — R4 |
+| Q2 | Кто отменяет бронь с возвратом | OWNER и MANAGER — R9 |
+| Q3 | Когда возвращать залог-вещь | После полной оплаты — R5 |
+| Q4 | Когда аренда попадает в сводку продаж | При выдаче — R6 |
+| Q5 | Часовой пояс | `Asia/Tashkent` — R2 |
+| Q6 | Изменение брони | Да, в BOOKED; если на новые даты занято — выбрать другой вариант — R11 |
+
+Открытых вопросов нет.
