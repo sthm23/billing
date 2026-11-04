@@ -14,6 +14,7 @@ import {
 import { PrismaService } from '@prisma/prisma.service';
 import { StaffRole, UserRole, UserType } from '@generated/enums';
 import { HashingHelper } from '@shared/helper/hash.helper';
+import { canSeeCost } from '@shared/helper/role.helper';
 import { CurrentUser } from '@auth/models/auth.model';
 import { UpdateStoreDto } from './dto/update-store.dto';
 
@@ -365,7 +366,9 @@ export class StoreService {
         },
         include: {
           // Never return passwordHash to the client.
-          auth: { select: { id: true, login: true, isActive: true, createdAt: true } },
+          auth: {
+            select: { id: true, login: true, isActive: true, createdAt: true },
+          },
           staff: true,
         },
       });
@@ -451,7 +454,7 @@ export class StoreService {
             : { warehouse: { storeId: user.staff?.storeId ?? '' } }),
         },
         omit: {
-          unitCost: user.role !== UserRole.OWNER,
+          unitCost: !canSeeCost(user),
         },
         include: {
           variant: true,

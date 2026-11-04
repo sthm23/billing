@@ -29,6 +29,7 @@ import { OrderItem, Prisma } from '@generated/client';
 import { CreateReturnOrderDto, ReturnItemDto } from './dto/create-return.dto';
 import { OrderQueryParams } from './entities/order.entity';
 import { DateRangeParams, resolveDateRange } from '@shared/dto/date-range.dto';
+import { canSeeCost } from '@shared/helper/role.helper';
 
 @Injectable()
 export class OrderService {
@@ -832,12 +833,15 @@ export class OrderService {
         );
       }
       await this.prisma.$transaction(async (prisma) => {
-        const paymentsData = dto.payments.map((payment) => ({
-          orderId: orderId,
-          amount: payment.amount,
-          type: payment.type,
-          createdBy: user.staff.id,
-        }));
+        // A zero amount (sale fully on debt) leaves no payment or cash record
+        const paymentsData = dto.payments
+          .filter((payment) => +payment.amount > 0)
+          .map((payment) => ({
+            orderId: orderId,
+            amount: payment.amount,
+            type: payment.type,
+            createdBy: user.staff.id,
+          }));
 
         await prisma.payment.createMany({
           data: paymentsData,
@@ -1160,10 +1164,13 @@ export class OrderService {
         throw new BadRequestException('Order not found');
       }
       this.logger.debug({ orderId: id, order }, 'Order found');
+      const showCost = canSeeCost(user);
       return Promise.resolve({
         ...order,
-        items: order.items.map((item) => ({
+        items: order.items.map(({ costAtSale, ...item }) => ({
           ...item,
+          // Purchase cost only for those who enter it (owner/manager)
+          ...(showCost ? { costAtSale } : {}),
           variant: {
             ...item.variant,
             quantity: item.variant.inventory.reduce(

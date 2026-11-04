@@ -21,6 +21,7 @@ import {
 import { buildSku } from '@shared/helper/sku-generator.helper';
 import { CurrentUser } from '@auth/models/auth.model';
 import { BarcodeService } from '@shared/helper/bar-code.service';
+import { canSeeCost } from '@shared/helper/role.helper';
 import { UpdateProductVariantPriceDTO } from './dto/update-product.dto';
 import { ProductListParams } from './dto/product-list-params.dto';
 import { LOW_STOCK_THRESHOLD } from './product.constants';
@@ -393,6 +394,7 @@ export class ProductService {
       });
       if (!product) throw new NotFoundException('Product not found');
       this.assertWarehouseAccess(product.storeId, product.warehouseId, user);
+      const showCost = canSeeCost(user);
       const variants = product.variants.map((variant) => {
         return {
           id: variant.id,
@@ -420,7 +422,7 @@ export class ProductService {
             reason: movement.reason,
             warehouseId: movement.warehouseId,
             quantity: movement.quantity,
-            unitCost: movement.unitCost,
+            unitCost: showCost ? movement.unitCost : null,
             createdAt: movement.createdAt,
             createdBy: movement.createdBy
               ? {
@@ -494,6 +496,7 @@ export class ProductService {
           },
         }),
       ]);
+      const showCost = canSeeCost(user);
       return {
         currentPage,
         pageSize,
@@ -503,7 +506,7 @@ export class ProductService {
           type: m.type,
           reason: m.reason,
           quantity: m.quantity,
-          unitCost: m.unitCost,
+          unitCost: showCost ? m.unitCost : null,
           createdAt: m.createdAt,
           createdBy: m.createdBy?.user?.fullName ?? null,
         })),
@@ -531,6 +534,7 @@ export class ProductService {
           },
         },
       });
+      const showCost = canSeeCost(user);
       return {
         count,
         currentPage,
@@ -546,7 +550,7 @@ export class ProductService {
             reason: movement.reason,
             warehouseId: movement.warehouseId,
             quantity: movement.quantity,
-            unitCost: movement.unitCost,
+            unitCost: showCost ? movement.unitCost : null,
             createdAt: movement.createdAt,
           })),
           quantity:
@@ -604,6 +608,7 @@ export class ProductService {
           },
         },
       });
+      const showCost = canSeeCost(user);
       return {
         count,
         currentPage,
@@ -628,7 +633,7 @@ export class ProductService {
             reason: movement.reason,
             warehouseId: movement.warehouseId,
             quantity: movement.quantity,
-            unitCost: movement.unitCost,
+            unitCost: showCost ? movement.unitCost : null,
             createdAt: movement.createdAt,
           })),
           quantity:

@@ -161,7 +161,10 @@ describe('OrderService', () => {
 
     it('takes the cost from the latest stock receipt, not from the request', async () => {
       await service.createOrderItems(
-        itemsDto([{ costAtSale: 1 }]),
+        // An old client still sends its own cost
+        itemsDto([
+          { costAtSale: 1 } as Partial<CreateOrderItemDto['items'][number]>,
+        ]),
         makeUser(StaffRole.SELLER),
       );
       expect(prisma.orderItem.create.mock.calls[0][0].data.costAtSale).toBe(
@@ -443,6 +446,27 @@ describe('OrderService', () => {
       );
     });
 
+    it('sells fully on debt without zero payment records', async () => {
+      prisma.order.findUnique.mockResolvedValue(
+        makeOrder({
+          items: [{ variantId: VARIANT, quantity: 1, costAtSale: 55000 }],
+        }),
+      );
+      await service.createPayment(
+        ORDER,
+        payDto(0, CUSTOMER),
+        makeUser(StaffRole.SELLER),
+      );
+      expect(prisma.payment.createMany.mock.calls[0][0].data).toEqual([]);
+      expect(prisma.cashTransaction.createMany.mock.calls[0][0].data).toEqual(
+        [],
+      );
+      expect(prisma.inventory.updateMany).toHaveBeenCalled();
+      expect(prisma.order.update.mock.calls[0][0].data.status).toBe(
+        OrderStatus.DEBT,
+      );
+    });
+
     it('keeps the customer already attached to the order', async () => {
       prisma.order.findUnique.mockResolvedValue(
         makeOrder({ customerId: CUSTOMER }),
@@ -581,6 +605,33 @@ describe('OrderService', () => {
       await expect(
         service.createReturn(dto, makeUser(StaffRole.SELLER)),
       ).rejects.toThrow('Duplicate return item');
+    });
+  });
+
+  describe('findOne', () => {
+    beforeEach(() => {
+      prisma.order.findUnique.mockResolvedValue(
+        makeOrder({
+          items: [
+            {
+              id: ITEM,
+              costAtSale: 55000,
+              variant: { id: VARIANT, inventory: [{ quantity: 4 }] },
+            },
+          ],
+        }),
+      );
+    });
+
+    it('hides the purchase cost from a seller', async () => {
+      const order = await service.findOne(ORDER, makeUser(StaffRole.SELLER));
+      expect(order.items[0]).not.toHaveProperty('costAtSale');
+      expect(order.items[0].variant.quantity).toBe(4);
+    });
+
+    it('shows the purchase cost to a manager', async () => {
+      const order = await service.findOne(ORDER, makeUser(StaffRole.MANAGER));
+      expect(order.items[0]).toHaveProperty('costAtSale', 55000);
     });
   });
 
