@@ -420,9 +420,12 @@ if (type === INCOME) {
 `POST /orders/return`
 
 ### Условия
+- Заказ должен быть из магазина пользователя (`user.staff.storeId`), иначе `403 No access to this order`
 - Заказ должен быть в статусе `COMPLETED` или `DEBT`
 - Заказ НЕ должен быть уже возвращен (`isReturned = false`)
+- Позиции проверяются до поиска кассы и транзакции: `itemId` из этого заказа, без дублей (`400 Duplicate return item: <itemId>`), количество ≤ купленного
 - У продавца должна быть открытая касса на складе заказа
+- Полностью оплаченный `COMPLETED`-заказ можно вернуть целиком; частично оплаченный `DEBT`-заказ тоже (долг = total − paid гасится, магазин должен клиенту возврат − долг = оплаченное)
 
 ### DTO
 ```typescript
@@ -430,11 +433,8 @@ if (type === INCOME) {
   orderId: string;
   items: [
     {
-      itemId: string;        // ID OrderItem
+      itemId: string;        // ID OrderItem (один раз на запрос)
       quantity: number;      // Сколько возвращаем
-      retailPrice: Decimal;  // Цена на момент продажи
-      sale: Decimal;         // Скидка на момент продажи
-      costAtSale: Decimal;   // Себестоимость
     }
   ];
   returnPayments: [
@@ -445,6 +445,8 @@ if (type === INCOME) {
   ];
 }
 ```
+
+Цены и себестоимость берутся из исходной позиции заказа: сумма возврата = Σ (orderItem.retailPrice − orderItem.sale) × quantity, `StockMovement.unitCost` = `orderItem.costAtSale`. Поля `retailPrice` / `sale` / `costAtSale` от старых клиентов игнорируются.
 
 ### Бизнес-сценарии
 
@@ -564,12 +566,12 @@ if (type === INCOME) {
      reason: RETURN,
      variantId: orderItem.variantId,
      quantity: returnedQuantity,
-     unitCost: costAtSale,
+     unitCost: orderItem.costAtSale,
      warehouseId: order.warehouseId,
      createdById: staff.id
    }
    
-   // Inventory увеличивается автоматически
+   // Inventory.quantity += returnedQuantity на складе заказа (upsert по варианту, в той же транзакции)
    ```
 
 4. **Создание CashTransaction** (для каждого returnPayment):
@@ -629,6 +631,16 @@ if (type === INCOME) {
 4. Для заказов `COMPLETED`:
    - Кассир может выдать полную сумму возврата или меньше (тогда `CREDIT`)
 
+Прежнее правило «сумма возврата ≠ стоимость заказа, если клиент что-то оплатил» удалено.
+
+### Выплата по возврату позже
+`POST /payment/return/:id` (`PaymentService.createPaymentForReturnOrder`) — для возврата в статусе `CREDIT`:
+- Заказ возврата должен быть из магазина сотрудника (403)
+- Лимит — сколько магазин реально должен клиенту: `owed = Σ order.payments − (order.totalAmount − order.returnedAmount)`; прежние ReturnPayment + новые ≤ owed, иначе `400 Payment amount exceeds the amount owed to the customer`; при выплате ровно `owed` статус → `COMPLETED`
+- Касса — `resolvePaymentCashbox` (как при погашении долга): необязательный `cashboxId` (любая открытая касса магазина), иначе своя открытая касса сотрудника (предпочтительно на складе заказа); нет кассы → `400 No open cashbox: ...`
+- `CashTransaction.orderId` = id **заказа** (не ReturnedOrder)
+- Ответ: `{ message: 'Return payment(s) added successfully' }`
+
 ---
 
 ## Управление долгами
@@ -669,10 +681,12 @@ CustomerDebt {
   totalAmount: dto.amount,
   paidAmount: 0,
   status: ACTIVE,
-  createdAt: dto.createdAt,     // Можно указать прошлую дату
-  returnedAt: dto.returnedAt    // Дата возврата (если применимо)
+  createdAt: dto.createdAt ?? now,   // Можно указать прошлую дату
+  returnedAt: dto.returnedAt ?? now  // Дата возврата (по умолчанию сейчас)
 }
 ```
+
+Доступ: только JWT, проверки роли нет (любая роль). Сотрудник обязан передать свой `storeId` (иначе 400 `Wrong StoreId given!`); admin может указать любой магазин. Поля DTO: `storeId`, `customerId`, `amount` (≥ 1), `description?`, `createdAt?`, `returnedAt?`.
 
 ### Оплата старого долга
 **Endpoint**: `POST /debt/payment`
@@ -870,27 +884,23 @@ if (updated.count !== 1) {
 - ✅ Изменение цен товаров
 - ❌ Закрытие касс других продавцов
 
-#### 3. SELLER (Продавец) — В ПЛАНАХ
-**Планируемые права**:
-- Создание заказов
-- Возвраты (своих заказов)
-- Управление своей кассой
-- Просмотр товаров
+#### 3. SELLER (Продавец)
+Роль есть в enum `StaffRole` (`billing/prisma/schema.prisma`), назначается при создании сотрудника (`POST /store/staff`; роль по умолчанию в DTO — SELLER) и используется в проверках доступа.
+**Права**:
+- Создание заказов, прием оплаты, возвраты и погашение долгов
+- Видит и правит только свои заказы; продажи в `GET /orders/summary` — только свои
+- Видит только свою кассу
+- Не может занижать цену позиции (только owner/manager)
+- Не может создавать/менять/удалять товары и вносить приход/корректировку остатков (`@Roles(OWNER, MANAGER)`)
 
-#### 4. CASHIER (Кассир) — В ПЛАНАХ
-**Планируемые права**:
-- Прием платежей
-- Управление своей кассой
-- Просмотр заказов
+#### 4. CASHIER (Кассир)
+Роль есть в enum и назначается при создании сотрудника. Права в бэкенде те же, что у SELLER: свои заказы, своя касса, без управления товарами и остатками, без занижения цены.
 
-#### 5. WAREHOUSE (Складской работник) — В ПЛАНАХ
-**Планируемые права**:
-- Приход товара (PURCHASE)
-- Корректировка остатков (ADJUSTMENT)
-- Просмотр остатков
+#### 5. WAREHOUSE (Складской работник)
+Роль есть в enum и назначается при создании сотрудника. Отдельных проверок для нее нет — применяется тот же ограниченный доступ, что у SELLER/CASHIER.
 
 ### Текущая реализация
-Сейчас активно используются только **OWNER** и **MANAGER**. Остальные роли запланированы на будущее.
+Все пять ролей (`OWNER`, `MANAGER`, `SELLER`, `CASHIER`, `WAREHOUSE`) существуют и используются. Код различает три группы: **OWNER** (весь магазин), **MANAGER** (товары, приход/корректировка остатков, любые заказы магазина, занижение цены) и **остальные сотрудники** (SELLER, CASHIER, WAREHOUSE — только свои заказы и своя касса). Отдельных проверок, отличающих SELLER от CASHIER или WAREHOUSE, нет.
 
 ### Проверка прав в коде
 

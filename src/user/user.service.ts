@@ -78,7 +78,7 @@ export class UserService {
           customer: true,
         },
       });
-      if (existing) {
+      if (existing?.customer) {
         this.logger.warn(
           { phone: createUserDto.phone },
           'Customer creation rejected: phone already exists',
@@ -90,13 +90,16 @@ export class UserService {
       }
 
       return await this.prismaService.$transaction(async (tx) => {
-        const newUser = await tx.user.create({
-          data: {
-            fullName: createUserDto.fullName,
-            phone: createUserDto.phone,
-            type: UserType.CUSTOMER,
-          },
-        });
+        // An employee with this phone becomes a customer too: same user, own name kept
+        const newUser =
+          existing ??
+          (await tx.user.create({
+            data: {
+              fullName: createUserDto.fullName,
+              phone: createUserDto.phone,
+              type: UserType.CUSTOMER,
+            },
+          }));
         const customer = await tx.customer.create({
           data: {
             userId: newUser.id,
@@ -189,12 +192,26 @@ export class UserService {
     }
   }
 
-  async findOneById(id: string): Promise<Omit<User, 'password'> | null> {
+  /** Admin: anyone; otherwise yourself or an employee of your store. */
+  private assertUserAccess(
+    target: { id: string; staff: { storeId: string } | null },
+    user: CurrentUser,
+  ) {
+    if (user.role === UserRole.ADMIN || target.id === user.id) return;
+    if (!user.staff || target.staff?.storeId !== user.staff.storeId) {
+      throw new ForbiddenException('No access to this user');
+    }
+  }
+
+  async findOneById(
+    id: string,
+    user: CurrentUser,
+  ): Promise<Omit<User, 'password'> | null> {
     try {
-      return await this.prismaService.user.findUnique({
+      const found = await this.prismaService.user.findUnique({
         where: { id },
         include: {
-          auth: true,
+          auth: { omit: { passwordHash: true } },
           staff: {
             include: {
               store: true,
@@ -203,17 +220,20 @@ export class UserService {
           },
         },
       });
+      if (found) this.assertUserAccess(found, user);
+      return found;
     } catch (error: any) {
+      if (error instanceof ForbiddenException) throw error;
       throw new BadRequestException(error.response || error.message);
     }
   }
 
-  async findOneInfo(id: string): Promise<any | null> {
+  async findOneInfo(id: string, user: CurrentUser): Promise<any | null> {
     try {
-      const user = await this.prismaService.user.findUnique({
+      const found = await this.prismaService.user.findUnique({
         where: { id },
         include: {
-          auth: true,
+          auth: { omit: { passwordHash: true } },
           staff: {
             include: {
               payments: true,
@@ -222,8 +242,10 @@ export class UserService {
           },
         },
       });
-      return user;
+      if (found) this.assertUserAccess(found, user);
+      return found;
     } catch (error: any) {
+      if (error instanceof ForbiddenException) throw error;
       throw new BadRequestException(error.response || error.message);
     }
   }
@@ -260,7 +282,8 @@ export class UserService {
   ) {
     const skip = (currentPage - 1) * pageSize;
     const text = search?.trim() ?? '';
-    const where: Prisma.UserWhereInput = { type: UserType.CUSTOMER };
+    // By the customer record, not the user type: an employee can be a customer too
+    const where: Prisma.UserWhereInput = { customer: { isNot: null } };
     const and: Prisma.UserWhereInput[] = [];
 
     if (text) {
@@ -341,7 +364,7 @@ export class UserService {
     }
   }
 
-  async deactivate(id: string) {
+  async deactivate(id: string, user: CurrentUser) {
     try {
       const result = await this.prismaService.user.findUnique({
         where: { id },
@@ -353,6 +376,7 @@ export class UserService {
       if (!result) {
         throw new NotFoundException(`User with ID ${id} not found`);
       }
+      this.assertUserAccess(result, user);
       let data = {};
       if (result.staff && result.staff.isActive) {
         data = { ...data, staff: { update: { isActive: false } } };
@@ -376,6 +400,7 @@ export class UserService {
         { userId: id, err: error.message },
         'Failed to deactivate user',
       );
+      if (error instanceof ForbiddenException) throw error;
       throw new BadRequestException(error.response || error.message);
     }
   }

@@ -6,13 +6,17 @@ import {
   CashTransactionCategory,
   OrderStatus,
   PaymentType,
+  ReturnOrderStatus,
   StaffRole,
   UserRole,
   UserType,
 } from '@generated/enums';
 import { PrismaService } from '@prisma/prisma.service';
 import type { CurrentUser } from '@auth/models/auth.model';
-import { CreatePaymentDto } from './dto/create-payment.dto';
+import {
+  CreatePaymentDto,
+  CreateReturnPaymentDto,
+} from './dto/create-payment.dto';
 import { PaymentService } from './payment.service';
 
 const STORE = '11111111-1111-4111-8111-111111111111';
@@ -66,7 +70,8 @@ describe('PaymentService', () => {
     cashbox: { findFirst: jest.fn(), findMany: jest.fn(), update: jest.fn() },
     payment: { create: jest.fn() },
     cashTransaction: { createMany: jest.fn() },
-    returnedOrder: { update: jest.fn() },
+    returnedOrder: { update: jest.fn(), findUnique: jest.fn() },
+    returnPayment: { createMany: jest.fn() },
   };
   const logger = {
     debug: jest.fn(),
@@ -152,6 +157,63 @@ describe('PaymentService', () => {
       await expect(service.create(payDto(20000), seller)).rejects.toThrow(
         'No open cashbox',
       );
+    });
+  });
+
+  describe('createPaymentForReturnOrder (payout of a return)', () => {
+    const RETURN = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    // Debt order 100000, customer paid 40000, returned 70000 → store owes 10000
+    const creditReturn = (overrides: Record<string, unknown> = {}) => ({
+      id: RETURN,
+      orderId: ORDER,
+      status: ReturnOrderStatus.CREDIT,
+      totalAmount: 70000,
+      payments: [],
+      order: debtOrder({
+        status: OrderStatus.REFUNDED,
+        returnedAmount: 70000,
+        isReturned: true,
+      }),
+      ...overrides,
+    });
+    const payoutDto = (amount: number) =>
+      ({
+        payments: [{ type: PaymentType.CASH, amount, paidAt: null }],
+      }) as CreateReturnPaymentDto;
+
+    beforeEach(() => {
+      prisma.returnedOrder.findUnique.mockResolvedValue(creditReturn());
+    });
+
+    it('books the payout against the order and completes the return', async () => {
+      await service.createPaymentForReturnOrder(RETURN, payoutDto(10000), seller);
+      expect(
+        prisma.cashTransaction.createMany.mock.calls[0][0].data[0],
+      ).toMatchObject({
+        orderId: ORDER,
+        cashboxId: OWN_CASHBOX,
+        category: CashTransactionCategory.RETURN,
+      });
+      expect(prisma.returnedOrder.update).toHaveBeenCalledWith({
+        where: { id: RETURN },
+        data: { status: ReturnOrderStatus.COMPLETED },
+      });
+    });
+
+    it('rejects paying out more than the customer is owed', async () => {
+      await expect(
+        service.createPaymentForReturnOrder(RETURN, payoutDto(20000), seller),
+      ).rejects.toThrow('exceeds the amount owed');
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects a return of another store', async () => {
+      prisma.returnedOrder.findUnique.mockResolvedValue(
+        creditReturn({ order: debtOrder({ storeId: 'other-store' }) }),
+      );
+      await expect(
+        service.createPaymentForReturnOrder(RETURN, payoutDto(10000), seller),
+      ).rejects.toBeInstanceOf(ForbiddenException);
     });
   });
 });

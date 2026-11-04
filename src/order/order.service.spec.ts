@@ -1,13 +1,20 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getLoggerToken } from 'nestjs-pino';
-import { OrderStatus, StaffRole, UserRole, UserType } from '@generated/enums';
+import {
+  OrderStatus,
+  ReturnOrderStatus,
+  StaffRole,
+  UserRole,
+  UserType,
+} from '@generated/enums';
 import { PrismaService } from '@prisma/prisma.service';
 import type { CurrentUser } from '@auth/models/auth.model';
 import {
   CreateOrderItemDto,
   CreateOrderPaymentDto,
 } from './dto/create-order.dto';
+import { CreateReturnOrderDto } from './dto/create-return.dto';
 import { OrderService } from './order.service';
 
 const STORE = '11111111-1111-4111-8111-111111111111';
@@ -77,13 +84,20 @@ describe('OrderService', () => {
     $transaction: jest.fn(),
     order: { findUnique: jest.fn(), update: jest.fn(), aggregate: jest.fn() },
     productVariant: { findMany: jest.fn() },
-    inventory: { findMany: jest.fn(), updateMany: jest.fn() },
+    inventory: {
+      findMany: jest.fn(),
+      updateMany: jest.fn(),
+      upsert: jest.fn(),
+    },
     orderItem: { create: jest.fn(), update: jest.fn(), deleteMany: jest.fn() },
     cashbox: { findFirst: jest.fn(), update: jest.fn() },
     payment: { createMany: jest.fn() },
     cashTransaction: { createMany: jest.fn() },
-    stockMovement: { createMany: jest.fn() },
+    stockMovement: { createMany: jest.fn(), findMany: jest.fn() },
     customer: { findUnique: jest.fn() },
+    returnedOrder: { create: jest.fn(), update: jest.fn() },
+    returnItem: { createMany: jest.fn() },
+    returnPayment: { createMany: jest.fn() },
   };
   const logger = {
     debug: jest.fn(),
@@ -112,6 +126,10 @@ describe('OrderService', () => {
     prisma.inventory.updateMany.mockResolvedValue({ count: 1 });
     prisma.cashbox.findFirst.mockResolvedValue({ id: 'cashbox' });
     prisma.customer.findUnique.mockResolvedValue({ id: CUSTOMER });
+    prisma.stockMovement.findMany.mockResolvedValue([
+      { variantId: VARIANT, unitCost: 55000 },
+    ]);
+    prisma.returnedOrder.create.mockResolvedValue({ id: 'return' });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -138,6 +156,40 @@ describe('OrderService', () => {
             status: OrderStatus.HOLD,
           }),
         }),
+      );
+    });
+
+    it('takes the cost from the latest stock receipt, not from the request', async () => {
+      await service.createOrderItems(
+        itemsDto([{ costAtSale: 1 }]),
+        makeUser(StaffRole.SELLER),
+      );
+      expect(prisma.orderItem.create.mock.calls[0][0].data.costAtSale).toBe(
+        55000,
+      );
+    });
+
+    it('keeps the cost of a saved line', async () => {
+      prisma.order.findUnique.mockResolvedValue(
+        makeOrder({
+          items: [
+            {
+              id: ITEM,
+              variantId: VARIANT,
+              quantity: 1,
+              retailPrice: 100000,
+              sale: 0,
+              costAtSale: 40000,
+            },
+          ],
+        }),
+      );
+      await service.createOrderItems(
+        itemsDto([{ itemId: ITEM, quantity: 2 }]),
+        makeUser(StaffRole.SELLER),
+      );
+      expect(prisma.orderItem.update.mock.calls[0][0].data.costAtSale).toBe(
+        40000,
       );
     });
 
@@ -327,6 +379,20 @@ describe('OrderService', () => {
       );
     });
 
+    it('rejects an order of another store', async () => {
+      prisma.order.findUnique.mockResolvedValue(
+        makeOrder({ storeId: FOREIGN_STORE }),
+      );
+      await expect(
+        service.createPayment(
+          ORDER,
+          payDto(100000),
+          makeUser(StaffRole.SELLER),
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.payment.createMany).not.toHaveBeenCalled();
+    });
+
     it('stamps soldAt on the sale', async () => {
       await service.createPayment(
         ORDER,
@@ -399,6 +465,134 @@ describe('OrderService', () => {
           makeUser(StaffRole.SELLER),
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('createReturn', () => {
+    const orderLine = {
+      id: ITEM,
+      variantId: VARIANT,
+      quantity: 2,
+      retailPrice: 50000,
+      sale: 10000,
+      costAtSale: 30000,
+    };
+    const returnDto = (
+      quantity: number,
+      payout = 0,
+      extra: Record<string, unknown> = {},
+    ) =>
+      ({
+        orderId: ORDER,
+        items: [{ itemId: ITEM, quantity, ...extra }],
+        returnPayments: payout ? [{ type: 'CASH', amount: payout }] : [],
+      }) as unknown as CreateReturnOrderDto;
+    const paidOrder = (overrides: Record<string, unknown> = {}) =>
+      makeOrder({
+        status: OrderStatus.COMPLETED,
+        totalAmount: 80000,
+        isReturned: false,
+        items: [orderLine],
+        payments: [{ amount: 80000 }],
+        ...overrides,
+      });
+
+    beforeEach(() => {
+      prisma.order.findUnique.mockResolvedValue(paidOrder());
+    });
+
+    it('puts the goods back on the order warehouse', async () => {
+      await service.createReturn(
+        returnDto(2, 80000),
+        makeUser(StaffRole.SELLER),
+      );
+      expect(prisma.inventory.upsert).toHaveBeenCalledWith({
+        where: {
+          warehouseId_variantId: { warehouseId: WAREHOUSE, variantId: VARIANT },
+        },
+        update: { quantity: { increment: 2 } },
+        create: { warehouseId: WAREHOUSE, variantId: VARIANT, quantity: 2 },
+      });
+      expect(
+        prisma.stockMovement.createMany.mock.calls[0][0].data[0].unitCost,
+      ).toBe(30000);
+    });
+
+    it('returns a fully paid order in full', async () => {
+      await service.createReturn(
+        returnDto(2, 80000),
+        makeUser(StaffRole.SELLER),
+      );
+      expect(prisma.returnedOrder.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { status: ReturnOrderStatus.COMPLETED },
+        }),
+      );
+      expect(prisma.order.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: OrderStatus.REFUNDED,
+            returnedAmount: 80000,
+          }),
+        }),
+      );
+    });
+
+    it('prices the return from the order, ignoring prices in the request', async () => {
+      await expect(
+        service.createReturn(
+          returnDto(1, 90000, { retailPrice: 90000, sale: 0 }),
+          makeUser(StaffRole.SELLER),
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      // 50000 - 10000 from the order line, not 90000 from the request
+      expect(
+        prisma.returnedOrder.create.mock.calls[0][0].data.totalAmount,
+      ).toBe(40000);
+    });
+
+    it('lets a partly paid debt order be returned in full and pays back what was paid', async () => {
+      prisma.order.findUnique.mockResolvedValue(
+        paidOrder({ status: OrderStatus.DEBT, payments: [{ amount: 30000 }] }),
+      );
+      await service.createReturn(
+        returnDto(2, 30000),
+        makeUser(StaffRole.SELLER),
+      );
+      expect(prisma.returnedOrder.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { status: ReturnOrderStatus.COMPLETED },
+        }),
+      );
+    });
+
+    it('rejects an order of another store', async () => {
+      prisma.order.findUnique.mockResolvedValue(
+        paidOrder({ storeId: FOREIGN_STORE }),
+      );
+      await expect(
+        service.createReturn(returnDto(1), makeUser(StaffRole.SELLER)),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('rejects the same line twice', async () => {
+      const dto = returnDto(1);
+      dto.items.push({ itemId: ITEM, quantity: 1 });
+      await expect(
+        service.createReturn(dto, makeUser(StaffRole.SELLER)),
+      ).rejects.toThrow('Duplicate return item');
+    });
+  });
+
+  describe('clearCustomerFromOrder', () => {
+    it('rejects an order of another store', async () => {
+      prisma.order.findUnique.mockResolvedValue(
+        makeOrder({ storeId: FOREIGN_STORE }),
+      );
+      await expect(
+        service.clearCustomerFromOrder(ORDER, makeUser(StaffRole.SELLER)),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.order.update).not.toHaveBeenCalled();
     });
   });
 

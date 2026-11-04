@@ -66,7 +66,7 @@ export class AdminService {
         skip: skip,
         take: +pageSize,
         where: { role: UserRole.ADMIN },
-        include: { auth: true }
+        include: { auth: { omit: { passwordHash: true } } }
       });
       return {
         currentPage,

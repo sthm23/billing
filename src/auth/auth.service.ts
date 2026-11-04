@@ -182,7 +182,7 @@ export class AuthService {
       return this.prisma.user.findUnique({
         where: { id: userId },
         include: {
-          auth: true,
+          auth: { omit: { passwordHash: true } },
           staff: {
             include: {
               store: true,

@@ -104,8 +104,9 @@ export class OrderController {
   @Patch(':id/clear-customer')
   clearCustomerFromOrder(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: CurrentUserType,
   ) {
-    return this.orderService.clearCustomerFromOrder(id);
+    return this.orderService.clearCustomerFromOrder(id, user);
   }
 
   @Delete(':id')

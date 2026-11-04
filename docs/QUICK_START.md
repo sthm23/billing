@@ -186,7 +186,7 @@ import { OrderStatus, PaymentType } from '@prisma/client';
 ### Staff Roles (на уровне Staff)
 - **OWNER**: создание сотрудников, просмотр отчетов, полный доступ
 - **MANAGER**: полный доступ к товарам/складам, но без сотрудников/отчетов
-- **SELLER, CASHIER, WAREHOUSE**: в планах, пока не активны
+- **SELLER, CASHIER, WAREHOUSE**: существуют и назначаются; доступ ограничен — только свои заказы и своя касса, без управления товарами и остатками
 
 ### CurrentUser в контроллерах
 ```typescript

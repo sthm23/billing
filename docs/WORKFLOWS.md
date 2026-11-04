@@ -292,20 +292,20 @@ POST /orders/items
       "variantId": "uuid-variant-1",
       "quantity": 2,
       "retailPrice": 500.00,
-      "sale": 0,
-      "costAtSale": 300.00
+      "sale": 0
     },
     {
       "variantId": "uuid-variant-2",
       "quantity": 1,
       "retailPrice": 800.00,
-      "sale": 100.00,
-      "costAtSale": 400.00
+      "sale": 100.00
     }
   ],
   "additionalServices": []
 }
 ```
+
+`costAtSale` клиент не передает: бэкенд берет `unitCost` последнего прихода (StockMovement IN) по варианту.
 **Что происходит**:
 - Система проверяет наличие на складе (quantity >= requested)
 - Создаются OrderItem
@@ -446,10 +446,7 @@ POST /orders/return
   "items": [
     {
       "itemId": "uuid-order-item-1",
-      "quantity": 2,
-      "retailPrice": 500.00,
-      "sale": 0,
-      "costAtSale": 300.00
+      "quantity": 2
     }
   ],
   "returnPayments": [
@@ -461,10 +458,12 @@ POST /orders/return
 }
 ```
 
+Цены и себестоимость бэкенд берет из исходной позиции заказа (в запросе только `itemId` и `quantity`). Заказ должен быть из магазина пользователя (иначе 403), `itemId` не должен повторяться (иначе 400 `Duplicate return item`).
+
 **Что происходит (транзакция)**:
 1. Создается `ReturnedOrder` (totalAmount: 1000)
 2. Создаются `ReturnItem`
-3. Создаются `StockMovement` (IN, RETURN) — **Inventory восстанавливается**
+3. Создаются `StockMovement` (IN, RETURN, `unitCost` = `orderItem.costAtSale`) и увеличивается `Inventory.quantity` на складе заказа — **Inventory восстанавливается**
 4. Создаются `CashTransaction` (EXPENSE, RETURN, 1000)
 5. Создаются `ReturnPayment` (CASH, 1000)
 6. Обновляется `Cashbox.balance -= 1000`
@@ -492,10 +491,7 @@ POST /orders/return
   "items": [
     {
       "itemId": "uuid-order-item",
-      "quantity": 1,  // Возврат на 300
-      "retailPrice": 300.00,
-      "sale": 0,
-      "costAtSale": 200.00
+      "quantity": 1   // Возврат на 300 (цена берется из заказа)
     }
   ],
   "returnPayments": []  // Кассир НЕ выдает деньги!
@@ -539,20 +535,17 @@ POST /orders/return
 **Результат**: Магазин зафиксировал, что должен клиенту 100 сум.
 
 #### 2. Позже выдают деньги
-**Логика**: когда будут деньги, создается отдельная транзакция в кассу (ручная).
+**Логика**: когда будут деньги, выплата проводится через `POST /payment/return/:id` (`:id` — id ReturnedOrder).
 
 ```
-POST /cashbox/:id/transaction
+POST /payment/return/uuid-returned-order
 {
-  "type": "EXPENSE",
-  "category": "OTHER",
-  "paymentType": "CASH",
-  "amount": 100.00,
-  "comment": "Возврат клиенту по заказу #123"
+  "cashboxId": "uuid-cashbox",   // опционально; иначе своя открытая касса
+  "payments": [ { "type": "CASH", "amount": 100.00 } ]
 }
 ```
 
-**Результат**: Cashbox.balance -= 100, ReturnedOrder.status можно обновить на COMPLETED (вручную в БД).
+**Результат**: создаются ReturnPayment и CashTransaction (EXPENSE, RETURN, `orderId` = id заказа), Cashbox.balance -= 100; когда выплачено ровно столько, сколько магазин должен клиенту (`Σ order.payments − (order.totalAmount − order.returnedAmount)`), ReturnedOrder.status → COMPLETED. Больше этой суммы выплатить нельзя (`400 Payment amount exceeds the amount owed to the customer`).
 
 ---
 
@@ -701,23 +694,18 @@ POST /cashbox/:id/transaction
 
 **Шаги**:
 ```
-POST /cashbox/:id/transaction
+POST /payment/return/uuid-returned-order
 {
-  "type": "EXPENSE",
-  "category": "RETURN",
-  "paymentType": "CASH",
-  "amount": 100.00,
-  "comment": "Возврат клиенту по заказу #123",
-  "orderId": "uuid-order"
+  "payments": [ { "type": "CASH", "amount": 100.00 } ]
 }
 ```
 
 **Что происходит**:
-- Создается CashTransaction (EXPENSE, RETURN)
-- Cashbox.balance -= 100
-- Связывается с заказом (orderId)
+- Создаются ReturnPayment и CashTransaction (EXPENSE, RETURN), связанная с заказом (`orderId` = id заказа)
+- Cashbox.balance -= 100 (касса: `cashboxId` из body или своя открытая касса)
+- Статус ReturnedOrder → COMPLETED, когда выплачена вся сумма, которую магазин должен клиенту
 
-**Результат**: Кредит погашен, ReturnedOrder.status можно обновить на COMPLETED (вручную или через админку).
+**Результат**: Кредит погашен.
 
 ---
 

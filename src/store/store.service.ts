@@ -104,8 +104,11 @@ export class StoreService {
     }
   }
 
-  async updateStore(id: string, dto: UpdateStoreDto) {
+  async updateStore(id: string, dto: UpdateStoreDto, user: CurrentUser) {
     try {
+      if (user.role !== UserRole.ADMIN && user.staff?.storeId !== id) {
+        throw new NotFoundException('Store not found');
+      }
       const store = await this.prisma.store.findUnique({
         where: { id },
         include: {
@@ -442,6 +445,10 @@ export class StoreService {
       const movements = await this.prisma.stockMovement.findMany({
         where: {
           createdById: userId,
+          // Only movements of your own store's warehouses
+          ...(user.role === UserRole.ADMIN
+            ? {}
+            : { warehouse: { storeId: user.staff?.storeId ?? '' } }),
         },
         omit: {
           unitCost: user.role !== UserRole.OWNER,

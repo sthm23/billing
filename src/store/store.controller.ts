@@ -47,8 +47,9 @@ export class StoreController {
   updateStore(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateStoreDto,
+    @CurrentUser() user: UserInfo,
   ) {
-    return this.storeService.updateStore(id, dto);
+    return this.storeService.updateStore(id, dto, user);
   }
 
   @Roles(UserRole.OWNER)
