@@ -1,21 +1,39 @@
-import { IsArray, IsNotEmpty, IsOptional, IsString, IsUUID, ValidateNested } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsUUID,
+  ValidateNested,
+} from 'class-validator';
 
 export class UpdateStoreDto {
-    @IsOptional()
-    @IsString()
-    name?: string;
+  @IsOptional()
+  @IsString()
+  name?: string;
 
-    @IsOptional()
-    @IsString()
-    warehouseName?: string;
+  /** Store sells goods; at least one of salesEnabled / rentalEnabled stays true */
+  @IsOptional()
+  @IsBoolean()
+  salesEnabled?: boolean;
 
-    @IsNotEmpty()
-    @IsArray()
-    @IsUUID('4', { each: true })
-    attributeIds!: string[];
+  /** Store rents goods out */
+  @IsOptional()
+  @IsBoolean()
+  rentalEnabled?: boolean;
 
-    @IsNotEmpty()
-    @IsArray()
-    @IsUUID('4', { each: true })
-    brandIds!: string[];
+  @IsOptional()
+  @IsString()
+  warehouseName?: string;
+
+  @IsNotEmpty()
+  @IsArray()
+  @IsUUID('4', { each: true })
+  attributeIds!: string[];
+
+  @IsNotEmpty()
+  @IsArray()
+  @IsUUID('4', { each: true })
+  brandIds!: string[];
 }

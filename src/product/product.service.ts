@@ -100,8 +100,12 @@ export class ProductService {
       });
       if (!warehouse) throw new NotFoundException('Warehouse not found');
 
+      const saleRentByVariant = dto.variants.map((v) =>
+        this.resolveSaleRent(v),
+      );
+
       await this.prisma.$transaction(async (tx) => {
-        for (const variant of dto.variants) {
+        for (const [index, variant] of dto.variants.entries()) {
           const barCode = await this.barcodeService.generateUniqueBarcode(tx);
           const newVariant = await tx.productVariant.create({
             data: {
@@ -115,6 +119,7 @@ export class ProductService {
               ),
               barCode,
               price: new Prisma.Decimal(variant.retailPrice),
+              ...saleRentByVariant[index],
             },
           });
 
@@ -157,6 +162,33 @@ export class ProductService {
       );
       throw new BadRequestException(error.response || error.message);
     }
+  }
+
+  /**
+   * Sale/rent flags of a variant: omitted fields keep `current` (or the
+   * defaults canSell = true, canRent = false). A rentable variant needs a
+   * positive rent price per day.
+   */
+  private resolveSaleRent(
+    input: { canSell?: boolean; canRent?: boolean; rentPricePerDay?: number },
+    current?: {
+      canSell: boolean;
+      canRent: boolean;
+      rentPricePerDay: Prisma.Decimal | null;
+    },
+  ) {
+    const canSell = input.canSell ?? current?.canSell ?? true;
+    const canRent = input.canRent ?? current?.canRent ?? false;
+    const rentPricePerDay =
+      input.rentPricePerDay !== undefined
+        ? new Prisma.Decimal(input.rentPricePerDay)
+        : (current?.rentPricePerDay ?? null);
+    if (canRent && (!rentPricePerDay || rentPricePerDay.lte(0))) {
+      throw new BadRequestException(
+        'A rentable variant requires a rent price per day greater than 0',
+      );
+    }
+    return { canSell, canRent, rentPricePerDay };
   }
 
   /**
@@ -312,6 +344,9 @@ export class ProductService {
             variants: product.variants.map((v) => ({
               id: v.id,
               price: v.price,
+              canSell: v.canSell,
+              canRent: v.canRent,
+              rentPricePerDay: v.rentPricePerDay,
               quantity:
                 v.inventory.reduce((acc, curr) => acc + curr.quantity, 0) || 0,
             })),
@@ -401,6 +436,9 @@ export class ProductService {
           sku: variant.sku,
           barCode: variant.barCode,
           price: variant.price,
+          canSell: variant.canSell,
+          canRent: variant.canRent,
+          rentPricePerDay: variant.rentPricePerDay,
           attributes: variant.attributes.map((a) => ({
             id: a.value.id,
             value:
@@ -543,6 +581,9 @@ export class ProductService {
           id: v.id,
           barCode: v.barCode,
           price: v.price,
+          canSell: v.canSell,
+          canRent: v.canRent,
+          rentPricePerDay: v.rentPricePerDay,
           sku: v.sku,
           stockMovements: v.stockMovements.map((movement) => ({
             id: movement.id,
@@ -617,6 +658,9 @@ export class ProductService {
           id: v.id,
           barCode: v.barCode,
           price: v.price,
+          canSell: v.canSell,
+          canRent: v.canRent,
+          rentPricePerDay: v.rentPricePerDay,
           sku: v.sku,
           productId: v.product.id,
           productName: v.product.name,
@@ -678,6 +722,7 @@ export class ProductService {
         where: { id },
         data: {
           price: dto.price,
+          ...this.resolveSaleRent(dto, variant),
         },
       });
       this.logger.info({ variantId: id }, 'Product variant price updated');

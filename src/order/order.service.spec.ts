@@ -55,6 +55,8 @@ function makeOrder(overrides: Record<string, unknown> = {}) {
     items: [],
     services: [],
     payments: [],
+    rental: null,
+    store: { salesEnabled: true },
     ...overrides,
   };
 }
@@ -90,6 +92,11 @@ describe('OrderService', () => {
       upsert: jest.fn(),
     },
     orderItem: { create: jest.fn(), update: jest.fn(), deleteMany: jest.fn() },
+    additionalService: {
+      create: jest.fn(),
+      update: jest.fn(),
+      deleteMany: jest.fn(),
+    },
     cashbox: { findFirst: jest.fn(), update: jest.fn() },
     payment: { createMany: jest.fn() },
     cashTransaction: { createMany: jest.fn() },
@@ -117,6 +124,7 @@ describe('OrderService', () => {
         id: VARIANT,
         storeId: STORE,
         price: 100000,
+        canSell: true,
         product: { isArchived: false },
       },
     ]);
@@ -230,6 +238,7 @@ describe('OrderService', () => {
           id: VARIANT,
           storeId: STORE,
           price: 100000,
+          canSell: true,
           product: { isArchived: true },
         },
       ]);
@@ -449,7 +458,14 @@ describe('OrderService', () => {
     it('sells fully on debt without zero payment records', async () => {
       prisma.order.findUnique.mockResolvedValue(
         makeOrder({
-          items: [{ variantId: VARIANT, quantity: 1, costAtSale: 55000 }],
+          items: [
+            {
+              variantId: VARIANT,
+              quantity: 1,
+              costAtSale: 55000,
+              variant: { canSell: true },
+            },
+          ],
         }),
       );
       await service.createPayment(
@@ -688,6 +704,181 @@ describe('OrderService', () => {
       expect(prisma.order.aggregate.mock.calls[1][0].where).not.toHaveProperty(
         'warehouseId',
       );
+    });
+  });
+  describe('rental orders and sale flags', () => {
+    const rentalOrder = (overrides: Record<string, unknown> = {}) =>
+      makeOrder({
+        rental: { id: 'rental' },
+        customerId: CUSTOMER,
+        ...overrides,
+      });
+
+    it('rejects editing items of a rental order', async () => {
+      prisma.order.findUnique.mockResolvedValue(rentalOrder());
+      await expect(
+        service.createOrderItems(itemsDto([{}]), makeUser(StaffRole.OWNER)),
+      ).rejects.toThrow('rental order');
+      expect(prisma.orderItem.create).not.toHaveBeenCalled();
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects paying a rental order without touching stock', async () => {
+      prisma.order.findUnique.mockResolvedValue(
+        rentalOrder({
+          items: [
+            {
+              variantId: VARIANT,
+              quantity: 1,
+              costAtSale: 55000,
+              variant: { canSell: true },
+            },
+          ],
+        }),
+      );
+      await expect(
+        service.createPayment(
+          ORDER,
+          {
+            orderId: ORDER,
+            payments: [{ type: 'CASH', amount: 100000, paidAt: null }],
+          } as CreateOrderPaymentDto,
+          makeUser(StaffRole.OWNER),
+        ),
+      ).rejects.toThrow('rental order');
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(prisma.inventory.updateMany).not.toHaveBeenCalled();
+      expect(prisma.stockMovement.createMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects a sale return of a rental order', async () => {
+      prisma.order.findUnique.mockResolvedValue(
+        rentalOrder({ status: OrderStatus.COMPLETED, isReturned: false }),
+      );
+      await expect(
+        service.createReturn(
+          {
+            orderId: ORDER,
+            items: [{ itemId: ITEM, quantity: 1 }],
+            returnPayments: [],
+          } as unknown as CreateReturnOrderDto,
+          makeUser(StaffRole.OWNER),
+        ),
+      ).rejects.toThrow('rental order');
+      expect(prisma.returnedOrder.create).not.toHaveBeenCalled();
+      expect(prisma.inventory.upsert).not.toHaveBeenCalled();
+    });
+
+    it('rejects cancelling a rental order via the sale flow', async () => {
+      prisma.order.findUnique.mockResolvedValue(rentalOrder());
+      await expect(
+        service.remove(ORDER, makeUser(StaffRole.OWNER)),
+      ).rejects.toThrow('rental order');
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects clearing the customer of a rental order', async () => {
+      prisma.order.findUnique.mockResolvedValue(rentalOrder());
+      await expect(
+        service.clearCustomerFromOrder(ORDER, makeUser(StaffRole.OWNER)),
+      ).rejects.toThrow('rental order');
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a variant that is not for sale', async () => {
+      prisma.productVariant.findMany.mockResolvedValue([
+        {
+          id: VARIANT,
+          storeId: STORE,
+          price: 100000,
+          canSell: false,
+          product: { isArchived: false },
+        },
+      ]);
+      await expect(
+        service.createOrderItems(itemsDto([{}]), makeUser(StaffRole.OWNER)),
+      ).rejects.toThrow('not for sale');
+      expect(prisma.orderItem.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects paying for a variant that is no longer for sale', async () => {
+      prisma.order.findUnique.mockResolvedValue(
+        makeOrder({
+          items: [
+            {
+              variantId: VARIANT,
+              quantity: 1,
+              costAtSale: 55000,
+              variant: { canSell: false },
+            },
+          ],
+        }),
+      );
+      await expect(
+        service.createPayment(
+          ORDER,
+          {
+            orderId: ORDER,
+            payments: [{ type: 'CASH', amount: 100000, paidAt: null }],
+          } as CreateOrderPaymentDto,
+          makeUser(StaffRole.OWNER),
+        ),
+      ).rejects.toThrow('not for sale');
+      expect(prisma.inventory.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects selling in a store with sales disabled', async () => {
+      prisma.order.findUnique.mockResolvedValue(
+        makeOrder({ store: { salesEnabled: false } }),
+      );
+      await expect(
+        service.createOrderItems(itemsDto([{}]), makeUser(StaffRole.OWNER)),
+      ).rejects.toThrow('Sales are disabled');
+      expect(prisma.orderItem.create).not.toHaveBeenCalled();
+    });
+
+    it('subtracts the service discount from the order total', async () => {
+      await service.createOrderItems(
+        itemsDto([{}], {
+          additionalServices: [{ name: 'Доставка', price: 20000, sale: 5000 }],
+        }),
+        makeUser(StaffRole.SELLER),
+      );
+      expect(prisma.additionalService.create.mock.calls[0][0].data.sale).toBe(
+        5000,
+      );
+      expect(prisma.order.update.mock.calls[0][0].data.totalAmount).toBe(
+        115000,
+      );
+    });
+
+    it('treats a service without a discount as sale 0', async () => {
+      await service.createOrderItems(
+        itemsDto([{}], {
+          additionalServices: [{ name: 'Доставка', price: 20000 }],
+        }),
+        makeUser(StaffRole.SELLER),
+      );
+      expect(prisma.additionalService.create.mock.calls[0][0].data.sale).toBe(
+        0,
+      );
+      expect(prisma.order.update.mock.calls[0][0].data.totalAmount).toBe(
+        120000,
+      );
+    });
+
+    it('rejects a service discount larger than its price', async () => {
+      await expect(
+        service.createOrderItems(
+          itemsDto([{}], {
+            additionalServices: [
+              { name: 'Доставка', price: 20000, sale: 25000 },
+            ],
+          }),
+          makeUser(StaffRole.OWNER),
+        ),
+      ).rejects.toThrow('service price');
+      expect(prisma.order.update).not.toHaveBeenCalled();
     });
   });
 });

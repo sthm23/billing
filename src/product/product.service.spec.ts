@@ -5,6 +5,11 @@ import { StaffRole, UserRole, UserType } from '@generated/enums';
 import { PrismaService } from '@prisma/prisma.service';
 import { BarcodeService } from '@shared/helper/bar-code.service';
 import type { CurrentUser } from '@auth/models/auth.model';
+import { Prisma } from '@generated/client';
+import {
+  CreateProductVariantDto,
+  ProductVariantDto,
+} from './dto/create-product.dto';
 import { ProductService } from './product.service';
 
 const STORE = '11111111-1111-4111-8111-111111111111';
@@ -34,8 +39,14 @@ describe('ProductService', () => {
       count: jest.fn(),
       findMany: jest.fn(),
       findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
     },
-    stockMovement: { count: jest.fn(), findMany: jest.fn() },
+    warehouse: { findUnique: jest.fn() },
+    inventory: { create: jest.fn() },
+    variantAttributeValue: { createMany: jest.fn() },
+    $transaction: jest.fn(),
+    stockMovement: { count: jest.fn(), findMany: jest.fn(), create: jest.fn() },
   };
   const logger = {
     debug: jest.fn(),
@@ -73,7 +84,12 @@ describe('ProductService', () => {
       providers: [
         ProductService,
         { provide: PrismaService, useValue: prisma },
-        { provide: BarcodeService, useValue: {} },
+        {
+          provide: BarcodeService,
+          useValue: {
+            generateUniqueBarcode: jest.fn().mockResolvedValue('200000000001'),
+          },
+        },
         { provide: getLoggerToken(ProductService.name), useValue: logger },
       ],
     }).compile();
@@ -290,6 +306,120 @@ describe('ProductService', () => {
       expect(
         prisma.productVariant.findMany.mock.calls[0][0].where.storeId,
       ).toBeUndefined();
+    });
+  });
+  describe('variant sale/rent flags', () => {
+    const owner = () =>
+      makeUser({
+        role: UserRole.OWNER,
+        staff: {
+          id: 'staff',
+          storeId: STORE,
+          role: StaffRole.OWNER,
+          warehouse: [{ warehouseId: WAREHOUSE }],
+        },
+      } as unknown as Partial<CurrentUser>);
+    const createDto = (variant: Partial<ProductVariantDto>) =>
+      ({
+        storeId: STORE,
+        warehouseId: WAREHOUSE,
+        productId: 'product',
+        category: 'Dresses',
+        variants: [
+          {
+            retailPrice: 0,
+            costPrice: 0,
+            quantity: 1,
+            attributes: [],
+            ...variant,
+          },
+        ],
+      }) as CreateProductVariantDto;
+
+    beforeEach(() => {
+      prisma.$transaction.mockImplementation(
+        (cb: (tx: typeof prisma) => unknown) => cb(prisma),
+      );
+      prisma.product.findUnique.mockResolvedValue({
+        id: 'product',
+        name: 'Dress',
+        warehouseId: WAREHOUSE,
+      });
+      prisma.warehouse.findUnique.mockResolvedValue({
+        id: WAREHOUSE,
+        storeId: STORE,
+      });
+      prisma.productVariant.create.mockResolvedValue({ id: 'variant' });
+    });
+
+    it('creates a sellable, not rentable variant by default', async () => {
+      await service.createProductVariant(createDto({}), owner());
+      expect(prisma.productVariant.create.mock.calls[0][0].data).toMatchObject({
+        canSell: true,
+        canRent: false,
+        rentPricePerDay: null,
+      });
+    });
+
+    it('creates a rental-only variant with a rent price per day', async () => {
+      await service.createProductVariant(
+        createDto({ canSell: false, canRent: true, rentPricePerDay: 200000 }),
+        owner(),
+      );
+      const data = prisma.productVariant.create.mock.calls[0][0].data;
+      expect(data).toMatchObject({ canSell: false, canRent: true });
+      expect(Number(data.rentPricePerDay)).toBe(200000);
+    });
+
+    it('rejects a rentable variant without a rent price', async () => {
+      await expect(
+        service.createProductVariant(createDto({ canRent: true }), owner()),
+      ).rejects.toThrow('rent price per day');
+      await expect(
+        service.createProductVariant(
+          createDto({ canRent: true, rentPricePerDay: 0 }),
+          owner(),
+        ),
+      ).rejects.toThrow('rent price per day');
+      expect(prisma.productVariant.create).not.toHaveBeenCalled();
+    });
+
+    it('keeps the saved rent price when only canRent is updated', async () => {
+      prisma.productVariant.findUnique.mockResolvedValue({
+        id: 'variant',
+        warehouseId: WAREHOUSE,
+        canSell: true,
+        canRent: false,
+        rentPricePerDay: new Prisma.Decimal(150000),
+      });
+      prisma.warehouse.findUnique.mockResolvedValue({ id: WAREHOUSE });
+      await service.updateProductVariant(
+        'variant',
+        { price: 100000, canRent: true },
+        owner(),
+      );
+      const data = prisma.productVariant.update.mock.calls[0][0].data;
+      expect(data).toMatchObject({ canSell: true, canRent: true });
+      expect(Number(data.rentPricePerDay)).toBe(150000);
+    });
+
+    it('rejects enabling rent on a variant without a rent price', async () => {
+      prisma.productVariant.findUnique.mockResolvedValue({
+        id: 'variant',
+        warehouseId: WAREHOUSE,
+        canSell: true,
+        canRent: false,
+        rentPricePerDay: null,
+      });
+      prisma.warehouse.findUnique.mockResolvedValue({ id: WAREHOUSE });
+      await expect(
+        service.updateProductVariant(
+          'variant',
+          { price: 100000, canRent: true },
+          owner(),
+        ),
+      ).rejects.toThrow('rent price per day');
+      expect(prisma.productVariant.update).not.toHaveBeenCalled();
     });
   });
 });

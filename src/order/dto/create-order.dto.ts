@@ -54,6 +54,12 @@ class OrderAdditionalServiceDto {
   @Min(0)
   price: number = 0;
 
+  /** Discount on the service; omitted by older clients = 0 */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  sale?: number;
+
   @IsOptional()
   @IsString()
   description?: string;

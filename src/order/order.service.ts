@@ -256,6 +256,34 @@ export class OrderService {
     }
   }
 
+  /**
+   * A rental order (booking) is handled only by the rental module: the sale
+   * flow would deduct stock and treat it as a sale.
+   */
+  private assertNotRental(order: { rental: { id: string } | null }) {
+    if (order.rental) {
+      throw new BadRequestException(
+        'This is a rental order; manage it via the /rental endpoints',
+      );
+    }
+  }
+
+  /** New sales: the store must sell, and every variant must be sellable. */
+  private assertCanSell(
+    store: { salesEnabled: boolean },
+    variants: { id: string; canSell: boolean }[],
+  ) {
+    if (!store.salesEnabled) {
+      throw new BadRequestException('Sales are disabled for this store');
+    }
+    const notForSale = variants.find((v) => !v.canSell);
+    if (notForSale) {
+      throw new BadRequestException(
+        `Product variant is not for sale: ${notForSale.id}`,
+      );
+    }
+  }
+
   async createReturn(createOrderDto: CreateReturnOrderDto, user: CurrentUser) {
     this.logger.debug(
       {
@@ -266,7 +294,12 @@ export class OrderService {
     );
     const order = await this.prisma.order.findUnique({
       where: { id: createOrderDto.orderId },
-      include: { items: true, payments: true, services: true },
+      include: {
+        items: true,
+        payments: true,
+        services: true,
+        rental: { select: { id: true } },
+      },
     });
 
     if (!order) {
@@ -275,6 +308,7 @@ export class OrderService {
     if (!user.staff || order.storeId !== user.staff.storeId) {
       throw new ForbiddenException('No access to this order');
     }
+    this.assertNotRental(order);
 
     if (order.isReturned) {
       throw new BadRequestException('Order is already returned');
@@ -304,7 +338,10 @@ export class OrderService {
       (sum, p) => sum + +p.amount,
       0,
     );
-    const servicesAmount = order.services.reduce((sum, s) => sum + +s.price, 0);
+    const servicesAmount = order.services.reduce(
+      (sum, s) => sum + +s.price - +s.sale,
+      0,
+    );
 
     const initialReturnStatus = this.returnInitialStatus(
       order.status,
@@ -504,10 +541,16 @@ export class OrderService {
       await this.prisma.$transaction(async (prisma) => {
         const order = await prisma.order.findUnique({
           where: { id: dto.orderId },
-          include: { items: true, services: true },
+          include: {
+            items: true,
+            services: true,
+            rental: { select: { id: true } },
+            store: { select: { salesEnabled: true } },
+          },
         });
 
         if (!order) throw new BadRequestException('Order not found');
+        this.assertNotRental(order);
         if (
           order.status !== OrderStatus.CREATED &&
           order.status !== OrderStatus.HOLD
@@ -545,9 +588,11 @@ export class OrderService {
             id: true,
             storeId: true,
             price: true,
+            canSell: true,
             product: { select: { isArchived: true } },
           },
         });
+        this.assertCanSell(order.store, variants);
 
         const variantById = new Map(variants.map((v) => [v.id, v]));
         for (const variantId of incomingQuantityByVariant.keys()) {
@@ -698,6 +743,14 @@ export class OrderService {
 
         let additionalServicesAmount = 0;
 
+        for (const service of dto.additionalServices) {
+          if (+(service.sale ?? 0) > +service.price) {
+            throw new BadRequestException(
+              'Discount cannot exceed the service price',
+            );
+          }
+        }
+
         if (dto.additionalServices.length > 0) {
           const removedIds = order.services
             .filter((s) => !dto.additionalServices.some((as) => as.id === s.id))
@@ -708,7 +761,7 @@ export class OrderService {
             });
           }
           for (const service of dto.additionalServices) {
-            additionalServicesAmount += +service.price;
+            additionalServicesAmount += +service.price - +(service.sale ?? 0);
             if (service.id) {
               const existing = order.services.find((s) => s.id === service.id);
               if (existing) {
@@ -717,6 +770,7 @@ export class OrderService {
                   data: {
                     name: service.name,
                     price: +service.price,
+                    sale: +(service.sale ?? 0),
                     description: service.description ?? null,
                   },
                 });
@@ -727,6 +781,7 @@ export class OrderService {
                   orderId: dto.orderId,
                   name: service.name,
                   price: +service.price,
+                  sale: +(service.sale ?? 0),
                   description: service.description ?? null,
                 },
               });
@@ -782,7 +837,12 @@ export class OrderService {
     try {
       const order = await this.prisma.order.findUnique({
         where: { id: orderId },
-        include: { payments: true, items: true },
+        include: {
+          payments: true,
+          items: { include: { variant: { select: { canSell: true } } } },
+          rental: { select: { id: true } },
+          store: { select: { salesEnabled: true } },
+        },
       });
       if (!order) {
         throw new BadRequestException('Order not found');
@@ -790,6 +850,15 @@ export class OrderService {
       if (!user.staff || order.storeId !== user.staff.storeId) {
         throw new ForbiddenException('No access to this order');
       }
+      // Paying a rental order here would deduct its items from stock
+      this.assertNotRental(order);
+      this.assertCanSell(
+        order.store,
+        order.items.map((i) => ({
+          id: i.variantId,
+          canSell: i.variant.canSell,
+        })),
+      );
       // Only the sale itself: it deducts stock. A DEBT order is repaid via
       // POST /payment, otherwise the stock would be deducted a second time.
       if (order.status !== OrderStatus.HOLD) {
@@ -1191,10 +1260,15 @@ export class OrderService {
 
   async clearCustomerFromOrder(id: string, user: CurrentUser) {
     await this.assertOrderAccess(id, user);
-    const order = await this.prisma.order.findUnique({ where: { id } });
+    const order = await this.prisma.order.findUnique({
+      where: { id },
+      include: { rental: { select: { id: true } } },
+    });
     if (!order) {
       throw new BadRequestException('Order not found');
     }
+    // A rental requires a customer (booking, collateral, debt)
+    this.assertNotRental(order);
     if (
       order.status === OrderStatus.COMPLETED ||
       order.status === OrderStatus.DEBT ||
@@ -1225,11 +1299,17 @@ export class OrderService {
           id,
           ...params,
         },
-        include: { items: true, payments: true },
+        include: {
+          items: true,
+          payments: true,
+          rental: { select: { id: true } },
+        },
       });
       if (!order) {
         throw new BadRequestException('Order not found');
       }
+      // A booking is cancelled via /rental/:id/cancel (prepayment refund)
+      this.assertNotRental(order);
       if (
         order.status === OrderStatus.COMPLETED ||
         order.status === OrderStatus.DEBT ||

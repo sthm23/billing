@@ -121,6 +121,13 @@ export class StoreService {
       if (!store) {
         throw new NotFoundException('Store not found');
       }
+      const salesEnabled = dto.salesEnabled ?? store.salesEnabled;
+      const rentalEnabled = dto.rentalEnabled ?? store.rentalEnabled;
+      if (!salesEnabled && !rentalEnabled) {
+        throw new BadRequestException(
+          'A store must have sales or rental enabled',
+        );
+      }
       const nextAttributeIds = [...new Set(dto.attributeIds ?? [])];
       const nextBrandIds = [...new Set(dto.brandIds ?? [])];
 
@@ -154,6 +161,8 @@ export class StoreService {
           where: { id },
           data: {
             ...(dto.name ? { name: dto.name } : {}),
+            salesEnabled,
+            rentalEnabled,
           },
         });
 

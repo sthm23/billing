@@ -6,6 +6,7 @@ import { PrismaService } from '@prisma/prisma.service';
 import { HashingHelper } from '@shared/helper/hash.helper';
 import type { CurrentUser } from '@auth/models/auth.model';
 import { CreateStaffDto } from './dto/create-store.dto';
+import { UpdateStoreDto } from './dto/update-store.dto';
 import { StoreService } from './store.service';
 
 const OWN_STORE = '11111111-1111-4111-8111-111111111111';
@@ -45,6 +46,8 @@ describe('StoreService', () => {
   const prisma = {
     warehouse: { findFirst: jest.fn() },
     user: { findFirst: jest.fn(), create: jest.fn() },
+    store: { findUnique: jest.fn(), update: jest.fn() },
+    $transaction: jest.fn(),
   };
   const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
 
@@ -54,6 +57,17 @@ describe('StoreService', () => {
     prisma.warehouse.findFirst.mockResolvedValue({ id: WAREHOUSE });
     prisma.user.findFirst.mockResolvedValue(null);
     prisma.user.create.mockResolvedValue({ id: 'new-user' });
+    prisma.store.findUnique.mockResolvedValue({
+      id: OWN_STORE,
+      salesEnabled: true,
+      rentalEnabled: false,
+      brands: [],
+      attributes: [],
+      warehouse: [],
+    });
+    prisma.$transaction.mockImplementation(
+      (cb: (tx: typeof prisma) => unknown) => cb(prisma),
+    );
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -142,6 +156,41 @@ describe('StoreService', () => {
       expect(include.auth).toEqual({
         select: expect.not.objectContaining({ passwordHash: true }),
       });
+    });
+  });
+  describe('updateStore sales/rental flags', () => {
+    const dto = (flags: Partial<UpdateStoreDto>) =>
+      ({ attributeIds: [], brandIds: [], ...flags }) as UpdateStoreDto;
+
+    it('switches a store to rental only', async () => {
+      await service.updateStore(
+        OWN_STORE,
+        dto({ salesEnabled: false, rentalEnabled: true }),
+        makeUser(),
+      );
+      expect(prisma.store.update).toHaveBeenCalledWith({
+        where: { id: OWN_STORE },
+        data: { salesEnabled: false, rentalEnabled: true },
+      });
+    });
+
+    it('keeps the current flags when they are omitted', async () => {
+      await service.updateStore(OWN_STORE, dto({ name: 'Salon' }), makeUser());
+      expect(prisma.store.update).toHaveBeenCalledWith({
+        where: { id: OWN_STORE },
+        data: { name: 'Salon', salesEnabled: true, rentalEnabled: false },
+      });
+    });
+
+    it('rejects turning both sales and rental off', async () => {
+      await expect(
+        service.updateStore(
+          OWN_STORE,
+          dto({ salesEnabled: false }),
+          makeUser(),
+        ),
+      ).rejects.toThrow('sales or rental');
+      expect(prisma.store.update).not.toHaveBeenCalled();
     });
   });
 });

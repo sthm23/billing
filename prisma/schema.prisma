@@ -73,6 +73,11 @@ model Store {
   createdBy String // admin auth account id
   creator   User   @relation(fields: [createdBy], references: [id])
 
+  /// Store sells goods (orders, payments, returns of sales)
+  salesEnabled  Boolean @default(true)
+  /// Store rents goods out (rental module); at least one of the two flags is true
+  rentalEnabled Boolean @default(false)
+
   warehouse Warehouse[]
   staff     Staff[]
   customers Customer[]  @relation("CustomerStores")
@@ -238,19 +243,24 @@ model Product {
 }
 
 model ProductVariant {
-  id             String                  @id @default(uuid())
-  productId      String
-  sku            String // ску будет уникален в пределах магазина
-  barCode        String?
-  price          Decimal
-  createdAt      DateTime                @default(now())
-  storeId        String // это для быстрого поиска уникального SKU в пределах магазина
-  warehouseId    String // это для быстрого доступа к складу, на котором лежит товар
-  inventory      Inventory[]
-  orderItems     OrderItem[]
-  product        Product                 @relation(fields: [productId], references: [id])
-  stockMovements StockMovement[]
-  attributes     VariantAttributeValue[]
+  id              String                  @id @default(uuid())
+  productId       String
+  sku             String // ску будет уникален в пределах магазина
+  barCode         String?
+  price           Decimal // sale price
+  /// Variant can be sold (existing order flow rejects it otherwise)
+  canSell         Boolean                 @default(true)
+  /// Variant can be rented out; then rentPricePerDay > 0 is required
+  canRent         Boolean                 @default(false)
+  rentPricePerDay Decimal?
+  createdAt       DateTime                @default(now())
+  storeId         String // это для быстрого поиска уникального SKU в пределах магазина
+  warehouseId     String // это для быстрого доступа к складу, на котором лежит товар
+  inventory       Inventory[]
+  orderItems      OrderItem[]
+  product         Product                 @relation(fields: [productId], references: [id])
+  stockMovements  StockMovement[]
+  attributes      VariantAttributeValue[]
 
   @@unique([storeId, sku])
   @@unique([barCode])
@@ -430,6 +440,8 @@ model Order {
   returnedAmount Decimal             @default(0)
   returns        ReturnedOrder?
   services       AdditionalService[]
+  /// Set when the order is a rental (booking); such an order never goes through the sale flow
+  rental         Rental?
 
   store            Store             @relation(fields: [storeId], references: [id])
   warehouse        Warehouse         @relation(fields: [warehouseId], references: [id])
@@ -447,17 +459,18 @@ model Order {
 }
 
 model OrderItem {
-  id          String         @id @default(uuid())
-  orderId     String
-  variantId   String
-  quantity    Int
-  retailPrice Decimal // Розничная цена на момент продажи, может отличаться от текущей цены в каталоге
-  sale        Decimal        @default(0) // Скидка на момент продажи
-  costAtSale  Decimal // За сколько закупили
-  createdAt   DateTime       @default(now())
-  returnItems ReturnItem?
-  order       Order          @relation(fields: [orderId], references: [id])
-  variant     ProductVariant @relation(fields: [variantId], references: [id])
+  id                String             @id @default(uuid())
+  orderId           String
+  variantId         String
+  quantity          Int
+  retailPrice       Decimal // Розничная цена на момент продажи, может отличаться от текущей цены в каталоге
+  sale              Decimal            @default(0) // Скидка на момент продажи
+  costAtSale        Decimal // За сколько закупили
+  createdAt         DateTime           @default(now())
+  returnItems       ReturnItem?
+  rentalReturnItems RentalReturnItem[]
+  order             Order              @relation(fields: [orderId], references: [id])
+  variant           ProductVariant     @relation(fields: [variantId], references: [id])
 
   @@index([orderId])
   @@index([variantId])
@@ -469,12 +482,105 @@ model AdditionalService {
   orderId     String
   name        String
   price       Decimal
+  sale        Decimal  @default(0) // discount on the service, sale <= price
   description String?
   createdAt   DateTime @default(now())
   order       Order    @relation(fields: [orderId], references: [id])
 
   @@index([orderId])
   @@map("additional_services")
+}
+
+/**
+ * =======================
+ * RENTALS
+ * Money lives in the Order (items, services, payments); Rental keeps dates
+ * and the physical state of the rented items. Renting never changes Inventory.
+ * =======================
+ */
+model Rental {
+  id          String @id @default(uuid())
+  orderId     String @unique
+  storeId     String
+  warehouseId String
+  customerId  String
+
+  startDate   DateTime // planned issue date
+  endDate     DateTime // planned return date
+  plannedDays Int // days the price was calculated for
+
+  status   RentalStatus @default(BOOKED)
+  issuedAt DateTime?
+  issuedBy String? // staffId
+  closedAt DateTime? // all items returned
+
+  cancelledAt  DateTime?
+  cancelledBy  String? // staffId
+  refundAmount Decimal? // prepayment paid back on cancellation
+  cancelReason String?
+
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  order       Order              @relation(fields: [orderId], references: [id])
+  collaterals RentalCollateral[]
+  returns     RentalReturn[]
+
+  @@index([storeId, startDate])
+  @@index([warehouseId, status])
+  @@map("rentals")
+}
+
+/// Non-cash collateral (passport, gold); never goes to the cashbox
+model RentalCollateral {
+  id          String         @id @default(uuid())
+  rentalId    String
+  type        CollateralType
+  description String
+  receivedAt  DateTime       @default(now())
+  receivedBy  String // staffId
+  returnedAt  DateTime?
+  returnedBy  String? // staffId
+
+  rental Rental @relation(fields: [rentalId], references: [id])
+
+  @@index([rentalId])
+  @@map("rental_collaterals")
+}
+
+/// One return event (full or partial)
+model RentalReturn {
+  id                String   @id @default(uuid())
+  rentalId          String
+  returnedAt        DateTime // actual return time
+  penaltyAmount     Decimal  @default(0) // damage / late return, entered by the seller
+  penaltyComment    String? // required when penaltyAmount > 0
+  earlyReturnRefund Decimal  @default(0) // total reduction on early return, OWNER/MANAGER only
+  createdBy         String // staffId
+  createdAt         DateTime @default(now())
+
+  rental Rental             @relation(fields: [rentalId], references: [id])
+  items  RentalReturnItem[]
+
+  @@index([rentalId])
+  @@map("rental_returns")
+}
+
+model RentalReturnItem {
+  id            String   @id @default(uuid())
+  returnId      String
+  orderItemId   String
+  quantity      Int
+  cleaningDays  Int      @default(0) // 0 = no dry cleaning
+  availableFrom DateTime // returnedAt + cleaningDays: the unit is free again from here
+
+  return    RentalReturn @relation(fields: [returnId], references: [id])
+  orderItem OrderItem    @relation(fields: [orderItemId], references: [id])
+
+  @@index([returnId])
+  @@index([orderItemId])
+  @@map("rental_return_items")
 }
 
 /**
@@ -662,6 +768,21 @@ enum CashTransactionCategory {
   SALARY
   PURCHASE
   RETURN
+  OTHER
+  RENTAL // income of a rental order; not to be confused with RENT (premises rent expense)
+}
+
+enum RentalStatus {
+  BOOKED // booked, items are in the salon
+  ISSUED // handed out to the customer
+  PARTIALLY_RETURNED // some items are back
+  RETURNED // all items are back
+  CANCELLED // booking cancelled before issue
+}
+
+enum CollateralType {
+  PASSPORT
+  GOLD
   OTHER
 }
 
