@@ -15,6 +15,7 @@ import { FileModule } from './file/file.module';
 import { CashboxModule } from './cashbox/cashbox.module';
 import { DebtModule } from './debt/debt.module';
 import { HealthModule } from './health/health.module';
+import { RentalModule } from './rental/rental.module';
 import { LoggerModule } from 'nestjs-pino';
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { LoggerModule } from 'nestjs-pino';
     CashboxModule,
     DebtModule,
     HealthModule,
+    RentalModule,
   ],
   providers: [ConfigService],
 })
