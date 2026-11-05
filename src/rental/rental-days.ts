@@ -108,6 +108,11 @@ export function plannedDays(startDate: Date, endDate: Date): number {
   return Math.max(1, calendarDaysBetween(startDate, endDate));
 }
 
+/** `instant` + whole days (Asia/Tashkent has no DST, a day is always 24h). */
+export function addDaysToInstant(instant: Date, days: number): Date {
+  return new Date(instant.getTime() + days * DAY_MS);
+}
+
 /** Local `YYYY-MM-DD` of today. */
 export function todayLocalDate(now: Date = new Date()): string {
   return toLocalDate(now);

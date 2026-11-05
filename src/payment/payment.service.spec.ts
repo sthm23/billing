@@ -152,6 +152,23 @@ describe('PaymentService', () => {
       });
     });
 
+    it('counts a rental debt from paidAmount: money given back on an early return is not paid', async () => {
+      // Paid 2 000 000, 300 000 given back on an early return, then a penalty of 100 000
+      prisma.order.findUnique.mockResolvedValue(
+        debtOrder({
+          totalAmount: 1800000,
+          paidAmount: 1700000,
+          payments: [{ amount: 2000000 }],
+          rental: { id: 'rental' },
+        }),
+      );
+      await service.create(payDto(100000), seller);
+      expect(prisma.order.update.mock.calls[0][0].data).toMatchObject({
+        status: OrderStatus.COMPLETED,
+        paidAmount: 1800000,
+      });
+    });
+
     it('asks to open or choose a cashbox when the employee has none', async () => {
       prisma.cashbox.findMany.mockResolvedValue([]);
       await expect(service.create(payDto(20000), seller)).rejects.toThrow(
@@ -186,7 +203,11 @@ describe('PaymentService', () => {
     });
 
     it('books the payout against the order and completes the return', async () => {
-      await service.createPaymentForReturnOrder(RETURN, payoutDto(10000), seller);
+      await service.createPaymentForReturnOrder(
+        RETURN,
+        payoutDto(10000),
+        seller,
+      );
       expect(
         prisma.cashTransaction.createMany.mock.calls[0][0].data[0],
       ).toMatchObject({

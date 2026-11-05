@@ -680,8 +680,12 @@ describe('OrderService', () => {
       const res = await service.getSummary(range, makeUser(StaffRole.OWNER));
       const where = prisma.order.aggregate.mock.calls[0][0].where;
       expect(where).toEqual({
-        status: { in: [OrderStatus.COMPLETED, OrderStatus.DEBT] },
         soldAt: { gte: new Date(range.from), lt: new Date(range.to) },
+        OR: [
+          { status: { in: [OrderStatus.COMPLETED, OrderStatus.DEBT] } },
+          // An issued rental counts from soldAt while still HOLD (R6)
+          { status: OrderStatus.HOLD, rental: { isNot: null } },
+        ],
         storeId: STORE,
       });
       expect(res).toMatchObject({

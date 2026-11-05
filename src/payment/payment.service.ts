@@ -33,7 +33,7 @@ export class PaymentService {
     try {
       const order = await this.prisma.order.findUnique({
         where: { id: dto.orderId },
-        include: { payments: true },
+        include: { payments: true, rental: { select: { id: true } } },
       });
       if (!order) {
         throw new BadRequestException('Order not found');
@@ -46,10 +46,11 @@ export class PaymentService {
           'Cannot add payment to an order that is not in DEBT status',
         );
       }
-      const totalPaid = order.payments.reduce(
-        (sum, payment) => sum + +payment.amount,
-        0,
-      );
+      // A rental pays money back on an early return (EXPENSE/RETURN) and keeps
+      // the net in paidAmount, so the sum of its payments overstates it
+      const totalPaid = order.rental
+        ? +order.paidAmount
+        : order.payments.reduce((sum, payment) => sum + +payment.amount, 0);
       const newTotalAmount = dto.payments.reduce(
         (sum, payment) => sum + +payment.amount,
         0,

@@ -1103,13 +1103,17 @@ export class OrderService {
 
   /**
    * Orders sold in `[from, to)`: COMPLETED or DEBT with `soldAt` in the period.
+   * A rental counts from its issue (`soldAt`) even while the order is still HOLD.
    * Owner/admin — the whole store; manager — their warehouses; seller/cashier — own sales.
    */
   async getSummary(range: DateRangeParams, user: CurrentUser) {
     const { from, to } = resolveDateRange(range);
     const where: Prisma.OrderWhereInput = {
-      status: { in: [OrderStatus.COMPLETED, OrderStatus.DEBT] },
       soldAt: { gte: from, lt: to },
+      OR: [
+        { status: { in: [OrderStatus.COMPLETED, OrderStatus.DEBT] } },
+        { status: OrderStatus.HOLD, rental: { isNot: null } },
+      ],
     };
     if (user.role !== UserRole.ADMIN) {
       if (!user.staff) throw new ForbiddenException('Staff only');

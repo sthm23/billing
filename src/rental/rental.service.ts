@@ -9,18 +9,26 @@ import {
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '@prisma/prisma.service';
 import { CurrentUser } from '@auth/models/auth.model';
-import { Prisma } from '@generated/client';
+import { Cashbox, Prisma } from '@generated/client';
 import {
   CashTransactionCategory,
   CashTransactionType,
   OrderChannel,
   OrderStatus,
+  PaymentType,
   RentalStatus,
   StaffRole,
   UserRole,
 } from '@generated/enums';
 import { resolvePaymentCashbox } from '../cashbox/payment-cashbox';
 import { CreateRentalDto, UpdateRentalDto } from './dto/create-rental.dto';
+import {
+  CancelRentalDto,
+  CleaningConflictsQuery,
+  IssueRentalDto,
+  MAX_CLEANING_DAYS,
+  RentalReturnDto,
+} from './dto/rental-lifecycle.dto';
 import { CreateRentalPaymentDto } from './dto/rental-payment.dto';
 import {
   RentalAvailabilityQuery,
@@ -28,16 +36,19 @@ import {
   RentalListQuery,
 } from './dto/rental-query.dto';
 import {
+  Occupancy,
   peakOccupancy,
   RentalAvailabilityService,
 } from './rental-availability.service';
 import {
+  addDaysToInstant,
   addLocalDays,
   plannedDays,
   rentalBoundary,
   todayLocalDate,
   toLocalDate,
 } from './rental-days';
+import { ReturnSettlement, settleReturn } from './rental-return';
 
 type Db = Prisma.TransactionClient;
 type Decimal = Prisma.Decimal;
@@ -57,6 +68,89 @@ const OUT_STATUSES: RentalStatus[] = [
 const MAX_CALENDAR_DAYS = 93;
 const DEFAULT_PAGE_SIZE = 10;
 const MAX_PAGE_SIZE = 50;
+/** Clock drift between the device and the server tolerated for returnedAt */
+const RETURN_CLOCK_TOLERANCE_MS = 5 * 60 * 1000;
+
+/** Rental fields a return is computed from */
+const returnRentalSelect = {
+  id: true,
+  status: true,
+  startDate: true,
+  endDate: true,
+  plannedDays: true,
+  issuedAt: true,
+  order: {
+    select: {
+      totalAmount: true,
+      paidAmount: true,
+      items: {
+        select: {
+          id: true,
+          variantId: true,
+          quantity: true,
+          retailPrice: true,
+          sale: true,
+          rentalReturnItems: { select: { quantity: true } },
+        },
+      },
+    },
+  },
+} satisfies Prisma.RentalSelect;
+type ReturnRental = Prisma.RentalGetPayload<{
+  select: typeof returnRentalSelect;
+}>;
+
+export interface CleaningConflict {
+  orderItemId: string;
+  variantId: string;
+  availableFrom: Date;
+  conflicts: {
+    rentalId: string;
+    orderId: string;
+    customerName: string | null;
+    startDate: string;
+    endDate: string;
+    /** Units the booking needs */
+    quantity: number;
+    /** Units free for it while the returned item is in cleaning */
+    availableAtStart: number;
+  }[];
+}
+
+/** `orderItemId:quantity:cleaningDays,...` of GET /rental/:id/cleaning-conflicts */
+export function parseConflictItems(
+  value: string,
+): { orderItemId: string; quantity: number; cleaningDays: number }[] {
+  const lines = value
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const [orderItemId, quantity, cleaningDays] = part.split(':');
+      const line = {
+        orderItemId,
+        quantity: Number(quantity),
+        cleaningDays: Number(cleaningDays),
+      };
+      if (
+        !orderItemId ||
+        !Number.isInteger(line.quantity) ||
+        line.quantity < 1 ||
+        !Number.isInteger(line.cleaningDays) ||
+        line.cleaningDays < 0 ||
+        line.cleaningDays > MAX_CLEANING_DAYS
+      ) {
+        throw new BadRequestException(
+          `Invalid item "${part}": expected orderItemId:quantity:cleaningDays`,
+        );
+      }
+      return line;
+    });
+  if (lines.length === 0) {
+    throw new BadRequestException('At least one item is required');
+  }
+  return lines;
+}
 
 /** Error codes of the rental API (docs/rental/03_RENTAL_API.md) */
 export const RentalErrorCode = {
@@ -588,28 +682,11 @@ export class RentalService {
         }
 
         if (cashbox) {
-          await tx.payment.createMany({
-            data: payments.map((p) => ({
-              orderId: rental.orderId,
-              type: p.type,
-              amount: p.amount,
-              createdBy: user.staff.id,
-            })),
-          });
-          await tx.cashTransaction.createMany({
-            data: payments.map((p) => ({
-              cashboxId: cashbox.id,
-              createdById: user.staff.id,
-              type: CashTransactionType.INCOME,
-              category: CashTransactionCategory.RENTAL,
-              paymentType: p.type,
-              amount: p.amount,
-              orderId: rental.orderId,
-            })),
-          });
-          await tx.cashbox.update({
-            where: { id: cashbox.id },
-            data: { balance: { increment: newPaid } },
+          await this.takePayments(tx, {
+            cashboxId: cashbox.id,
+            orderId: rental.orderId,
+            payments,
+            user,
           });
           await tx.order.update({
             where: { id: rental.orderId },
@@ -652,6 +729,772 @@ export class RentalService {
     }
   }
 
+  /** Payment + CashTransaction INCOME/RENTAL + cashbox balance (R5). */
+  private async takePayments(
+    tx: Db,
+    {
+      cashboxId,
+      orderId,
+      payments,
+      user,
+    }: {
+      cashboxId: string;
+      orderId: string;
+      payments: { type: PaymentType; amount: number }[];
+      user: CurrentUser;
+    },
+  ) {
+    if (payments.length === 0) return;
+    await tx.payment.createMany({
+      data: payments.map((p) => ({
+        orderId,
+        type: p.type,
+        amount: p.amount,
+        createdBy: user.staff.id,
+      })),
+    });
+    await tx.cashTransaction.createMany({
+      data: payments.map((p) => ({
+        cashboxId,
+        createdById: user.staff.id,
+        type: CashTransactionType.INCOME,
+        category: CashTransactionCategory.RENTAL,
+        paymentType: p.type,
+        amount: p.amount,
+        orderId,
+      })),
+    });
+    await tx.cashbox.update({
+      where: { id: cashboxId },
+      data: {
+        balance: {
+          increment: payments.reduce(
+            (sum, p) => sum.add(p.amount),
+            new Decimal(0),
+          ),
+        },
+      },
+    });
+  }
+
+  /** Money given back to the customer: CashTransaction EXPENSE/RETURN (R4, R9). */
+  private async payOut(
+    tx: Db,
+    {
+      cashboxId,
+      orderId,
+      amount,
+      paymentType,
+      user,
+    }: {
+      cashboxId: string;
+      orderId: string;
+      amount: Decimal;
+      paymentType: PaymentType;
+      user: CurrentUser;
+    },
+  ) {
+    await tx.cashTransaction.create({
+      data: {
+        cashboxId,
+        createdById: user.staff.id,
+        type: CashTransactionType.EXPENSE,
+        category: CashTransactionCategory.RETURN,
+        paymentType,
+        amount,
+        orderId,
+      },
+    });
+    await tx.cashbox.update({
+      where: { id: cashboxId },
+      data: { balance: { decrement: amount } },
+    });
+  }
+
+  // -------------------------------------------------------------- lifecycle
+
+  /**
+   * Hands the items over (BOOKED → ISSUED). Only from the start date and
+   * before the end of the booking; the units must be in the salon now —
+   * a late previous customer or dry cleaning blocks the issue (409).
+   * Sets `soldAt`: from now on the rental counts in the sales summary (R6).
+   */
+  async issue(id: string, dto: IssueRentalDto, user: CurrentUser) {
+    const storeId = await this.assertRentalStore(user);
+    const payments = (dto.payments ?? []).filter((p) => p.amount > 0);
+    const collaterals = dto.collaterals ?? [];
+    const rental = await this.prisma.rental.findUnique({
+      where: { id },
+      select: { id: true, storeId: true, warehouseId: true, orderId: true },
+    });
+    this.assertRentalAccess(rental, storeId, user);
+    try {
+      const cashbox =
+        payments.length > 0
+          ? await resolvePaymentCashbox(this.prisma, user, {
+              cashboxId: dto.cashboxId,
+              warehouseId: rental.warehouseId,
+            })
+          : null;
+      const now = new Date();
+
+      await this.prisma.$transaction(async (tx) => {
+        await this.lockOrder(tx, rental.orderId);
+        const current = await tx.rental.findUniqueOrThrow({
+          where: { id },
+          select: {
+            status: true,
+            startDate: true,
+            endDate: true,
+            order: {
+              select: {
+                totalAmount: true,
+                paidAmount: true,
+                items: { select: { variantId: true, quantity: true } },
+              },
+            },
+          },
+        });
+        if (current.status !== RentalStatus.BOOKED) {
+          throw new BadRequestException(
+            `Only a booked rental can be issued (status: ${current.status})`,
+          );
+        }
+        if (todayLocalDate(now) < toLocalDate(current.startDate)) {
+          throw new BadRequestException(
+            'The rental cannot be issued before its start date; change the booking dates first',
+          );
+        }
+        if (now.getTime() >= current.endDate.getTime()) {
+          throw new BadRequestException(
+            'The booking period is over; change the booking dates first',
+          );
+        }
+
+        // The units must be free from now on: not with a late customer, not in cleaning
+        const variantIds = current.order.items.map((i) => i.variantId);
+        await this.availability.lockInventory(
+          tx,
+          rental.warehouseId,
+          variantIds,
+        );
+        const free = await this.availability.getAvailability(tx, {
+          warehouseId: rental.warehouseId,
+          variantIds,
+          range: { from: now, to: current.endDate },
+          excludeRentalId: id,
+          now,
+        });
+        const freeById = new Map(free.map((f) => [f.variantId, f.available]));
+        for (const item of current.order.items) {
+          const available = freeById.get(item.variantId) ?? 0;
+          if (available < item.quantity) {
+            throw new ConflictException({
+              code: RentalErrorCode.NOT_AVAILABLE,
+              message: `Variant ${item.variantId} is not in the salon now (available: ${available}, needed: ${item.quantity}): register the previous return first`,
+              variantId: item.variantId,
+              available,
+            });
+          }
+        }
+
+        const newPaid = payments.reduce(
+          (sum, p) => sum.add(p.amount),
+          new Decimal(0),
+        );
+        const paidAmount = current.order.paidAmount.add(newPaid);
+        if (paidAmount.gt(current.order.totalAmount)) {
+          throw new BadRequestException('Payment amount exceeds order total');
+        }
+        if (cashbox) {
+          await this.takePayments(tx, {
+            cashboxId: cashbox.id,
+            orderId: rental.orderId,
+            payments,
+            user,
+          });
+        }
+        // Order stays HOLD until the first return (R6)
+        await tx.order.update({
+          where: { id: rental.orderId },
+          data: { paidAmount, soldAt: now },
+        });
+        await tx.rental.update({
+          where: { id },
+          data: {
+            status: RentalStatus.ISSUED,
+            issuedAt: now,
+            issuedBy: user.staff.id,
+          },
+        });
+        if (collaterals.length > 0) {
+          await tx.rentalCollateral.createMany({
+            data: collaterals.map((c) => ({
+              rentalId: id,
+              type: c.type,
+              description: c.description,
+              receivedBy: user.staff.id,
+            })),
+          });
+        }
+      });
+      this.logger.info(
+        { rentalId: id, payments: payments.length, cashboxId: cashbox?.id },
+        'Rental issued',
+      );
+      return this.findOne(id, user);
+    } catch (error: unknown) {
+      this.fail(error, { rentalId: id }, 'Failed to issue rental');
+    }
+  }
+
+  /**
+   * Return moment: now by default; a moment in the past only for OWNER/MANAGER
+   * (a few minutes of clock drift are tolerated); never in the future.
+   */
+  private resolveReturnedAt(
+    value: string | undefined,
+    user: CurrentUser,
+    now: Date,
+  ): Date {
+    if (!value) return now;
+    const returnedAt = new Date(value);
+    if (Number.isNaN(returnedAt.getTime())) {
+      throw new BadRequestException('Invalid returnedAt');
+    }
+    if (returnedAt.getTime() > now.getTime() + RETURN_CLOCK_TOLERANCE_MS) {
+      throw new BadRequestException('returnedAt cannot be in the future');
+    }
+    if (
+      returnedAt.getTime() < now.getTime() - RETURN_CLOCK_TOLERANCE_MS &&
+      !this.canManageStore(user)
+    ) {
+      throw new ForbiddenException(
+        'Only an owner or a manager can register a return in the past',
+      );
+    }
+    return returnedAt;
+  }
+
+  /** Validates a return against the current rental and computes its money. */
+  private settle(
+    rental: ReturnRental,
+    dto: RentalReturnDto,
+    returnedAt: Date,
+  ): ReturnSettlement {
+    if (!OUT_STATUSES.includes(rental.status)) {
+      throw new BadRequestException(
+        `Only issued items can be returned (status: ${rental.status})`,
+      );
+    }
+    if (rental.issuedAt && returnedAt.getTime() < rental.issuedAt.getTime()) {
+      throw new BadRequestException('returnedAt cannot be before the issue');
+    }
+    return settleReturn({
+      rental,
+      items: rental.order.items.map((i) => ({
+        id: i.id,
+        variantId: i.variantId,
+        quantity: i.quantity,
+        retailPrice: i.retailPrice,
+        sale: i.sale,
+        returnedQuantity: i.rentalReturnItems.reduce(
+          (sum, r) => sum + r.quantity,
+          0,
+        ),
+      })),
+      totalAmount: rental.order.totalAmount,
+      paidAmount: rental.order.paidAmount,
+      returnedAt,
+      lines: dto.items,
+      penaltyAmount: new Decimal(dto.penaltyAmount ?? 0),
+      penaltyComment: dto.penaltyComment,
+      earlyReturnRefund: new Decimal(dto.earlyReturnRefund ?? 0),
+      paymentsAmount: (dto.payments ?? []).reduce(
+        (sum, p) => sum.add(p.amount),
+        new Decimal(0),
+      ),
+    });
+  }
+
+  private assertEarlyRefundRole(dto: RentalReturnDto, user: CurrentUser) {
+    if ((dto.earlyReturnRefund ?? 0) > 0 && !this.canManageStore(user)) {
+      throw new ForbiddenException(
+        'Only an owner or a manager can lower the total on an early return',
+      );
+    }
+  }
+
+  /** POST /rental/:id/returns/preview: the return computed, nothing saved. */
+  async previewReturn(id: string, dto: RentalReturnDto, user: CurrentUser) {
+    const storeId = await this.assertRentalStore(user);
+    this.assertEarlyRefundRole(dto, user);
+    const returnedAt = this.resolveReturnedAt(dto.returnedAt, user, new Date());
+    const rental = await this.prisma.rental.findUnique({
+      where: { id },
+      select: { ...returnRentalSelect, storeId: true, warehouseId: true },
+    });
+    this.assertRentalAccess(rental, storeId, user);
+    const result = this.settle(rental, dto, returnedAt);
+    return { returnedAt, ...result };
+  }
+
+  /**
+   * POST /rental/:id/returns: full or partial return (R4, R6–R8, R10).
+   * Units become free at `returnedAt + cleaningDays`; the order total gets the
+   * penalty and loses the early-return refund; overpaid money goes back from
+   * the cashbox; the order becomes COMPLETED or DEBT.
+   */
+  async createReturn(id: string, dto: RentalReturnDto, user: CurrentUser) {
+    const storeId = await this.assertRentalStore(user);
+    this.assertEarlyRefundRole(dto, user);
+    const now = new Date();
+    const returnedAt = this.resolveReturnedAt(dto.returnedAt, user, now);
+    const payments = (dto.payments ?? []).filter((p) => p.amount > 0);
+    const rental = await this.prisma.rental.findUnique({
+      where: { id },
+      select: { id: true, storeId: true, warehouseId: true, orderId: true },
+    });
+    this.assertRentalAccess(rental, storeId, user);
+    try {
+      const result = await this.prisma.$transaction(async (tx) => {
+        await this.lockOrder(tx, rental.orderId);
+        const current = await tx.rental.findUniqueOrThrow({
+          where: { id },
+          select: returnRentalSelect,
+        });
+        let cashbox: Cashbox | null = null;
+        const settlement = this.settle(
+          current,
+          { ...dto, payments },
+          returnedAt,
+        );
+        if (settlement.cashOutAmount.gt(0) && !dto.refundPaymentType) {
+          throw new BadRequestException(
+            `refundPaymentType is required: ${settlement.cashOutAmount.toString()} must be given back to the customer`,
+          );
+        }
+        if (payments.length > 0 || settlement.cashOutAmount.gt(0)) {
+          cashbox = await resolvePaymentCashbox(tx, user, {
+            cashboxId: dto.cashboxId,
+            warehouseId: rental.warehouseId,
+          });
+        }
+
+        const created = await tx.rentalReturn.create({
+          data: {
+            rentalId: id,
+            returnedAt,
+            penaltyAmount: settlement.penaltyAmount,
+            penaltyComment: dto.penaltyComment?.trim() || null,
+            earlyReturnRefund: settlement.earlyReturnRefund,
+            createdBy: user.staff.id,
+            items: {
+              create: settlement.items.map((i) => ({
+                orderItemId: i.orderItemId,
+                quantity: i.quantity,
+                cleaningDays: i.cleaningDays,
+                availableFrom: i.availableFrom,
+              })),
+            },
+          },
+        });
+        if (cashbox) {
+          await this.takePayments(tx, {
+            cashboxId: cashbox.id,
+            orderId: rental.orderId,
+            payments,
+            user,
+          });
+          if (settlement.cashOutAmount.gt(0) && dto.refundPaymentType) {
+            await this.payOut(tx, {
+              cashboxId: cashbox.id,
+              orderId: rental.orderId,
+              amount: settlement.cashOutAmount,
+              paymentType: dto.refundPaymentType,
+              user,
+            });
+          }
+        }
+        await tx.order.update({
+          where: { id: rental.orderId },
+          data: {
+            totalAmount: settlement.newTotalAmount,
+            paidAmount: settlement.paidAmountAfter,
+            status: settlement.orderStatusAfter,
+          },
+        });
+        await tx.rental.update({
+          where: { id },
+          data: {
+            status: settlement.rentalStatusAfter,
+            ...(settlement.rentalStatusAfter === RentalStatus.RETURNED
+              ? { closedAt: now }
+              : {}),
+          },
+        });
+        return { returnId: created.id, settlement };
+      });
+      this.logger.info(
+        {
+          rentalId: id,
+          returnId: result.returnId,
+          status: result.settlement.rentalStatusAfter,
+          penalty: result.settlement.penaltyAmount.toString(),
+          cashOut: result.settlement.cashOutAmount.toString(),
+        },
+        'Rental return registered',
+      );
+      return this.findOne(id, user);
+    } catch (error: unknown) {
+      this.fail(error, { rentalId: id }, 'Failed to register rental return');
+    }
+  }
+
+  /**
+   * GET /rental/:id/cleaning-conflicts (R7): bookings of the same variants
+   * that would lack a unit while the returned items are in dry cleaning.
+   * A warning only — the seller decides.
+   */
+  async getCleaningConflicts(
+    id: string,
+    query: CleaningConflictsQuery,
+    user: CurrentUser,
+  ) {
+    const storeId = await this.assertRentalStore(user);
+    const now = new Date();
+    const returnedAt = query.returnedAt ? new Date(query.returnedAt) : now;
+    if (Number.isNaN(returnedAt.getTime())) {
+      throw new BadRequestException('Invalid returnedAt');
+    }
+    const lines = parseConflictItems(query.items);
+    const rental = await this.prisma.rental.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        storeId: true,
+        warehouseId: true,
+        status: true,
+        startDate: true,
+        endDate: true,
+        order: {
+          select: {
+            items: {
+              select: {
+                id: true,
+                variantId: true,
+                quantity: true,
+                rentalReturnItems: {
+                  select: { quantity: true, availableFrom: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    this.assertRentalAccess(rental, storeId, user);
+    if (!OUT_STATUSES.includes(rental.status)) {
+      throw new BadRequestException(
+        `Only issued items can be returned (status: ${rental.status})`,
+      );
+    }
+    const itemById = new Map(rental.order.items.map((i) => [i.id, i]));
+
+    try {
+      const result: CleaningConflict[] = [];
+      for (const line of lines) {
+        const item = itemById.get(line.orderItemId);
+        if (!item) {
+          throw new BadRequestException(
+            `Order item does not belong to this rental: ${line.orderItemId}`,
+          );
+        }
+        const availableFrom = addDaysToInstant(returnedAt, line.cleaningDays);
+        const conflicts: CleaningConflict['conflicts'] = [];
+        if (line.cleaningDays > 0) {
+          conflicts.push(
+            ...(await this.findCleaningConflicts({
+              warehouseId: rental.warehouseId,
+              rental,
+              item,
+              quantity: line.quantity,
+              window: { from: returnedAt, to: availableFrom },
+              now,
+            })),
+          );
+        }
+        result.push({
+          orderItemId: item.id,
+          variantId: item.variantId,
+          availableFrom,
+          conflicts,
+        });
+      }
+      return result;
+    } catch (error: unknown) {
+      this.fail(error, { rentalId: id }, 'Failed to check cleaning conflicts');
+    }
+  }
+
+  private async findCleaningConflicts({
+    warehouseId,
+    rental,
+    item,
+    quantity,
+    window,
+    now,
+  }: {
+    warehouseId: string;
+    rental: { id: string; startDate: Date; endDate: Date };
+    item: {
+      variantId: string;
+      quantity: number;
+      rentalReturnItems: { quantity: number; availableFrom: Date }[];
+    };
+    quantity: number;
+    window: { from: Date; to: Date };
+    now: Date;
+  }): Promise<CleaningConflict['conflicts']> {
+    const others = await this.availability.findOccupancy(this.prisma, {
+      warehouseId,
+      variantIds: [item.variantId],
+      range: window,
+      excludeRentalId: rental.id,
+      now,
+    });
+    // This rental after the return: earlier returns, the units returned now
+    // (busy until the end of cleaning), the units still with the customer
+    const returnedBefore = item.rentalReturnItems.reduce(
+      (sum, r) => sum + r.quantity,
+      0,
+    );
+    const outstanding = Math.max(0, item.quantity - returnedBefore - quantity);
+    const own: Occupancy[] = [
+      ...item.rentalReturnItems.map((r) => ({
+        variantId: item.variantId,
+        rentalId: rental.id,
+        from: rental.startDate,
+        to: r.availableFrom,
+        quantity: r.quantity,
+      })),
+      {
+        variantId: item.variantId,
+        rentalId: rental.id,
+        from: rental.startDate,
+        to: window.to,
+        quantity,
+      },
+      {
+        variantId: item.variantId,
+        rentalId: rental.id,
+        from: rental.startDate,
+        to: new Date(Math.max(rental.endDate.getTime(), now.getTime())),
+        quantity: outstanding,
+      },
+    ];
+
+    const candidateIds = [...new Set(others.map((o) => o.rentalId))];
+    if (candidateIds.length === 0) return [];
+    const [inventory, candidates] = await Promise.all([
+      this.prisma.inventory.findFirst({
+        where: { warehouseId, variantId: item.variantId },
+        select: { quantity: true },
+      }),
+      // Only bookings not handed over yet can be affected
+      this.prisma.rental.findMany({
+        where: {
+          id: { in: candidateIds },
+          status: RentalStatus.BOOKED,
+          startDate: { lt: window.to },
+        },
+        select: {
+          id: true,
+          orderId: true,
+          startDate: true,
+          endDate: true,
+          order: {
+            select: {
+              customer: { select: { user: { select: { fullName: true } } } },
+            },
+          },
+        },
+        orderBy: { startDate: 'asc' },
+      }),
+    ]);
+    const owned = inventory?.quantity ?? 0;
+
+    const conflicts: CleaningConflict['conflicts'] = [];
+    for (const candidate of candidates) {
+      const overlap = {
+        from: new Date(
+          Math.max(candidate.startDate.getTime(), window.from.getTime()),
+        ),
+        to: new Date(
+          Math.min(candidate.endDate.getTime(), window.to.getTime()),
+        ),
+      };
+      if (overlap.from.getTime() >= overlap.to.getTime()) continue;
+      const needed = others
+        .filter((o) => o.rentalId === candidate.id)
+        .reduce((sum, o) => sum + o.quantity, 0);
+      const busy = peakOccupancy(
+        [...others.filter((o) => o.rentalId !== candidate.id), ...own],
+        overlap,
+      );
+      const availableAtStart = Math.max(0, owned - busy);
+      if (availableAtStart < needed) {
+        conflicts.push({
+          rentalId: candidate.id,
+          orderId: candidate.orderId,
+          customerName: candidate.order.customer?.user.fullName ?? null,
+          startDate: toLocalDate(candidate.startDate),
+          endDate: toLocalDate(candidate.endDate),
+          quantity: needed,
+          availableAtStart,
+        });
+      }
+    }
+    return conflicts;
+  }
+
+  /**
+   * POST /rental/:id/collaterals/:collateralId/return (R5): passport, gold
+   * etc. go back once the order is fully paid (or the booking is cancelled).
+   * Items still with the customer do not block it — the client warns.
+   */
+  async returnCollateral(id: string, collateralId: string, user: CurrentUser) {
+    const storeId = await this.assertRentalStore(user);
+    const rental = await this.prisma.rental.findUnique({
+      where: { id },
+      select: { id: true, storeId: true, warehouseId: true, orderId: true },
+    });
+    this.assertRentalAccess(rental, storeId, user);
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await this.lockOrder(tx, rental.orderId);
+        const current = await tx.rental.findUniqueOrThrow({
+          where: { id },
+          select: {
+            status: true,
+            order: { select: { totalAmount: true, paidAmount: true } },
+          },
+        });
+        const collateral = await tx.rentalCollateral.findFirst({
+          where: { id: collateralId, rentalId: id },
+        });
+        if (!collateral) throw new NotFoundException('Collateral not found');
+        if (collateral.returnedAt) {
+          throw new BadRequestException('The collateral is already returned');
+        }
+        if (
+          current.status !== RentalStatus.CANCELLED &&
+          current.order.paidAmount.lt(current.order.totalAmount)
+        ) {
+          throw new BadRequestException(
+            'The collateral can be returned only after full payment',
+          );
+        }
+        await tx.rentalCollateral.update({
+          where: { id: collateralId },
+          data: { returnedAt: new Date(), returnedBy: user.staff.id },
+        });
+      });
+      this.logger.info({ rentalId: id, collateralId }, 'Collateral returned');
+      return this.findOne(id, user);
+    } catch (error: unknown) {
+      this.fail(
+        error,
+        { rentalId: id, collateralId },
+        'Failed to return collateral',
+      );
+    }
+  }
+
+  /**
+   * POST /rental/:id/cancel (R9): OWNER/MANAGER, BOOKED only. `refundAmount`
+   * of the prepayment goes back from the cashbox (EXPENSE/RETURN); the rest
+   * stays income. The order keeps the net paid amount; units are freed.
+   */
+  async cancel(id: string, dto: CancelRentalDto, user: CurrentUser) {
+    const storeId = await this.assertRentalStore(user);
+    if (!this.canManageStore(user)) {
+      throw new ForbiddenException(
+        'Only an owner or a manager can cancel a booking',
+      );
+    }
+    const rental = await this.prisma.rental.findUnique({
+      where: { id },
+      select: { id: true, storeId: true, warehouseId: true, orderId: true },
+    });
+    this.assertRentalAccess(rental, storeId, user);
+    const refund = new Decimal(dto.refundAmount ?? 0);
+    if (refund.gt(0) && !dto.refundPaymentType) {
+      throw new BadRequestException(
+        'refundPaymentType is required to give money back',
+      );
+    }
+    try {
+      const cashbox = refund.gt(0)
+        ? await resolvePaymentCashbox(this.prisma, user, {
+            cashboxId: dto.cashboxId,
+            warehouseId: rental.warehouseId,
+          })
+        : null;
+      const now = new Date();
+      await this.prisma.$transaction(async (tx) => {
+        await this.lockOrder(tx, rental.orderId);
+        const current = await tx.rental.findUniqueOrThrow({
+          where: { id },
+          select: { status: true, order: { select: { paidAmount: true } } },
+        });
+        if (current.status !== RentalStatus.BOOKED) {
+          throw new BadRequestException(
+            `Only a booked rental can be cancelled (status: ${current.status}); issued items are returned instead`,
+          );
+        }
+        if (refund.gt(current.order.paidAmount)) {
+          throw new BadRequestException(
+            `refundAmount cannot exceed the amount paid (${current.order.paidAmount.toString()})`,
+          );
+        }
+        if (cashbox && dto.refundPaymentType) {
+          await this.payOut(tx, {
+            cashboxId: cashbox.id,
+            orderId: rental.orderId,
+            amount: refund,
+            paymentType: dto.refundPaymentType,
+            user,
+          });
+        }
+        await tx.order.update({
+          where: { id: rental.orderId },
+          data: {
+            status: OrderStatus.CANCELLED,
+            paidAmount: current.order.paidAmount.sub(refund),
+          },
+        });
+        await tx.rental.update({
+          where: { id },
+          data: {
+            status: RentalStatus.CANCELLED,
+            cancelledAt: now,
+            cancelledBy: user.staff.id,
+            refundAmount: refund,
+            cancelReason: dto.reason?.trim() || null,
+          },
+        });
+      });
+      this.logger.info(
+        { rentalId: id, refund: refund.toString(), cashboxId: cashbox?.id },
+        'Rental cancelled',
+      );
+      return this.findOne(id, user);
+    } catch (error: unknown) {
+      this.fail(error, { rentalId: id }, 'Failed to cancel rental');
+    }
+  }
+
   // ----------------------------------------------------------------- reads
 
   async findOne(id: string, user: CurrentUser) {
@@ -678,7 +1521,11 @@ export class RentalService {
         rental.endDate.getTime() < Date.now(),
       order: {
         ...order,
-        dueAmount: order.totalAmount.sub(order.paidAmount),
+        // A cancelled booking owes nothing: the kept prepayment is the income
+        dueAmount:
+          rental.status === RentalStatus.CANCELLED
+            ? new Decimal(0)
+            : order.totalAmount.sub(order.paidAmount),
         items: order.items.map((item) => ({
           ...item,
           returnedQuantity: returnedByItem.get(item.id) ?? 0,
@@ -771,7 +1618,10 @@ export class RentalService {
             status: order.status,
             totalAmount: order.totalAmount,
             paidAmount: order.paidAmount,
-            dueAmount: order.totalAmount.sub(order.paidAmount),
+            dueAmount:
+              rental.status === RentalStatus.CANCELLED
+                ? new Decimal(0)
+                : order.totalAmount.sub(order.paidAmount),
           },
           customer: order.customer
             ? {

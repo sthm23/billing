@@ -115,14 +115,21 @@ describe('RentalService', () => {
       findMany: jest.fn(),
       count: jest.fn(),
     },
-    rentalCollateral: { createMany: jest.fn() },
+    rentalCollateral: {
+      createMany: jest.fn(),
+      findFirst: jest.fn(),
+      update: jest.fn(),
+    },
+    rentalReturn: { create: jest.fn() },
+    inventory: { findFirst: jest.fn() },
     payment: { createMany: jest.fn() },
-    cashTransaction: { createMany: jest.fn() },
+    cashTransaction: { createMany: jest.fn(), create: jest.fn() },
     cashbox: { findMany: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
   };
   const availability = {
     lockInventory: jest.fn(),
     getAvailability: jest.fn(),
+    findOccupancy: jest.fn(),
   };
   const logger = {
     debug: jest.fn(),
@@ -597,6 +604,490 @@ describe('RentalService', () => {
       await expect(
         service.findAll({ status: 'LOST' }, makeUser(StaffRole.OWNER)),
       ).rejects.toThrow('Unknown rental status');
+    });
+  });
+
+  describe('issue', () => {
+    const today = todayLocalDate();
+    const issuable = (overrides: Record<string, unknown> = {}) => ({
+      status: RentalStatus.BOOKED,
+      startDate: rentalBoundary(today),
+      endDate: rentalBoundary(addLocalDays(today, 2)),
+      order: {
+        totalAmount: D(1600000),
+        paidAmount: D(500000),
+        items: [{ variantId: DRESS, quantity: 1 }],
+      },
+      ...overrides,
+    });
+
+    beforeEach(() => {
+      prisma.rental.findUniqueOrThrow.mockResolvedValue(issuable());
+      availability.getAvailability.mockResolvedValue([
+        { variantId: DRESS, owned: 1, available: 1 },
+      ]);
+    });
+
+    it('hands over: ISSUED, soldAt set, order stays HOLD, extra payment and passport taken', async () => {
+      await service.issue(
+        RENTAL,
+        {
+          payments: [{ type: PaymentType.CARD, amount: 200000 }],
+          collaterals: [{ type: 'PASSPORT', description: 'AA1234567' }],
+        },
+        makeUser(StaffRole.SELLER),
+      );
+      const order = prisma.order.update.mock.calls[0][0].data;
+      expect(Number(order.paidAmount)).toBe(700000);
+      expect(order.soldAt).toBeInstanceOf(Date);
+      expect(order).not.toHaveProperty('status');
+      expect(prisma.rental.update.mock.calls[0][0].data).toMatchObject({
+        status: RentalStatus.ISSUED,
+        issuedBy: 'staff',
+      });
+      expect(
+        prisma.cashTransaction.createMany.mock.calls[0][0].data[0],
+      ).toMatchObject({
+        category: CashTransactionCategory.RENTAL,
+        amount: 200000,
+      });
+      expect(prisma.rentalCollateral.createMany).toHaveBeenCalled();
+      // Free units are checked from now on without the rental itself
+      expect(availability.getAvailability.mock.calls[0][1]).toMatchObject({
+        excludeRentalId: RENTAL,
+        variantIds: [DRESS],
+      });
+    });
+
+    it('refuses to issue before the start date', async () => {
+      prisma.rental.findUniqueOrThrow.mockResolvedValue(
+        issuable({
+          startDate: rentalBoundary(addLocalDays(today, 1)),
+          endDate: rentalBoundary(addLocalDays(today, 3)),
+        }),
+      );
+      await expect(
+        service.issue(RENTAL, {}, makeUser(StaffRole.OWNER)),
+      ).rejects.toThrow('before its start date');
+      expect(prisma.rental.update).not.toHaveBeenCalled();
+    });
+
+    it('answers 409 when the unit is not back in the salon', async () => {
+      availability.getAvailability.mockResolvedValue([
+        { variantId: DRESS, owned: 1, available: 0 },
+      ]);
+      const error = await service
+        .issue(RENTAL, {}, makeUser(StaffRole.OWNER))
+        .catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toMatchObject({
+        code: 'NOT_AVAILABLE',
+        variantId: DRESS,
+      });
+      expect(prisma.rental.update).not.toHaveBeenCalled();
+    });
+
+    it('issues only a booked rental', async () => {
+      prisma.rental.findUniqueOrThrow.mockResolvedValue(
+        issuable({ status: RentalStatus.ISSUED }),
+      );
+      await expect(
+        service.issue(RENTAL, {}, makeUser(StaffRole.OWNER)),
+      ).rejects.toThrow('Only a booked rental');
+    });
+  });
+
+  describe('returns', () => {
+    const issuedAt = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+    const returnable = (overrides: Record<string, unknown> = {}) => ({
+      id: RENTAL,
+      storeId: STORE,
+      warehouseId: WAREHOUSE,
+      orderId: ORDER,
+      status: RentalStatus.ISSUED,
+      // Started two days ago, ends in two days
+      startDate: issuedAt,
+      endDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
+      plannedDays: 4,
+      issuedAt,
+      order: {
+        totalAmount: D(2000000),
+        paidAmount: D(2000000),
+        items: [
+          {
+            id: 'dress-item',
+            variantId: DRESS,
+            quantity: 1,
+            retailPrice: D(800000),
+            sale: D(0),
+            rentalReturnItems: [],
+          },
+          {
+            id: 'suit-item',
+            variantId: SUIT,
+            quantity: 1,
+            retailPrice: D(600000),
+            sale: D(0),
+            rentalReturnItems: [],
+          },
+        ],
+      },
+      ...overrides,
+    });
+    const both = [
+      { orderItemId: 'dress-item', quantity: 1, cleaningDays: 1 },
+      { orderItemId: 'suit-item', quantity: 1, cleaningDays: 0 },
+    ];
+
+    beforeEach(() => {
+      prisma.rental.findUnique.mockImplementation(
+        (args: { select?: unknown; include?: unknown }) =>
+          Promise.resolve(args.include ? rentalRow() : returnable()),
+      );
+      prisma.rental.findUniqueOrThrow.mockResolvedValue(returnable());
+      prisma.rentalReturn.create.mockResolvedValue({ id: 'return' });
+    });
+
+    it('early return: manager lowers the total, the overpaid part goes back from the cashbox', async () => {
+      await service.createReturn(
+        RENTAL,
+        {
+          items: both,
+          earlyReturnRefund: 300000,
+          refundPaymentType: PaymentType.CASH,
+        },
+        makeUser(StaffRole.MANAGER),
+      );
+      const created = prisma.rentalReturn.create.mock.calls[0][0].data;
+      expect(Number(created.earlyReturnRefund)).toBe(300000);
+      expect(created.items.create[0]).toMatchObject({
+        orderItemId: 'dress-item',
+        cleaningDays: 1,
+      });
+      expect(prisma.cashTransaction.create.mock.calls[0][0].data).toMatchObject(
+        {
+          type: CashTransactionType.EXPENSE,
+          category: CashTransactionCategory.RETURN,
+          paymentType: PaymentType.CASH,
+          orderId: ORDER,
+        },
+      );
+      expect(
+        Number(prisma.cashbox.update.mock.calls[0][0].data.balance.decrement),
+      ).toBe(300000);
+      const order = prisma.order.update.mock.calls[0][0].data;
+      expect(Number(order.totalAmount)).toBe(1700000);
+      expect(Number(order.paidAmount)).toBe(1700000);
+      expect(order.status).toBe(OrderStatus.COMPLETED);
+      expect(prisma.rental.update.mock.calls[0][0].data).toMatchObject({
+        status: RentalStatus.RETURNED,
+      });
+    });
+
+    it('forbids a seller to lower the total on an early return', async () => {
+      await expect(
+        service.createReturn(
+          RENTAL,
+          { items: both, earlyReturnRefund: 1 },
+          makeUser(StaffRole.SELLER),
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.rentalReturn.create).not.toHaveBeenCalled();
+    });
+
+    it('forbids a seller to backdate a return', async () => {
+      await expect(
+        service.createReturn(
+          RENTAL,
+          {
+            items: both,
+            returnedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+          },
+          makeUser(StaffRole.SELLER),
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('requires the payout type when money goes back', async () => {
+      await expect(
+        service.createReturn(
+          RENTAL,
+          { items: both, earlyReturnRefund: 300000 },
+          makeUser(StaffRole.OWNER),
+        ),
+      ).rejects.toThrow('refundPaymentType is required');
+      expect(prisma.rentalReturn.create).not.toHaveBeenCalled();
+    });
+
+    it('partial return without full payment: order DEBT, no cashbox needed', async () => {
+      prisma.rental.findUniqueOrThrow.mockResolvedValue(
+        returnable({
+          order: { ...returnable().order, paidAmount: D(500000) },
+        }),
+      );
+      await service.createReturn(
+        RENTAL,
+        { items: [both[0]] },
+        makeUser(StaffRole.SELLER),
+      );
+      expect(prisma.cashbox.findMany).not.toHaveBeenCalled();
+      expect(prisma.order.update.mock.calls[0][0].data.status).toBe(
+        OrderStatus.DEBT,
+      );
+      expect(prisma.rental.update.mock.calls[0][0].data).toEqual({
+        status: RentalStatus.PARTIALLY_RETURNED,
+      });
+    });
+
+    it('preview computes without writing', async () => {
+      const res = await service.previewReturn(
+        RENTAL,
+        { items: both, penaltyAmount: 100000, penaltyComment: 'Stain' },
+        makeUser(StaffRole.SELLER),
+      );
+      expect(Number(res.newTotalAmount)).toBe(2100000);
+      expect(Number(res.dueAmount)).toBe(100000);
+      // actualDays depends on the time of day here; covered in rental-return.spec
+      expect(res.items[0]).toMatchObject({ plannedDays: 4 });
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(prisma.rentalReturn.create).not.toHaveBeenCalled();
+    });
+
+    it('returns only issued items', async () => {
+      prisma.rental.findUniqueOrThrow.mockResolvedValue(
+        returnable({ status: RentalStatus.BOOKED }),
+      );
+      await expect(
+        service.createReturn(
+          RENTAL,
+          { items: both },
+          makeUser(StaffRole.OWNER),
+        ),
+      ).rejects.toThrow('Only issued items');
+    });
+  });
+
+  describe('cancel', () => {
+    beforeEach(() => {
+      prisma.rental.findUniqueOrThrow.mockResolvedValue({
+        status: RentalStatus.BOOKED,
+        order: { paidAmount: D(500000) },
+      });
+    });
+
+    it('manager cancels and gives part of the prepayment back (scenario 8)', async () => {
+      await service.cancel(
+        RENTAL,
+        {
+          refundAmount: 300000,
+          refundPaymentType: PaymentType.CASH,
+          reason: 'Wedding cancelled',
+        },
+        makeUser(StaffRole.MANAGER),
+      );
+      expect(prisma.cashTransaction.create.mock.calls[0][0].data).toMatchObject(
+        {
+          type: CashTransactionType.EXPENSE,
+          category: CashTransactionCategory.RETURN,
+        },
+      );
+      const order = prisma.order.update.mock.calls[0][0].data;
+      expect(order.status).toBe(OrderStatus.CANCELLED);
+      expect(Number(order.paidAmount)).toBe(200000);
+      expect(prisma.rental.update.mock.calls[0][0].data).toMatchObject({
+        status: RentalStatus.CANCELLED,
+        cancelledBy: 'staff',
+        cancelReason: 'Wedding cancelled',
+      });
+    });
+
+    it('forbids a seller to cancel', async () => {
+      await expect(
+        service.cancel(RENTAL, { refundAmount: 0 }, makeUser(StaffRole.SELLER)),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('refunds no more than paid and cancels only a booked rental', async () => {
+      await expect(
+        service.cancel(
+          RENTAL,
+          { refundAmount: 500001, refundPaymentType: PaymentType.CASH },
+          makeUser(StaffRole.OWNER),
+        ),
+      ).rejects.toThrow('cannot exceed the amount paid');
+      prisma.rental.findUniqueOrThrow.mockResolvedValue({
+        status: RentalStatus.ISSUED,
+        order: { paidAmount: D(0) },
+      });
+      await expect(
+        service.cancel(RENTAL, { refundAmount: 0 }, makeUser(StaffRole.OWNER)),
+      ).rejects.toThrow('Only a booked rental');
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+
+    it('cancels without a refund and without a cashbox', async () => {
+      await service.cancel(
+        RENTAL,
+        { refundAmount: 0 },
+        makeUser(StaffRole.OWNER),
+      );
+      expect(prisma.cashbox.findMany).not.toHaveBeenCalled();
+      expect(prisma.cashTransaction.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('returnCollateral', () => {
+    const state = (status: RentalStatus, total: number, paid: number) => ({
+      status,
+      order: { totalAmount: D(total), paidAmount: D(paid) },
+    });
+
+    beforeEach(() => {
+      prisma.rentalCollateral.findFirst.mockResolvedValue({
+        id: 'collateral',
+        returnedAt: null,
+      });
+    });
+
+    it('gives the passport back after full payment (R5)', async () => {
+      prisma.rental.findUniqueOrThrow.mockResolvedValue(
+        state(RentalStatus.RETURNED, 1600000, 1600000),
+      );
+      await service.returnCollateral(
+        RENTAL,
+        'collateral',
+        makeUser(StaffRole.SELLER),
+      );
+      expect(
+        prisma.rentalCollateral.update.mock.calls[0][0].data,
+      ).toMatchObject({
+        returnedBy: 'staff',
+      });
+    });
+
+    it('keeps it while something is owed', async () => {
+      prisma.rental.findUniqueOrThrow.mockResolvedValue(
+        state(RentalStatus.ISSUED, 1600000, 1500000),
+      );
+      await expect(
+        service.returnCollateral(
+          RENTAL,
+          'collateral',
+          makeUser(StaffRole.SELLER),
+        ),
+      ).rejects.toThrow('after full payment');
+    });
+
+    it('gives it back for a cancelled booking', async () => {
+      prisma.rental.findUniqueOrThrow.mockResolvedValue(
+        state(RentalStatus.CANCELLED, 1600000, 200000),
+      );
+      await service.returnCollateral(
+        RENTAL,
+        'collateral',
+        makeUser(StaffRole.SELLER),
+      );
+      expect(prisma.rentalCollateral.update).toHaveBeenCalled();
+    });
+
+    it('rejects a collateral returned already', async () => {
+      prisma.rental.findUniqueOrThrow.mockResolvedValue(
+        state(RentalStatus.RETURNED, 1, 1),
+      );
+      prisma.rentalCollateral.findFirst.mockResolvedValue({
+        id: 'collateral',
+        returnedAt: new Date(),
+      });
+      await expect(
+        service.returnCollateral(
+          RENTAL,
+          'collateral',
+          makeUser(StaffRole.SELLER),
+        ),
+      ).rejects.toThrow('already returned');
+    });
+  });
+
+  describe('getCleaningConflicts', () => {
+    const OTHER = '99999999-9999-4999-8999-999999999999';
+    const returnedAt = rentalBoundary('2027-05-16');
+
+    beforeEach(() => {
+      prisma.rental.findUnique.mockResolvedValue({
+        id: RENTAL,
+        storeId: STORE,
+        warehouseId: WAREHOUSE,
+        status: RentalStatus.ISSUED,
+        startDate: rentalBoundary('2027-05-14'),
+        endDate: rentalBoundary('2027-05-16'),
+        order: {
+          items: [
+            {
+              id: 'dress-item',
+              variantId: DRESS,
+              quantity: 1,
+              rentalReturnItems: [],
+            },
+          ],
+        },
+      });
+      prisma.inventory.findFirst.mockResolvedValue({ quantity: 1 });
+      // Next customer takes the only dress on the 17th
+      availability.findOccupancy.mockResolvedValue([
+        {
+          variantId: DRESS,
+          rentalId: OTHER,
+          from: rentalBoundary('2027-05-17'),
+          to: rentalBoundary('2027-05-19'),
+          quantity: 1,
+        },
+      ]);
+      prisma.rental.findMany.mockResolvedValue([
+        {
+          id: OTHER,
+          orderId: 'other-order',
+          startDate: rentalBoundary('2027-05-17'),
+          endDate: rentalBoundary('2027-05-19'),
+          order: { customer: { user: { fullName: 'Next bride' } } },
+        },
+      ]);
+    });
+
+    it('warns when cleaning runs into the next booking', async () => {
+      const [res] = await service.getCleaningConflicts(
+        RENTAL,
+        { returnedAt: returnedAt.toISOString(), items: 'dress-item:1:2' },
+        makeUser(StaffRole.SELLER),
+      );
+      expect(res.availableFrom).toEqual(rentalBoundary('2027-05-18'));
+      expect(res.conflicts).toEqual([
+        expect.objectContaining({
+          rentalId: OTHER,
+          customerName: 'Next bride',
+          startDate: '2027-05-17',
+          quantity: 1,
+          availableAtStart: 0,
+        }),
+      ]);
+    });
+
+    it('sees no conflict when cleaning ends before the next booking', async () => {
+      const [res] = await service.getCleaningConflicts(
+        RENTAL,
+        { returnedAt: returnedAt.toISOString(), items: 'dress-item:1:1' },
+        makeUser(StaffRole.SELLER),
+      );
+      expect(res.conflicts).toEqual([]);
+    });
+
+    it('rejects a malformed items list', async () => {
+      await expect(
+        service.getCleaningConflicts(
+          RENTAL,
+          { items: 'dress-item:x:1' },
+          makeUser(StaffRole.SELLER),
+        ),
+      ).rejects.toThrow('orderItemId:quantity:cleaningDays');
     });
   });
 });
