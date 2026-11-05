@@ -8,13 +8,14 @@
 5. [Products & Variants](#products--variants)
 6. [Inventory](#inventory)
 7. [Orders & Sales](#orders--sales)
-8. [Returns](#returns)
-9. [Payments](#payments)
-10. [Cashbox](#cashbox)
-11. [Debts](#debts)
-12. [Catalog (Categories, Brands, Attributes)](#catalog)
-13. [Enums](#enums)
-14. [Индексы и ограничения](#индексы-и-ограничения)
+8. [Rentals](#rentals)
+9. [Returns](#returns)
+10. [Payments](#payments)
+11. [Cashbox](#cashbox)
+12. [Debts](#debts)
+13. [Catalog (Categories, Brands, Attributes)](#catalog)
+14. [Enums](#enums)
+15. [Индексы и ограничения](#индексы-и-ограничения)
 
 ---
 
@@ -128,6 +129,9 @@ model Store {
   createdBy String   // Admin User ID, кто создал
   createdAt DateTime @default(now())
   
+  salesEnabled  Boolean @default(true)  // магазин продаёт товары
+  rentalEnabled Boolean @default(false) // магазин сдаёт товары в аренду
+  
   creator       User                @relation(fields: [createdBy], references: [id])
   warehouse     Warehouse[]
   staff         Staff[]
@@ -145,6 +149,11 @@ model Store {
 - Один Store → много Warehouse
 - Один Store → много Staff
 - Один Store ↔ много Customer (M2M через "CustomerStores")
+
+**Режимы магазина** (миграция `20261105120000_rental_schema`):
+- `salesEnabled` — продажи (заказы, оплаты, возвраты продаж); при `false` продажа отклоняется
+- `rentalEnabled` — модуль аренды; при `false` все `/rental` эндпоинты отвечают 400 `RENTAL_DISABLED`
+- Хотя бы один флаг всегда `true` (проверяется в `PUT /store/:id`)
 
 ---
 
@@ -324,7 +333,10 @@ model ProductVariant {
   productId      String
   sku            String  // Уникален в пределах магазина
   barCode        String? // Уникален глобально
-  price          Decimal
+  price          Decimal // Цена продажи
+  canSell        Boolean  @default(true)  // Можно продавать
+  canRent        Boolean  @default(false) // Можно сдавать в аренду
+  rentPricePerDay Decimal? // Цена аренды за день (обязательна > 0 при canRent)
   storeId        String  // Денормализация для быстрого поиска SKU
   warehouseId    String  // Денормализация для быстрого доступа к складу
   createdAt      DateTime                @default(now())
@@ -349,6 +361,8 @@ model ProductVariant {
 - `sku` генерируется автоматически: `buildSku(productName, category, attributes)`
 - `barCode` генерируется через `BarcodeSequence` (автоинкремент с 200000000000)
 - `storeId` и `warehouseId` берутся из `product`
+- `canSell = false` — вариант нельзя добавить/оплатить в обычном заказе
+- `canRent = true` требует `rentPricePerDay > 0`; подробнее — [docs/features/rental.md](../../docs/features/rental.md)
 
 ---
 
@@ -420,6 +434,7 @@ model Inventory {
   - Продаже (OUT, SALE)
   - Возврате (IN, RETURN)
   - Корректировке (IN/OUT, ADJUSTMENT)
+- Для арендуемого варианта `quantity` = сколько единиц принадлежит салону. Аренда **не меняет** Inventory и не создаёт StockMovement; занятость по датам считается из `Rental` (см. [Rentals](#rentals))
 
 ---
 
@@ -482,6 +497,8 @@ model Order {
   returnedAmount Decimal             @default(0)
   returns        ReturnedOrder?
   
+  rental         Rental?            // заказ-аренда (1:1, опционально)
+  
   // Relationships
   store            Store             @relation(fields: [storeId], references: [id])
   warehouse        Warehouse         @relation(fields: [warehouseId], references: [id])
@@ -520,6 +537,8 @@ CREATED → HOLD → [DEBT | COMPLETED] → [REFUNDED | CANCELLED]
 - `returnedAt`: дата возврата
 - `returnedAmount`: сумма возвращенных товаров
 
+**Заказ-аренда**: если у заказа есть `rental`, он ведётся только через `/rental` эндпоинты (sale flow его отклоняет). Деньги аренды (позиции, услуги, платежи, `paidAmount`) хранятся в Order; `soldAt` ставится при выдаче.
+
 ---
 
 ### OrderItem
@@ -539,6 +558,7 @@ model OrderItem {
   order       Order          @relation(fields: [orderId], references: [id])
   variant     ProductVariant @relation(fields: [variantId], references: [id])
   returnItems ReturnItem?
+  rentalReturnItems RentalReturnItem[] // возвраты из аренды
   
   @@index([orderId])
   @@index([variantId])
@@ -548,7 +568,7 @@ model OrderItem {
 **Логика**:
 - `retailPrice` — может отличаться от текущей цены в каталоге (фиксируется на момент продажи)
 - `sale` — скидка (итоговая цена = retailPrice - sale)
-- `costAtSale` — себестоимость (для расчета прибыли)
+- `costAtSale` — себестоимость (для расчета прибыли); у позиций заказа-аренды `costAtSale = 0`
 
 **Итоговая сумма позиции**: `(retailPrice - sale) * quantity`
 
@@ -563,6 +583,7 @@ model AdditionalService {
   orderId     String
   name        String
   price       Decimal
+  sale        Decimal  @default(0) // Скидка на услугу, sale <= price
   description String?
   createdAt   DateTime @default(now())
   
@@ -575,8 +596,131 @@ model AdditionalService {
 **Примеры**: Доставка, нарезка, упаковка, гравировка
 
 **Логика**:
-- Включаются в `Order.totalAmount`
+- Включаются в `Order.totalAmount` как `price - sale`
 - НЕ возвращаются при возврате товара
+
+---
+
+## Rentals
+
+Аренда (свадебный салон). Деньги живут в Order (позиции, услуги, платежи); `Rental` хранит даты и физическое состояние арендованных вещей. Аренда никогда не меняет Inventory. Полные правила — [docs/features/rental.md](../../docs/features/rental.md).
+
+### Rental
+Бронь/аренда, 1:1 с Order.
+
+```prisma
+model Rental {
+  id          String @id @default(uuid())
+  orderId     String @unique
+  storeId     String
+  warehouseId String
+  customerId  String
+
+  startDate   DateTime // плановая дата выдачи
+  endDate     DateTime // плановая дата возврата
+  plannedDays Int      // дней, на которые посчитана цена
+
+  status   RentalStatus @default(BOOKED)
+  issuedAt DateTime?
+  issuedBy String?      // staffId
+  closedAt DateTime?    // все вещи возвращены
+
+  cancelledAt  DateTime?
+  cancelledBy  String?  // staffId
+  refundAmount Decimal? // возвращённая при отмене предоплата
+  cancelReason String?
+
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  order       Order              @relation(fields: [orderId], references: [id])
+  collaterals RentalCollateral[]
+  returns     RentalReturn[]
+
+  @@index([storeId, startDate])
+  @@index([warehouseId, status])
+  @@map("rentals")
+}
+```
+
+**Уникальность**: `orderId` — один Rental на заказ
+
+**Жизненный цикл**:
+```
+BOOKED → ISSUED → [PARTIALLY_RETURNED] → RETURNED
+BOOKED → CANCELLED
+```
+
+---
+
+### RentalCollateral
+Неденежный залог (паспорт, золото). **Никогда не проходит через кассу.**
+
+```prisma
+model RentalCollateral {
+  id          String         @id @default(uuid())
+  rentalId    String
+  type        CollateralType // PASSPORT | GOLD | OTHER
+  description String
+  receivedAt  DateTime       @default(now())
+  receivedBy  String         // staffId
+  returnedAt  DateTime?
+  returnedBy  String?        // staffId
+
+  rental Rental @relation(fields: [rentalId], references: [id])
+
+  @@index([rentalId])
+  @@map("rental_collaterals")
+}
+```
+
+---
+
+### RentalReturn
+Одно событие возврата (полного или частичного).
+
+```prisma
+model RentalReturn {
+  id                String   @id @default(uuid())
+  rentalId          String
+  returnedAt        DateTime // фактическое время возврата
+  penaltyAmount     Decimal  @default(0) // порча / просрочка, вводит продавец
+  penaltyComment    String?  // обязателен при penaltyAmount > 0
+  earlyReturnRefund Decimal  @default(0) // уменьшение суммы при раннем возврате, только OWNER/MANAGER
+  createdBy         String   // staffId
+  createdAt         DateTime @default(now())
+
+  rental Rental             @relation(fields: [rentalId], references: [id])
+  items  RentalReturnItem[]
+
+  @@index([rentalId])
+  @@map("rental_returns")
+}
+```
+
+---
+
+### RentalReturnItem
+Возвращённые единицы позиции заказа.
+
+```prisma
+model RentalReturnItem {
+  id            String   @id @default(uuid())
+  returnId      String
+  orderItemId   String
+  quantity      Int
+  cleaningDays  Int      @default(0) // 0 = без химчистки
+  availableFrom DateTime // returnedAt + cleaningDays: с этого момента единица снова свободна
+
+  return    RentalReturn @relation(fields: [returnId], references: [id])
+  orderItem OrderItem    @relation(fields: [orderItemId], references: [id])
+
+  @@index([returnId])
+  @@index([orderItemId])
+  @@map("rental_return_items")
+}
+```
 
 ---
 
@@ -726,7 +870,7 @@ model CashTransaction {
   cashboxId   String
   createdById String                  // Staff ID
   type        CashTransactionType     // INCOME | EXPENSE
-  category    CashTransactionCategory // SALE | DEBT_PAYMENT | RENT | DELIVERY | SALARY | PURCHASE | RETURN | OTHER
+  category    CashTransactionCategory // SALE | DEBT_PAYMENT | RENT | DELIVERY | SALARY | PURCHASE | RETURN | OTHER | RENTAL
   paymentType PaymentType             // CASH | CARD | ONLINE | TRANSFER
   amount      Decimal
   comment     String?
@@ -746,7 +890,7 @@ model CashTransaction {
 
 **Enums**:
 - `CashTransactionType`: INCOME (приход), EXPENSE (расход)
-- `CashTransactionCategory`: SALE, DEBT_PAYMENT, RENT, DELIVERY, SALARY, PURCHASE, RETURN, OTHER
+- `CashTransactionCategory`: SALE, DEBT_PAYMENT, RENT, DELIVERY, SALARY, PURCHASE, RETURN, OTHER, RENTAL (`RENT` — расход на помещение, `RENTAL` — доход от аренды товаров)
 
 **Логика**:
 
@@ -760,6 +904,13 @@ model CashTransaction {
 - **Оплата старого долга**: `POST /debt/payment`
   - Создается: INCOME, DEBT_PAYMENT, debtId
   - Cashbox.balance увеличивается
+- **Оплата аренды** (предоплата/доплата): `POST /rental/:id/payments`, `/rental/:id/issue`, `/rental/:id/returns`
+  - Создается: Payment + INCOME, RENTAL, orderId
+  - Cashbox.balance увеличивается
+- **Выплата по аренде** (переплата при раннем возврате, возврат предоплаты при отмене)
+  - Создается: EXPENSE, RETURN, orderId
+  - Cashbox.balance уменьшается
+- Залог (паспорт, золото) в кассу не попадает
 
 **Ручные транзакции** (создает кассир через UI):
 - **Неопознанный платеж**: `POST /cashbox/:id/transaction`
@@ -777,7 +928,7 @@ model CashTransaction {
   - Создается: EXPENSE, SALARY, comment: "Зарплата Петрову"
 - **Аренда**: 
   - Оплата аренды помещения
-  - Создается: EXPENSE, RENT
+  - Создается: EXPENSE, RENT (не путать с RENTAL — доходом от аренды товаров)
 - **Доставка**: 
   - Оплата доставки
   - Создается: EXPENSE, DELIVERY
@@ -1137,12 +1288,35 @@ enum CashTransactionType {
 enum CashTransactionCategory {
   SALE         // Продажа товара
   DEBT_PAYMENT // Оплата старого долга
-  RENT         // Аренда
+  RENT         // Аренда помещения (EXPENSE)
   DELIVERY     // Доставка
   SALARY       // Зарплата
   PURCHASE     // Закупка товара
   RETURN       // Возврат денег клиенту
   OTHER        // Прочее
+  RENTAL       // Доход от аренды товаров (INCOME)
+}
+```
+
+**Не путать**: `RENT` — расход на аренду помещения, `RENTAL` — доход заказа-аренды.
+
+### RentalStatus
+```prisma
+enum RentalStatus {
+  BOOKED             // Забронировано, вещи в салоне
+  ISSUED             // Выдано клиенту
+  PARTIALLY_RETURNED // Часть вещей вернули
+  RETURNED           // Всё вернули
+  CANCELLED          // Бронь отменена до выдачи
+}
+```
+
+### CollateralType
+```prisma
+enum CollateralType {
+  PASSPORT // Паспорт
+  GOLD     // Золото
+  OTHER    // Прочее
 }
 ```
 
@@ -1187,6 +1361,9 @@ UNIQUE (orderId)  -- Один возврат на заказ
 
 -- ReturnItem
 UNIQUE (itemId)   -- Одна позиция возвращается один раз
+
+-- Rental
+UNIQUE (orderId)  -- Один Rental на заказ
 
 -- Brand, Category, Attribute, Tag
 UNIQUE (name)     -- Уникальные названия
@@ -1237,6 +1414,17 @@ INDEX (orderId)
 
 -- Payment
 INDEX (orderId)
+
+-- Rental
+INDEX (storeId, startDate)
+INDEX (warehouseId, status)
+
+-- RentalCollateral, RentalReturn
+INDEX (rentalId)
+
+-- RentalReturnItem
+INDEX (returnId)
+INDEX (orderItemId)
 
 -- Cashbox
 INDEX (storeId, createdAt)
