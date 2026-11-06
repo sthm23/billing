@@ -114,9 +114,9 @@
 
 ```
 ?pageSize=10&currentPage=1&status=BOOKED,ISSUED&from=2027-05-01&to=2027-05-31&customerId=uuid&overdue=true
-&view=returnToday&q=Дилноза&variantId=uuid&sort=asc
+&view=returnToday&q=Дилноза&variantId=uuid&sort=asc&sortBy=endDate
 ```
-- `pageSize` по умолчанию 10, максимум 50. Сортировка — `startDate`, `sort=asc|desc` (по умолчанию `desc`).
+- `pageSize` по умолчанию 10, максимум 50. Сортировка — `sortBy=startDate|endDate` (по умолчанию `startDate`; `endDate` — по плановому возврату, для «у клиента» / «вернуть сегодня» / «просрочено»), `sort=asc|desc` (по умолчанию `desc`), затем `createdAt`.
 - `status` — список через запятую (неизвестный → `400`); `from`/`to` — аренды, пересекающие период; `overdue=true` — ISSUED/PARTIALLY_RETURNED с `endDate < now`.
 - `view` — быстрый фильтр (2026-11-06):
   - `issueToday` — BOOKED, `startDate` ≤ сегодня 12:00 следующего дня и `endDate > now` (можно выдать сейчас, R5a);

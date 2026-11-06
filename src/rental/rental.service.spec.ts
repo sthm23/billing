@@ -659,6 +659,15 @@ describe('RentalService', () => {
       expect(args.orderBy[0]).toEqual({ startDate: 'asc' });
     });
 
+    it('sorts by the planned return date', async () => {
+      await service.findAll(
+        { view: 'out', sort: 'asc', sortBy: 'endDate' },
+        makeUser(StaffRole.OWNER),
+      );
+      const args = prisma.rental.findMany.mock.calls[0][0];
+      expect(args.orderBy).toEqual([{ endDate: 'asc' }, { createdAt: 'asc' }]);
+    });
+
     it('returns the short code and item thumbnails', async () => {
       prisma.rental.count.mockResolvedValue(1);
       prisma.rental.findMany.mockResolvedValue([

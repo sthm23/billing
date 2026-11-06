@@ -14,6 +14,10 @@ const LOCAL_DATE_MESSAGE = '$property must be a date in YYYY-MM-DD format';
 const UUID_LIST =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(,[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})*$/i;
 
+/** Fields the rental list can be sorted by */
+export const RENTAL_SORT_FIELDS = ['startDate', 'endDate'] as const;
+export type RentalSortField = (typeof RENTAL_SORT_FIELDS)[number];
+
 /** GET /rental/availability — query values stay strings (no transform pipe) */
 export class RentalAvailabilityQuery {
   @IsUUID('4')
@@ -115,10 +119,15 @@ export class RentalListQuery {
   @IsUUID('4')
   variantId?: string;
 
-  /** By start date; default desc */
+  /** Sort direction; default desc */
   @IsOptional()
   @IsIn(['asc', 'desc'])
   sort?: 'asc' | 'desc';
+
+  /** Sort field; default startDate (endDate = by planned return) */
+  @IsOptional()
+  @IsIn(RENTAL_SORT_FIELDS)
+  sortBy?: RentalSortField;
 }
 
 /** GET /rental/similar — replacements for a variant busy on the dates */

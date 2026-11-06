@@ -1698,7 +1698,10 @@ export class RentalService {
           where,
           skip: (currentPage - 1) * pageSize,
           take: pageSize,
-          orderBy: [{ startDate: query.sort ?? 'desc' }, { createdAt: 'asc' }],
+          orderBy: [
+            { [query.sortBy ?? 'startDate']: query.sort ?? 'desc' },
+            { createdAt: 'asc' },
+          ],
           include: {
             order: {
               select: {
