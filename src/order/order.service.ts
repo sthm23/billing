@@ -1070,6 +1070,8 @@ export class OrderService {
           },
           store: true,
           warehouse: true,
+          // Clients open a rental order in the rental screens, not in the cart
+          rental: { select: { id: true, status: true } },
         },
         skip: skip,
         take: +pageSize,
@@ -1094,6 +1096,7 @@ export class OrderService {
           totalAmount: order.totalAmount,
           paidAmount: order.paidAmount,
           createdAt: order.createdAt,
+          rental: order.rental,
         })),
       };
     } catch (error: any) {
@@ -1182,6 +1185,7 @@ export class OrderService {
               user: true,
             },
           },
+          rental: { select: { id: true, status: true } },
         },
         orderBy: { createdAt: 'desc' },
       });
