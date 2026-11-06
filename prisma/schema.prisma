@@ -243,24 +243,26 @@ model Product {
 }
 
 model ProductVariant {
-  id              String                  @id @default(uuid())
-  productId       String
-  sku             String // ску будет уникален в пределах магазина
-  barCode         String?
-  price           Decimal // sale price
+  id                  String                  @id @default(uuid())
+  productId           String
+  sku                 String // ску будет уникален в пределах магазина
+  barCode             String?
+  price               Decimal // sale price
   /// Variant can be sold (existing order flow rejects it otherwise)
-  canSell         Boolean                 @default(true)
+  canSell             Boolean                 @default(true)
   /// Variant can be rented out; then rentPricePerDay > 0 is required
-  canRent         Boolean                 @default(false)
-  rentPricePerDay Decimal?
-  createdAt       DateTime                @default(now())
-  storeId         String // это для быстрого поиска уникального SKU в пределах магазина
-  warehouseId     String // это для быстрого доступа к складу, на котором лежит товар
-  inventory       Inventory[]
-  orderItems      OrderItem[]
-  product         Product                 @relation(fields: [productId], references: [id])
-  stockMovements  StockMovement[]
-  attributes      VariantAttributeValue[]
+  canRent             Boolean                 @default(false)
+  rentPricePerDay     Decimal?
+  /// Dry-cleaning days suggested when the variant comes back from a rental (0 = none)
+  defaultCleaningDays Int                     @default(1)
+  createdAt           DateTime                @default(now())
+  storeId             String // это для быстрого поиска уникального SKU в пределах магазина
+  warehouseId         String // это для быстрого доступа к складу, на котором лежит товар
+  inventory           Inventory[]
+  orderItems          OrderItem[]
+  product             Product                 @relation(fields: [productId], references: [id])
+  stockMovements      StockMovement[]
+  attributes          VariantAttributeValue[]
 
   @@unique([storeId, sku])
   @@unique([barCode])
@@ -509,10 +511,12 @@ model Rental {
   endDate     DateTime // planned return date
   plannedDays Int // days the price was calculated for
 
-  status   RentalStatus @default(BOOKED)
-  issuedAt DateTime?
-  issuedBy String? // staffId
-  closedAt DateTime? // all items returned
+  status                  RentalStatus @default(BOOKED)
+  issuedAt                DateTime?
+  issuedBy                String? // staffId
+  /// Issued while the salon held no collateral (seller's responsibility)
+  issuedWithoutCollateral Boolean      @default(false)
+  closedAt                DateTime? // all items returned
 
   cancelledAt  DateTime?
   cancelledBy  String? // staffId

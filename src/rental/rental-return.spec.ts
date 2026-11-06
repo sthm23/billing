@@ -54,6 +54,50 @@ function input(
 }
 
 describe('settleReturn', () => {
+  it('late return: overdue days and the list-price penalty are hints only', () => {
+    // 17th 15:00 Tashkent: 14th → 17th after noon = 4 days, planned 2
+    const res = settleReturn(input({ returnedAt: at('2027-05-17T10:00:00Z') }));
+    expect(res.overdueDays).toBe(2);
+    // (400 000 / 2 + 300 000 / 2) × 2 days
+    expect(res.suggestedPenalty.toNumber()).toBe(700000);
+    expect(res.unusedDays).toBe(0);
+    expect(res.unusedDaysAmount.toNumber()).toBe(0);
+    // Nothing is added to the total by itself
+    expect(res.newTotalAmount.toNumber()).toBe(1600000);
+  });
+
+  it('early return: unused days at the paid day price, capped by the returned value', () => {
+    const res = settleReturn(
+      input({
+        items: [
+          {
+            id: DRESS_ITEM,
+            variantId: 'dress',
+            quantity: 1,
+            retailPrice: D(400000),
+            sale: D(50001),
+            returnedQuantity: 0,
+          },
+          {
+            id: SUIT_ITEM,
+            variantId: 'suit',
+            quantity: 1,
+            retailPrice: D(300000),
+            sale: D(0),
+            returnedQuantity: 0,
+          },
+        ],
+        // 15th 10:00 Tashkent: 1 day used of 2
+        returnedAt: at('2027-05-15T05:00:00Z'),
+      }),
+    );
+    expect(res.overdueDays).toBe(0);
+    expect(res.suggestedPenalty.toNumber()).toBe(0);
+    expect(res.unusedDays).toBe(1);
+    // (349 999 / 2 + 300 000 / 2) × 1 = 324 999.5 → rounded down
+    expect(res.unusedDaysAmount.toNumber()).toBe(324999);
+    expect(res.unusedDaysAmount.lte(res.maxEarlyReturnRefund)).toBe(true);
+  });
   it('full return on time: RETURNED, the rest is a debt', () => {
     const res = settleReturn(input());
     expect(res.items[0]).toMatchObject({ plannedDays: 2, actualDays: 2 });

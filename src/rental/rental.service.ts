@@ -31,9 +31,12 @@ import {
 } from './dto/rental-lifecycle.dto';
 import { CreateRentalPaymentDto } from './dto/rental-payment.dto';
 import {
+  RENTAL_VIEWS,
   RentalAvailabilityQuery,
   RentalCalendarQuery,
   RentalListQuery,
+  RentalSimilarQuery,
+  RentalView,
 } from './dto/rental-query.dto';
 import {
   Occupancy,
@@ -66,6 +69,16 @@ const OUT_STATUSES: RentalStatus[] = [
   RentalStatus.PARTIALLY_RETURNED,
 ];
 const MAX_CALENDAR_DAYS = 93;
+/** A search text that may be the start of a rental code (id prefix) */
+const RENTAL_CODE_SEARCH = /^[0-9a-f]{4,8}$/i;
+const MIN_PHONE_SEARCH_DIGITS = 3;
+const RENTAL_CODE_LENGTH = 6;
+const MAX_SIMILAR_VARIANTS = 20;
+
+/** Short code shown to people and searched by: the first id characters */
+export function rentalCode(id: string): string {
+  return id.slice(0, RENTAL_CODE_LENGTH).toUpperCase();
+}
 const DEFAULT_PAGE_SIZE = 10;
 const MAX_PAGE_SIZE = 50;
 /** Clock drift between the device and the server tolerated for returnedAt */
@@ -206,6 +219,7 @@ const rentalDetailsInclude = {
               sku: true,
               barCode: true,
               rentPricePerDay: true,
+              defaultCleaningDays: true,
               product: { select: { id: true, name: true } },
               attributes: {
                 include: {
@@ -846,6 +860,9 @@ export class RentalService {
             status: true,
             startDate: true,
             endDate: true,
+            _count: {
+              select: { collaterals: { where: { returnedAt: null } } },
+            },
             order: {
               select: {
                 totalAmount: true,
@@ -925,6 +942,8 @@ export class RentalService {
             status: RentalStatus.ISSUED,
             issuedAt: now,
             issuedBy: user.staff.id,
+            issuedWithoutCollateral:
+              current._count.collaterals + collaterals.length === 0,
           },
         });
         if (collaterals.length > 0) {
@@ -1516,6 +1535,7 @@ export class RentalService {
     }
     return {
       ...rest,
+      code: rentalCode(rental.id),
       overdue:
         OUT_STATUSES.includes(rental.status) &&
         rental.endDate.getTime() < Date.now(),
@@ -1534,21 +1554,81 @@ export class RentalService {
     };
   }
 
-  async findAll(query: RentalListQuery, user: CurrentUser) {
-    const storeId = await this.assertRentalStore(user);
-    const pageSize = Math.min(
-      Math.max(Number(query.pageSize) || DEFAULT_PAGE_SIZE, 1),
-      MAX_PAGE_SIZE,
-    );
-    const currentPage = Math.max(Number(query.currentPage) || 1, 1);
+  /** Rentals the user may see: the store; non-owners only their warehouses */
+  private scopeWhere(
+    user: CurrentUser,
+    storeId: string,
+  ): Prisma.RentalWhereInput {
+    return this.isStoreOwner(user)
+      ? { storeId }
+      : {
+          storeId,
+          warehouseId: { in: user.staff.warehouse.map((w) => w.warehouseId) },
+        };
+  }
 
-    const where: Prisma.RentalWhereInput = { storeId };
-    if (!this.isStoreOwner(user)) {
-      where.warehouseId = {
-        in: user.staff.warehouse.map((w) => w.warehouseId),
-      };
+  /** Filter of a quick list view (RENTAL_VIEWS) at `now` */
+  private viewWhere(view: RentalView, now: Date): Prisma.RentalWhereInput {
+    const today = todayLocalDate(now);
+    const todayNoon = rentalBoundary(today);
+    const tomorrowNoon = rentalBoundary(addLocalDays(today, 1));
+    switch (view) {
+      case 'issueToday':
+        // Can be issued now: started by today and not over yet (R5a)
+        return {
+          status: RentalStatus.BOOKED,
+          startDate: { lt: tomorrowNoon },
+          endDate: { gt: now },
+        };
+      case 'returnToday':
+        return {
+          status: { in: OUT_STATUSES },
+          endDate: { gte: todayNoon, lt: tomorrowNoon },
+        };
+      case 'overdue':
+        return { status: { in: OUT_STATUSES }, endDate: { lt: now } };
+      case 'booked':
+        return { status: RentalStatus.BOOKED };
+      case 'out':
+        return { status: { in: OUT_STATUSES } };
+      case 'all':
+        return {};
     }
-    const and: Prisma.RentalWhereInput[] = [];
+  }
+
+  /** Search by the short code, customer name or phone digits */
+  private searchWhere(q: string): Prisma.RentalWhereInput | null {
+    const text = q.trim();
+    if (!text) return null;
+    const or: Prisma.RentalWhereInput[] = [
+      {
+        order: {
+          customer: {
+            user: { fullName: { contains: text, mode: 'insensitive' } },
+          },
+        },
+      },
+    ];
+    if (RENTAL_CODE_SEARCH.test(text)) {
+      or.push({ id: { startsWith: text.toLowerCase() } });
+    }
+    const digits = text.replace(/\D/g, '');
+    if (digits.length >= MIN_PHONE_SEARCH_DIGITS) {
+      or.push({
+        order: { customer: { user: { phone: { contains: digits } } } },
+      });
+    }
+    return { OR: or };
+  }
+
+  /** Filter of GET /rental */
+  private listWhere(
+    query: RentalListQuery,
+    user: CurrentUser,
+    storeId: string,
+    now: Date,
+  ): Prisma.RentalWhereInput {
+    const and: Prisma.RentalWhereInput[] = [this.scopeWhere(user, storeId)];
     if (query.status) {
       const statuses = query.status.split(',');
       const valid = Object.values(RentalStatus) as string[];
@@ -1568,13 +1648,48 @@ export class RentalService {
       );
     }
     if (query.customerId) and.push({ customerId: query.customerId });
-    if (query.overdue === 'true') {
+    if (query.overdue === 'true') and.push(this.viewWhere('overdue', now));
+    if (query.view) and.push(this.viewWhere(query.view, now));
+    if (query.variantId) {
       and.push({
-        status: { in: OUT_STATUSES },
-        endDate: { lt: new Date() },
+        order: { items: { some: { variantId: query.variantId } } },
       });
     }
-    if (and.length > 0) where.AND = and;
+    const search = query.q ? this.searchWhere(query.q) : null;
+    if (search) and.push(search);
+    return { AND: and };
+  }
+
+  /** GET /rental/summary: counters of the quick list views */
+  async getSummary(user: CurrentUser) {
+    const storeId = await this.assertRentalStore(user);
+    const scope = this.scopeWhere(user, storeId);
+    const now = new Date();
+    try {
+      const counts = await Promise.all(
+        RENTAL_VIEWS.map((view) =>
+          this.prisma.rental.count({
+            where: { AND: [scope, this.viewWhere(view, now)] },
+          }),
+        ),
+      );
+      return Object.fromEntries(
+        RENTAL_VIEWS.map((view, i) => [view, counts[i]]),
+      ) as Record<RentalView, number>;
+    } catch (error: unknown) {
+      this.fail(error, { storeId }, 'Failed to count rentals');
+    }
+  }
+
+  async findAll(query: RentalListQuery, user: CurrentUser) {
+    const storeId = await this.assertRentalStore(user);
+    const pageSize = Math.min(
+      Math.max(Number(query.pageSize) || DEFAULT_PAGE_SIZE, 1),
+      MAX_PAGE_SIZE,
+    );
+    const currentPage = Math.max(Number(query.currentPage) || 1, 1);
+
+    const where = this.listWhere(query, user, storeId, new Date());
 
     try {
       const [total, rentals] = await Promise.all([
@@ -1583,7 +1698,7 @@ export class RentalService {
           where,
           skip: (currentPage - 1) * pageSize,
           take: pageSize,
-          orderBy: { startDate: 'desc' },
+          orderBy: [{ startDate: query.sort ?? 'desc' }, { createdAt: 'asc' }],
           include: {
             order: {
               select: {
@@ -1597,7 +1712,27 @@ export class RentalService {
                     user: { select: { fullName: true, phone: true } },
                   },
                 },
-                items: { select: { quantity: true } },
+                items: {
+                  orderBy: { createdAt: 'asc' },
+                  select: {
+                    quantity: true,
+                    variant: {
+                      select: {
+                        id: true,
+                        product: {
+                          select: {
+                            name: true,
+                            images: {
+                              orderBy: [{ isMain: 'desc' }, { order: 'asc' }],
+                              take: 1,
+                              select: { url: true },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
               },
             },
           },
@@ -1610,6 +1745,7 @@ export class RentalService {
         total,
         data: rentals.map(({ order, ...rental }) => ({
           ...rental,
+          code: rentalCode(rental.id),
           overdue:
             OUT_STATUSES.includes(rental.status) &&
             rental.endDate.getTime() < now,
@@ -1631,6 +1767,13 @@ export class RentalService {
               }
             : null,
           itemCount: order.items.reduce((sum, i) => sum + i.quantity, 0),
+          /** Lines for thumbnails, in booking order */
+          items: order.items.map((i) => ({
+            variantId: i.variant.id,
+            productName: i.variant.product.name,
+            imageUrl: i.variant.product.images[0]?.url ?? null,
+            quantity: i.quantity,
+          })),
         })),
       };
     } catch (error: unknown) {
@@ -1639,6 +1782,122 @@ export class RentalService {
   }
 
   /** GET /rental/availability: owned and free units on the dates (R1). */
+  /**
+   * GET /rental/similar: replacements for a variant busy on the dates — other
+   * variants of the same product, then rentable variants of its category, with
+   * free units for [startDate, endDate). Busy ones are listed too (available 0).
+   */
+  async findSimilar(query: RentalSimilarQuery, user: CurrentUser) {
+    const storeId = await this.assertRentalStore(user);
+    await this.assertWarehouse(user, storeId, query.warehouseId);
+    const { start, end } = this.resolveDates(query.startDate, query.endDate, {
+      allowPastStart: true,
+    });
+    const base = await this.prisma.productVariant.findFirst({
+      where: { id: query.variantId, storeId },
+      select: { productId: true, product: { select: { categoryId: true } } },
+    });
+    if (!base) throw new NotFoundException('Product variant not found');
+
+    const candidateWhere: Prisma.ProductVariantWhereInput = {
+      storeId,
+      canRent: true,
+      id: { not: query.variantId },
+      product: { isArchived: false },
+      inventory: { some: { warehouseId: query.warehouseId } },
+    };
+    const select = {
+      id: true,
+      sku: true,
+      rentPricePerDay: true,
+      product: {
+        select: {
+          id: true,
+          name: true,
+          images: {
+            orderBy: [{ isMain: 'desc' }, { order: 'asc' }],
+            take: 1,
+            select: { url: true },
+          },
+        },
+      },
+      attributes: {
+        include: {
+          value: { include: { attribute: { select: { name: true } } } },
+        },
+      },
+    } satisfies Prisma.ProductVariantSelect;
+
+    try {
+      const [sameProduct, sameCategory] = await Promise.all([
+        this.prisma.productVariant.findMany({
+          where: { ...candidateWhere, productId: base.productId },
+          orderBy: { createdAt: 'asc' },
+          take: MAX_SIMILAR_VARIANTS,
+          select,
+        }),
+        base.product.categoryId
+          ? this.prisma.productVariant.findMany({
+              where: {
+                ...candidateWhere,
+                productId: { not: base.productId },
+                product: {
+                  isArchived: false,
+                  categoryId: base.product.categoryId,
+                },
+              },
+              orderBy: { createdAt: 'asc' },
+              take: MAX_SIMILAR_VARIANTS,
+              select,
+            })
+          : Promise.resolve([]),
+      ]);
+      const ids = [...sameProduct, ...sameCategory].map((v) => v.id);
+      const free =
+        ids.length > 0
+          ? await this.availability.getAvailability(this.prisma, {
+              warehouseId: query.warehouseId,
+              variantIds: ids,
+              range: { from: start, to: end },
+              excludeRentalId: query.excludeRentalId,
+            })
+          : [];
+      const freeById = new Map(free.map((f) => [f.variantId, f]));
+      const toRow = (v: (typeof sameProduct)[number]) => ({
+        variantId: v.id,
+        sku: v.sku,
+        productId: v.product.id,
+        productName: v.product.name,
+        imageUrl: v.product.images[0]?.url ?? null,
+        rentPricePerDay: v.rentPricePerDay,
+        attributes: v.attributes.map((a) => ({
+          name: a.value.attribute.name,
+          value:
+            a.value.valueString ??
+            a.value.valueNumber?.toString() ??
+            (a.value.valueBool === null ? '' : String(a.value.valueBool)),
+        })),
+        owned: freeById.get(v.id)?.owned ?? 0,
+        available: freeById.get(v.id)?.available ?? 0,
+      });
+      // Free ones first, the order is kept otherwise
+      const rank = (rows: ReturnType<typeof toRow>[]) =>
+        [...rows].sort(
+          (a, b) => Number(b.available > 0) - Number(a.available > 0),
+        );
+      return {
+        sameProduct: rank(sameProduct.map(toRow)),
+        sameCategory: rank(sameCategory.map(toRow)),
+      };
+    } catch (error: unknown) {
+      this.fail(
+        error,
+        { variantId: query.variantId },
+        'Failed to find similar variants',
+      );
+    }
+  }
+
   async getAvailability(query: RentalAvailabilityQuery, user: CurrentUser) {
     const storeId = await this.assertRentalStore(user);
     await this.assertWarehouse(user, storeId, query.warehouseId);

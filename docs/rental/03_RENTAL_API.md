@@ -10,7 +10,9 @@
 | GET | `/rental/calendar` | Занятость вариантов по дням (для календаря) | все |
 | POST | `/rental` | Создать бронь (Order + Rental) | все; скидка на позиции — OWNER/MANAGER |
 | PATCH | `/rental/:id` | Изменить бронь (BOOKED) | все; новая скидка на позиции — OWNER/MANAGER |
-| GET | `/rental` | Список с фильтрами и пагинацией | все |
+| GET | `/rental` | Список с фильтрами, поиском и пагинацией | все |
+| GET | `/rental/summary` | Счётчики быстрых фильтров списка | все |
+| GET | `/rental/similar` | Замена занятой вещи: другие варианты товара и категории со свободными единицами | все |
 | GET | `/rental/:id` | Детали: заказ, позиции, услуги, платежи, залоги, возвраты | все |
 | POST | `/rental/:id/payments` | Предоплата/доплата и/или залог-вещь (BOOKED, ISSUED, PARTIALLY_RETURNED) | все |
 | POST | `/rental/:id/issue` | Выдача + залоги + опц. платежи | все |
@@ -112,10 +114,17 @@
 
 ```
 ?pageSize=10&currentPage=1&status=BOOKED,ISSUED&from=2027-05-01&to=2027-05-31&customerId=uuid&overdue=true
+&view=returnToday&q=Дилноза&variantId=uuid&sort=asc
 ```
-- `pageSize` по умолчанию 10, максимум 50. Сортировка — `startDate` по убыванию.
+- `pageSize` по умолчанию 10, максимум 50. Сортировка — `startDate`, `sort=asc|desc` (по умолчанию `desc`).
 - `status` — список через запятую (неизвестный → `400`); `from`/`to` — аренды, пересекающие период; `overdue=true` — ISSUED/PARTIALLY_RETURNED с `endDate < now`.
-- OWNER видит весь магазин, остальные — свои склады.
+- `view` — быстрый фильтр (2026-11-06):
+  - `issueToday` — BOOKED, `startDate` ≤ сегодня 12:00 следующего дня и `endDate > now` (можно выдать сейчас, R5a);
+  - `returnToday` — ISSUED/PARTIALLY_RETURNED с `endDate` = сегодня 12:00;
+  - `overdue` — как `overdue=true`; `booked` — BOOKED; `out` — ISSUED/PARTIALLY_RETURNED; `all` — без фильтра.
+- `q` (≤ 64) — имя клиента (без учёта регистра), цифры телефона (от 3 цифр) или начало кода брони (4–8 hex-символов).
+- `variantId` — аренды, в которых есть этот вариант (ближайшие брони вещи).
+- OWNER видит весь магазин, остальные — свои склады. Фильтры складываются (AND).
 
 ```json
 {
@@ -126,18 +135,45 @@
     "overdue": false,
     "order": { "id": "uuid", "status": "HOLD", "totalAmount": "1500000", "paidAmount": "500000", "dueAmount": "1000000" },
     "customer": { "id": "uuid", "fullName": "Иванова", "phone": "+998..." },
-    "itemCount": 2
+    "code": "3F2A9C",
+    "itemCount": 2,
+    "items": [{ "variantId": "uuid", "productName": "Aurora", "imageUrl": "https://...", "quantity": 1 }]
   }]
 }
 ```
+- `code` — короткий код брони: первые 6 символов `id` в верхнем регистре (не уникален гарантированно, для показа и поиска).
+- `items` — позиции в порядке брони для миниатюр; `imageUrl` — главное фото товара или `null`.
+
+## GET /rental/summary
+
+Счётчики быстрых фильтров (те же условия, что `view` в `GET /rental`), в области видимости пользователя:
+```json
+{ "issueToday": 3, "returnToday": 2, "overdue": 1, "booked": 8, "out": 4, "all": 15 }
+```
+
+## GET /rental/similar
+
+```
+?warehouseId=uuid&variantId=uuid&startDate=2027-05-14&endDate=2027-05-16[&excludeRentalId=uuid]
+```
+Замена для занятой вещи. `variantId` — вариант этого магазина (иначе `404`).
+```json
+{
+  "sameProduct":  [{ "variantId": "uuid", "sku": "AU-48", "productId": "uuid", "productName": "Aurora", "imageUrl": null,
+                     "rentPricePerDay": "200000", "attributes": [{ "name": "Размер", "value": "48" }], "owned": 2, "available": 2 }],
+  "sameCategory": [ ... ]
+}
+```
+- `sameProduct` — другие сдаваемые варианты того же товара; `sameCategory` — сдаваемые варианты других товаров той же категории (нет категории — пусто). Только с остатком на этом складе, не в архиве, до 20 в каждом списке.
+- `available` — свободно на `[startDate 12:00, endDate 12:00)`; занятые (`0`) тоже в списке, свободные — первыми.
 
 ## GET /rental/:id
 
-Все поля `Rental` + `overdue`, а также:
+Все поля `Rental` (в т.ч. `issuedWithoutCollateral`) + `overdue` + `code`, а также:
 - `collaterals[]` — `{ id, type, description, receivedAt, receivedBy, returnedAt, returnedBy }`;
 - `returns[]` — `{ id, returnedAt, penaltyAmount, penaltyComment, earlyReturnRefund, createdBy, items[{ orderItemId, quantity, cleaningDays, availableFrom }] }`;
 - `order` — заказ с `customer.user {id, fullName, phone}`, `warehouse {id, name}`, `services[]`, `payments[]`, `dueAmount` и `items[]`:
-  `{ id, variantId, quantity, retailPrice, sale, returnedQuantity, variant: { id, sku, barCode, rentPricePerDay, product {id, name}, attributes[...] } }` (`costAtSale` скрыт).
+  `{ id, variantId, quantity, retailPrice, sale, returnedQuantity, variant: { id, sku, barCode, rentPricePerDay, defaultCleaningDays, product {id, name}, attributes[...] } }` (`costAtSale` скрыт).
 
 `dueAmount = totalAmount − paidAmount`; у `CANCELLED` — `0`.
 
@@ -170,6 +206,7 @@
 - сегодня ≥ дата `startDate` и сейчас < `endDate` 12:00, иначе `400` — сначала `PATCH` дат;
 - вещи должны быть свободны на `[now, endDate)` без учёта этой брони, иначе `409 NOT_AVAILABLE` (предыдущий клиент не вернул / химчистка);
 - `Rental → ISSUED` (`issuedAt`, `issuedBy`), `Order.soldAt = now`, Order остаётся HOLD.
+- `issuedWithoutCollateral = true`, если после выдачи у салона нет ни одного невозвращённого залога (выдано под ответственность продавца) — отметка для истории, выдачу не блокирует.
 
 ## GET /rental/:id/cleaning-conflicts
 
@@ -206,7 +243,7 @@
   "cashboxId": "uuid"
 }
 ```
-- `items` ≥ 1, каждая позиция один раз, `quantity ≤` невозвращённого, `cleaningDays` 0…30 (обязателен; UI по умолчанию ставит 1).
+- `items` ≥ 1, каждая позиция один раз, `quantity ≤` невозвращённого, `cleaningDays` 0…30 (обязателен; UI по умолчанию ставит `variant.defaultCleaningDays`).
 - `returnedAt` (ISO с зоной) — по умолчанию сейчас; не в будущем, не раньше выдачи; в прошлом > 5 мин — только OWNER/MANAGER (`403`).
 - `penaltyAmount > 0` требует непустой `penaltyComment`.
 - `earlyReturnRefund > 0` — только OWNER/MANAGER (`403`), только если `returnedAt < endDate`, не больше стоимости возвращаемых сейчас позиций (`maxEarlyReturnRefund`).
@@ -225,6 +262,10 @@
   "penaltyAmount": "300000",
   "earlyReturnRefund": "0",
   "maxEarlyReturnRefund": "0",
+  "overdueDays": 1,
+  "suggestedPenalty": "350000",
+  "unusedDays": 0,
+  "unusedDaysAmount": "0",
   "newTotalAmount": "1800000",
   "paidAmount": "500000",
   "paymentsAmount": "0",
@@ -237,6 +278,9 @@
 ```
 - `paidAmount` — оплачено до возврата; `paymentsAmount` — платежи этого запроса; `dueAmount` — останется к оплате; `cashOutAmount` — к выдаче клиенту.
 - `actualDays` — только подсказка (R2/R4), сумму не меняет.
+- Подсказки (2026-11-06), сумму сами **не меняют**:
+  - `overdueDays = max(0, actualDays − plannedDays)`; `suggestedPenalty` = Σ (`retailPrice / plannedDays`, цена за день без скидки) × возвращаемые шт × `overdueDays`, округление вниз. Клиент предзаполняет им поле штрафа, продавец меняет или обнуляет (штраф по-прежнему ручной, R4).
+  - `unusedDays` — неиспользованные плановые дни при раннем возврате (иначе 0); `unusedDaysAmount` = Σ ((`retailPrice − sale`) / `plannedDays`) × шт × `unusedDays`, округление вниз, не больше `maxEarlyReturnRefund` — подсказка для `earlyReturnRefund` (кнопка «за N дней»).
 
 `/returns` записывает `RentalReturn` + `RentalReturnItem` (`availableFrom = returnedAt + cleaningDays`), обновляет `Order.totalAmount / paidAmount / status` и `Rental.status` (`RETURNED` + `closedAt` или `PARTIALLY_RETURNED`). Ответ — детали аренды.
 

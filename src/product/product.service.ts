@@ -170,11 +170,17 @@ export class ProductService {
    * positive rent price per day.
    */
   private resolveSaleRent(
-    input: { canSell?: boolean; canRent?: boolean; rentPricePerDay?: number },
+    input: {
+      canSell?: boolean;
+      canRent?: boolean;
+      rentPricePerDay?: number;
+      defaultCleaningDays?: number;
+    },
     current?: {
       canSell: boolean;
       canRent: boolean;
       rentPricePerDay: Prisma.Decimal | null;
+      defaultCleaningDays: number;
     },
   ) {
     const canSell = input.canSell ?? current?.canSell ?? true;
@@ -188,7 +194,9 @@ export class ProductService {
         'A rentable variant requires a rent price per day greater than 0',
       );
     }
-    return { canSell, canRent, rentPricePerDay };
+    const defaultCleaningDays =
+      input.defaultCleaningDays ?? current?.defaultCleaningDays ?? 1;
+    return { canSell, canRent, rentPricePerDay, defaultCleaningDays };
   }
 
   /**
@@ -347,6 +355,7 @@ export class ProductService {
               canSell: v.canSell,
               canRent: v.canRent,
               rentPricePerDay: v.rentPricePerDay,
+              defaultCleaningDays: v.defaultCleaningDays,
               quantity:
                 v.inventory.reduce((acc, curr) => acc + curr.quantity, 0) || 0,
             })),
@@ -439,6 +448,7 @@ export class ProductService {
           canSell: variant.canSell,
           canRent: variant.canRent,
           rentPricePerDay: variant.rentPricePerDay,
+          defaultCleaningDays: variant.defaultCleaningDays,
           attributes: variant.attributes.map((a) => ({
             id: a.value.id,
             value:
@@ -584,6 +594,7 @@ export class ProductService {
           canSell: v.canSell,
           canRent: v.canRent,
           rentPricePerDay: v.rentPricePerDay,
+              defaultCleaningDays: v.defaultCleaningDays,
           sku: v.sku,
           stockMovements: v.stockMovements.map((movement) => ({
             id: movement.id,
@@ -661,6 +672,7 @@ export class ProductService {
           canSell: v.canSell,
           canRent: v.canRent,
           rentPricePerDay: v.rentPricePerDay,
+              defaultCleaningDays: v.defaultCleaningDays,
           sku: v.sku,
           productId: v.product.id,
           productName: v.product.name,

@@ -45,6 +45,20 @@ export interface ReturnSettlement {
   earlyReturnRefund: Decimal;
   /** Highest earlyReturnRefund allowed for these items, 0 if not an early return */
   maxEarlyReturnRefund: Decimal;
+  /** Days past the planned period (hint for the manual penalty, R4) */
+  overdueDays: number;
+  /**
+   * Hint: list day price (retailPrice / plannedDays, before discount) ×
+   * returned units × overdueDays. Never added to the total by itself.
+   */
+  suggestedPenalty: Decimal;
+  /** Planned days not used on an early return, 0 otherwise */
+  unusedDays: number;
+  /**
+   * Hint for earlyReturnRefund: paid day price ((retailPrice − sale) /
+   * plannedDays) × returned units × unusedDays, rounded down, ≤ maxEarlyReturnRefund.
+   */
+  unusedDaysAmount: Decimal;
   newTotalAmount: Decimal;
   /** Paid before this return */
   paidAmount: Decimal;
@@ -68,6 +82,12 @@ export function settleReturn(input: ReturnSettlementInput): ReturnSettlement {
   const seen = new Set<string>();
   const returnedNow = new Map<string, number>();
   let returnedValue = new Decimal(0);
+  /** Sum of list day prices of the returned units */
+  let listDayValue = new Decimal(0);
+  /** Sum of paid day prices of the returned units */
+  let paidDayValue = new Decimal(0);
+  const plannedDays = Math.max(1, input.rental.plannedDays);
+  const actualDays = rentalDays(input.rental.startDate, input.returnedAt);
 
   const items = input.lines.map((line) => {
     if (seen.has(line.orderItemId)) {
@@ -92,6 +112,12 @@ export function settleReturn(input: ReturnSettlementInput): ReturnSettlement {
     returnedValue = returnedValue.add(
       item.retailPrice.sub(item.sale).mul(line.quantity),
     );
+    listDayValue = listDayValue.add(
+      item.retailPrice.div(plannedDays).mul(line.quantity),
+    );
+    paidDayValue = paidDayValue.add(
+      item.retailPrice.sub(item.sale).div(plannedDays).mul(line.quantity),
+    );
     return {
       orderItemId: item.id,
       variantId: item.variantId,
@@ -99,7 +125,7 @@ export function settleReturn(input: ReturnSettlementInput): ReturnSettlement {
       cleaningDays: line.cleaningDays,
       availableFrom: addDaysToInstant(input.returnedAt, line.cleaningDays),
       plannedDays: input.rental.plannedDays,
-      actualDays: rentalDays(input.rental.startDate, input.returnedAt),
+      actualDays,
     };
   });
 
@@ -111,6 +137,17 @@ export function settleReturn(input: ReturnSettlementInput): ReturnSettlement {
 
   const isEarly = input.returnedAt.getTime() < input.rental.endDate.getTime();
   const maxEarlyReturnRefund = isEarly ? returnedValue : new Decimal(0);
+  const overdueDays = Math.max(0, actualDays - input.rental.plannedDays);
+  const unusedDays = isEarly
+    ? Math.max(0, input.rental.plannedDays - actualDays)
+    : 0;
+  const suggestedPenalty = listDayValue
+    .mul(overdueDays)
+    .toDecimalPlaces(0, Decimal.ROUND_DOWN);
+  const unusedDaysAmount = Decimal.min(
+    paidDayValue.mul(unusedDays).toDecimalPlaces(0, Decimal.ROUND_DOWN),
+    maxEarlyReturnRefund,
+  );
   if (input.earlyReturnRefund.gt(0)) {
     if (!isEarly) {
       throw new BadRequestException(
@@ -146,6 +183,10 @@ export function settleReturn(input: ReturnSettlementInput): ReturnSettlement {
     penaltyAmount: input.penaltyAmount,
     earlyReturnRefund: input.earlyReturnRefund,
     maxEarlyReturnRefund,
+    overdueDays,
+    suggestedPenalty,
+    unusedDays,
+    unusedDaysAmount,
     newTotalAmount,
     paidAmount: input.paidAmount,
     paymentsAmount: input.paymentsAmount,

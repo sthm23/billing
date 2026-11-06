@@ -99,7 +99,7 @@ describe('RentalService', () => {
     store: { findUnique: jest.fn() },
     warehouse: { findFirst: jest.fn() },
     customer: { findUnique: jest.fn() },
-    productVariant: { findMany: jest.fn() },
+    productVariant: { findMany: jest.fn(), findFirst: jest.fn() },
     order: {
       create: jest.fn(),
       update: jest.fn(),
@@ -580,14 +580,16 @@ describe('RentalService', () => {
       prisma.rental.findMany.mockResolvedValue([]);
     });
 
+    const whereOf = () => prisma.rental.findMany.mock.calls[0][0].where;
+
     it('limits a seller to their warehouses and filters overdue rentals', async () => {
       await service.findAll({ overdue: 'true' }, makeUser(StaffRole.SELLER));
-      const where = prisma.rental.findMany.mock.calls[0][0].where;
-      expect(where).toMatchObject({
+      const where = whereOf();
+      expect(where.AND[0]).toEqual({
         storeId: STORE,
         warehouseId: { in: [WAREHOUSE] },
       });
-      expect(where.AND[0].status.in).toEqual([
+      expect(where.AND[1].status.in).toEqual([
         RentalStatus.ISSUED,
         RentalStatus.PARTIALLY_RETURNED,
       ]);
@@ -595,15 +597,202 @@ describe('RentalService', () => {
 
     it('lets the owner see the whole store', async () => {
       await service.findAll({}, makeUser(StaffRole.OWNER));
-      expect(prisma.rental.findMany.mock.calls[0][0].where).not.toHaveProperty(
-        'warehouseId',
-      );
+      expect(whereOf().AND).toEqual([{ storeId: STORE }]);
     });
 
     it('rejects an unknown status', async () => {
       await expect(
         service.findAll({ status: 'LOST' }, makeUser(StaffRole.OWNER)),
       ).rejects.toThrow('Unknown rental status');
+    });
+
+    it('returnToday: with the customer, due back at noon today', async () => {
+      await service.findAll({ view: 'returnToday' }, makeUser(StaffRole.OWNER));
+      const today = todayLocalDate();
+      expect(whereOf().AND[1]).toEqual({
+        status: { in: [RentalStatus.ISSUED, RentalStatus.PARTIALLY_RETURNED] },
+        endDate: {
+          gte: rentalBoundary(today),
+          lt: rentalBoundary(addLocalDays(today, 1)),
+        },
+      });
+    });
+
+    it('issueToday: booked, started by today, not over', async () => {
+      await service.findAll({ view: 'issueToday' }, makeUser(StaffRole.OWNER));
+      const view = whereOf().AND[1];
+      expect(view.status).toBe(RentalStatus.BOOKED);
+      expect(view.startDate.lt).toEqual(
+        rentalBoundary(addLocalDays(todayLocalDate(), 1)),
+      );
+      expect(view.endDate.gt).toBeInstanceOf(Date);
+    });
+
+    it('searches by name, code prefix and phone digits', async () => {
+      await service.findAll({ q: 'a1b2' }, makeUser(StaffRole.OWNER));
+      expect(whereOf().AND[1].OR).toEqual(
+        expect.arrayContaining([{ id: { startsWith: 'a1b2' } }]),
+      );
+
+      prisma.rental.findMany.mockClear();
+      await service.findAll({ q: '+998 90 12' }, makeUser(StaffRole.OWNER));
+      const or = whereOf().AND[1].OR;
+      expect(or).toEqual(
+        expect.arrayContaining([
+          { order: { customer: { user: { phone: { contains: '9989012' } } } } },
+        ]),
+      );
+      expect(or).not.toEqual(
+        expect.arrayContaining([{ id: expect.anything() }]),
+      );
+    });
+
+    it('filters by variant and sorts by start date', async () => {
+      await service.findAll(
+        { variantId: DRESS, sort: 'asc' },
+        makeUser(StaffRole.OWNER),
+      );
+      const args = prisma.rental.findMany.mock.calls[0][0];
+      expect(args.where.AND[1]).toEqual({
+        order: { items: { some: { variantId: DRESS } } },
+      });
+      expect(args.orderBy[0]).toEqual({ startDate: 'asc' });
+    });
+
+    it('returns the short code and item thumbnails', async () => {
+      prisma.rental.count.mockResolvedValue(1);
+      prisma.rental.findMany.mockResolvedValue([
+        {
+          id: RENTAL,
+          status: RentalStatus.BOOKED,
+          endDate: rentalBoundary(addLocalDays(todayLocalDate(), 2)),
+          order: {
+            id: ORDER,
+            status: 'HOLD',
+            totalAmount: D(1600000),
+            paidAmount: D(500000),
+            customer: null,
+            items: [
+              {
+                quantity: 2,
+                variant: {
+                  id: DRESS,
+                  product: { name: 'Aurora', images: [{ url: 'a.jpg' }] },
+                },
+              },
+            ],
+          },
+        },
+      ]);
+      const res = await service.findAll({}, makeUser(StaffRole.OWNER));
+      expect(res.data[0]).toMatchObject({
+        code: RENTAL.slice(0, 6).toUpperCase(),
+        itemCount: 2,
+        items: [
+          {
+            variantId: DRESS,
+            productName: 'Aurora',
+            imageUrl: 'a.jpg',
+            quantity: 2,
+          },
+        ],
+      });
+      expect(res.data[0].order.dueAmount.toNumber()).toBe(1100000);
+    });
+  });
+
+  describe('getSummary', () => {
+    it('counts every quick view in the user scope', async () => {
+      prisma.rental.count.mockResolvedValue(3);
+      const res = await service.getSummary(makeUser(StaffRole.SELLER));
+      expect(res).toEqual({
+        issueToday: 3,
+        returnToday: 3,
+        overdue: 3,
+        booked: 3,
+        out: 3,
+        all: 3,
+      });
+      expect(prisma.rental.count).toHaveBeenCalledTimes(6);
+      expect(prisma.rental.count.mock.calls[0][0].where.AND[0]).toEqual({
+        storeId: STORE,
+        warehouseId: { in: [WAREHOUSE] },
+      });
+    });
+  });
+
+  describe('findSimilar', () => {
+    const variantRow = (id: string, productId: string) => ({
+      id,
+      sku: id,
+      rentPricePerDay: D(200000),
+      product: { id: productId, name: productId, images: [] },
+      attributes: [
+        {
+          value: {
+            valueString: '46',
+            valueNumber: null,
+            valueBool: null,
+            attribute: { name: 'Size' },
+          },
+        },
+      ],
+    });
+    const query = {
+      warehouseId: WAREHOUSE,
+      variantId: DRESS,
+      startDate: addLocalDays(todayLocalDate(), 1),
+      endDate: addLocalDays(todayLocalDate(), 3),
+    };
+
+    it('lists other sizes, then the category, free ones first', async () => {
+      prisma.productVariant.findFirst.mockResolvedValue({
+        productId: 'aurora',
+        product: { categoryId: 'dresses' },
+      });
+      prisma.productVariant.findMany
+        .mockResolvedValueOnce([
+          variantRow('au44', 'aurora'),
+          variantRow('au48', 'aurora'),
+        ])
+        .mockResolvedValueOnce([variantRow('bella', 'bella')]);
+      availability.getAvailability.mockResolvedValue([
+        { variantId: 'au44', owned: 1, available: 0 },
+        { variantId: 'au48', owned: 2, available: 2 },
+        { variantId: 'bella', owned: 1, available: 1 },
+      ]);
+      const res = await service.findSimilar(query, makeUser(StaffRole.SELLER));
+      expect(res.sameProduct.map((r) => r.variantId)).toEqual(['au48', 'au44']);
+      expect(res.sameProduct[0]).toMatchObject({
+        available: 2,
+        owned: 2,
+        attributes: [{ name: 'Size', value: '46' }],
+      });
+      expect(res.sameCategory.map((r) => r.variantId)).toEqual(['bella']);
+      const categoryWhere =
+        prisma.productVariant.findMany.mock.calls[1][0].where;
+      expect(categoryWhere).toMatchObject({
+        canRent: true,
+        id: { not: DRESS },
+        productId: { not: 'aurora' },
+        product: { categoryId: 'dresses', isArchived: false },
+      });
+    });
+
+    it('skips the category without one and 404s a foreign variant', async () => {
+      prisma.productVariant.findFirst.mockResolvedValueOnce({
+        productId: 'aurora',
+        product: { categoryId: null },
+      });
+      prisma.productVariant.findMany.mockResolvedValueOnce([]);
+      const res = await service.findSimilar(query, makeUser(StaffRole.OWNER));
+      expect(res).toEqual({ sameProduct: [], sameCategory: [] });
+      expect(prisma.productVariant.findMany).toHaveBeenCalledTimes(1);
+
+      prisma.productVariant.findFirst.mockResolvedValueOnce(null);
+      await expect(
+        service.findSimilar(query, makeUser(StaffRole.OWNER)),
+      ).rejects.toThrow('Product variant not found');
     });
   });
 
@@ -613,6 +802,7 @@ describe('RentalService', () => {
       status: RentalStatus.BOOKED,
       startDate: rentalBoundary(today),
       endDate: rentalBoundary(addLocalDays(today, 2)),
+      _count: { collaterals: 0 },
       order: {
         totalAmount: D(1600000),
         paidAmount: D(500000),
@@ -644,6 +834,7 @@ describe('RentalService', () => {
       expect(prisma.rental.update.mock.calls[0][0].data).toMatchObject({
         status: RentalStatus.ISSUED,
         issuedBy: 'staff',
+        issuedWithoutCollateral: false,
       });
       expect(
         prisma.cashTransaction.createMany.mock.calls[0][0].data[0],
@@ -657,6 +848,23 @@ describe('RentalService', () => {
         excludeRentalId: RENTAL,
         variantIds: [DRESS],
       });
+    });
+
+    it('marks an issue without any collateral held', async () => {
+      await service.issue(RENTAL, {}, makeUser(StaffRole.SELLER));
+      expect(
+        prisma.rental.update.mock.calls[0][0].data.issuedWithoutCollateral,
+      ).toBe(true);
+    });
+
+    it('a collateral taken at booking counts', async () => {
+      prisma.rental.findUniqueOrThrow.mockResolvedValue(
+        issuable({ _count: { collaterals: 1 } }),
+      );
+      await service.issue(RENTAL, {}, makeUser(StaffRole.SELLER));
+      expect(
+        prisma.rental.update.mock.calls[0][0].data.issuedWithoutCollateral,
+      ).toBe(false);
     });
 
     it('refuses to issue before the start date', async () => {

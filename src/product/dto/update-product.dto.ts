@@ -1,10 +1,13 @@
 import {
   IsBoolean,
+  IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
+  Max,
   Min,
 } from 'class-validator';
+import { MAX_CLEANING_DAYS } from '../../rental/dto/rental-lifecycle.dto';
 
 export class UpdateProductVariantPriceDTO {
   @IsNotEmpty()
@@ -27,6 +30,13 @@ export class UpdateProductVariantPriceDTO {
   @IsNumber()
   @Min(0)
   rentPricePerDay?: number;
+
+  /** Omitted = unchanged */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(MAX_CLEANING_DAYS)
+  defaultCleaningDays?: number;
 }
 
 export class UpdateProductDto {}

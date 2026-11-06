@@ -337,6 +337,7 @@ model ProductVariant {
   canSell        Boolean  @default(true)  // Можно продавать
   canRent        Boolean  @default(false) // Можно сдавать в аренду
   rentPricePerDay Decimal? // Цена аренды за день (обязательна > 0 при canRent)
+  defaultCleaningDays Int @default(1) // Дней химчистки по умолчанию при возврате из аренды (0…30)
   storeId        String  // Денормализация для быстрого поиска SKU
   warehouseId    String  // Денормализация для быстрого доступа к складу
   createdAt      DateTime                @default(now())
@@ -623,6 +624,7 @@ model Rental {
   status   RentalStatus @default(BOOKED)
   issuedAt DateTime?
   issuedBy String?      // staffId
+  issuedWithoutCollateral Boolean @default(false) // выдано без залога (нет невозвращённых залогов при выдаче)
   closedAt DateTime?    // все вещи возвращены
 
   cancelledAt  DateTime?

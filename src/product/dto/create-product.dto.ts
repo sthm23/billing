@@ -3,14 +3,17 @@ import {
   ArrayMinSize,
   IsArray,
   IsBoolean,
+  IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   Min,
   ValidateNested,
 } from 'class-validator';
+import { MAX_CLEANING_DAYS } from '../../rental/dto/rental-lifecycle.dto';
 export class AttributeValueDto {
   @IsUUID('4')
   @IsNotEmpty()
@@ -47,6 +50,14 @@ export class ProductVariantDto {
   @Type(() => Number)
   @Min(0)
   rentPricePerDay?: number;
+
+  /** Dry-cleaning days suggested on rental return; default 1 */
+  @IsOptional()
+  @IsInt()
+  @Type(() => Number)
+  @Min(0)
+  @Max(MAX_CLEANING_DAYS)
+  defaultCleaningDays?: number;
 
   @IsNumber()
   @Type(() => Number)
