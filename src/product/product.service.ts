@@ -355,7 +355,7 @@ export class ProductService {
               canSell: v.canSell,
               canRent: v.canRent,
               rentPricePerDay: v.rentPricePerDay,
-              defaultCleaningDays: v.defaultCleaningDays,
+          defaultCleaningDays: v.defaultCleaningDays,
               quantity:
                 v.inventory.reduce((acc, curr) => acc + curr.quantity, 0) || 0,
             })),
@@ -594,7 +594,7 @@ export class ProductService {
           canSell: v.canSell,
           canRent: v.canRent,
           rentPricePerDay: v.rentPricePerDay,
-              defaultCleaningDays: v.defaultCleaningDays,
+          defaultCleaningDays: v.defaultCleaningDays,
           sku: v.sku,
           stockMovements: v.stockMovements.map((movement) => ({
             id: movement.id,
@@ -672,7 +672,7 @@ export class ProductService {
           canSell: v.canSell,
           canRent: v.canRent,
           rentPricePerDay: v.rentPricePerDay,
-              defaultCleaningDays: v.defaultCleaningDays,
+          defaultCleaningDays: v.defaultCleaningDays,
           sku: v.sku,
           productId: v.product.id,
           productName: v.product.name,
