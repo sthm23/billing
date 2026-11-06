@@ -24,6 +24,7 @@ import {
 } from './dto/rental-lifecycle.dto';
 import { CreateRentalPaymentDto } from './dto/rental-payment.dto';
 import {
+  RentalAgendaQuery,
   RentalAvailabilityQuery,
   RentalCalendarQuery,
   RentalListQuery,
@@ -66,6 +67,14 @@ export class RentalController {
     @CurrentUser() user: CurrentUserType,
   ) {
     return this.rentalService.getCalendar(query, user);
+  }
+
+  @Get('agenda')
+  getAgenda(
+    @Query() query: RentalAgendaQuery,
+    @CurrentUser() user: CurrentUserType,
+  ) {
+    return this.rentalService.getAgenda(query, user);
   }
 
   @Post()

@@ -38,6 +38,15 @@ export class RentalAvailabilityQuery {
   excludeRentalId?: string;
 }
 
+/** GET /rental/agenda: issues and returns per salon day, at most 93 days */
+export class RentalAgendaQuery {
+  @Matches(LOCAL_DATE, { message: LOCAL_DATE_MESSAGE })
+  from!: string;
+
+  @Matches(LOCAL_DATE, { message: LOCAL_DATE_MESSAGE })
+  to!: string;
+}
+
 /** GET /rental/calendar */
 export class RentalCalendarQuery {
   @IsUUID('4')

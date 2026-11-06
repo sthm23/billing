@@ -32,6 +32,7 @@ import {
 import { CreateRentalPaymentDto } from './dto/rental-payment.dto';
 import {
   RENTAL_VIEWS,
+  RentalAgendaQuery,
   RentalAvailabilityQuery,
   RentalCalendarQuery,
   RentalListQuery,
@@ -83,6 +84,81 @@ const DEFAULT_PAGE_SIZE = 10;
 const MAX_PAGE_SIZE = 50;
 /** Clock drift between the device and the server tolerated for returnedAt */
 const RETURN_CLOCK_TOLERANCE_MS = 5 * 60 * 1000;
+
+/** Rows of GET /rental and GET /rental/agenda: customer, totals, item thumbnails */
+const LIST_INCLUDE = {
+  order: {
+    select: {
+      id: true,
+      status: true,
+      totalAmount: true,
+      paidAmount: true,
+      customer: {
+        select: {
+          id: true,
+          user: { select: { fullName: true, phone: true } },
+        },
+      },
+      items: {
+        orderBy: { createdAt: 'asc' },
+        select: {
+          quantity: true,
+          variant: {
+            select: {
+              id: true,
+              product: {
+                select: {
+                  name: true,
+                  images: {
+                    orderBy: [{ isMain: 'desc' }, { order: 'asc' }],
+                    take: 1,
+                    select: { url: true },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+} satisfies Prisma.RentalInclude;
+
+type ListRental = Prisma.RentalGetPayload<{ include: typeof LIST_INCLUDE }>;
+
+function toListRow({ order, ...rental }: ListRental, now: number) {
+  return {
+    ...rental,
+    code: rentalCode(rental.id),
+    overdue:
+      OUT_STATUSES.includes(rental.status) && rental.endDate.getTime() < now,
+    order: {
+      id: order.id,
+      status: order.status,
+      totalAmount: order.totalAmount,
+      paidAmount: order.paidAmount,
+      dueAmount:
+        rental.status === RentalStatus.CANCELLED
+          ? new Decimal(0)
+          : order.totalAmount.sub(order.paidAmount),
+    },
+    customer: order.customer
+      ? {
+          id: order.customer.id,
+          fullName: order.customer.user.fullName,
+          phone: order.customer.user.phone,
+        }
+      : null,
+    itemCount: order.items.reduce((sum, i) => sum + i.quantity, 0),
+    /** Lines for thumbnails, in booking order */
+    items: order.items.map((i) => ({
+      variantId: i.variant.id,
+      productName: i.variant.product.name,
+      imageUrl: i.variant.product.images[0]?.url ?? null,
+      quantity: i.quantity,
+    })),
+  };
+}
 
 /** Rental fields a return is computed from */
 const returnRentalSelect = {
@@ -1702,43 +1778,7 @@ export class RentalService {
             { [query.sortBy ?? 'startDate']: query.sort ?? 'desc' },
             { createdAt: 'asc' },
           ],
-          include: {
-            order: {
-              select: {
-                id: true,
-                status: true,
-                totalAmount: true,
-                paidAmount: true,
-                customer: {
-                  select: {
-                    id: true,
-                    user: { select: { fullName: true, phone: true } },
-                  },
-                },
-                items: {
-                  orderBy: { createdAt: 'asc' },
-                  select: {
-                    quantity: true,
-                    variant: {
-                      select: {
-                        id: true,
-                        product: {
-                          select: {
-                            name: true,
-                            images: {
-                              orderBy: [{ isMain: 'desc' }, { order: 'asc' }],
-                              take: 1,
-                              select: { url: true },
-                            },
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
+          include: LIST_INCLUDE,
         }),
       ]);
       const now = Date.now();
@@ -1746,41 +1786,104 @@ export class RentalService {
         currentPage,
         pageSize,
         total,
-        data: rentals.map(({ order, ...rental }) => ({
-          ...rental,
-          code: rentalCode(rental.id),
-          overdue:
-            OUT_STATUSES.includes(rental.status) &&
-            rental.endDate.getTime() < now,
-          order: {
-            id: order.id,
-            status: order.status,
-            totalAmount: order.totalAmount,
-            paidAmount: order.paidAmount,
-            dueAmount:
-              rental.status === RentalStatus.CANCELLED
-                ? new Decimal(0)
-                : order.totalAmount.sub(order.paidAmount),
-          },
-          customer: order.customer
-            ? {
-                id: order.customer.id,
-                fullName: order.customer.user.fullName,
-                phone: order.customer.user.phone,
-              }
-            : null,
-          itemCount: order.items.reduce((sum, i) => sum + i.quantity, 0),
-          /** Lines for thumbnails, in booking order */
-          items: order.items.map((i) => ({
-            variantId: i.variant.id,
-            productName: i.variant.product.name,
-            imageUrl: i.variant.product.images[0]?.url ?? null,
-            quantity: i.quantity,
-          })),
-        })),
+        data: rentals.map((rental) => toListRow(rental, now)),
       };
     } catch (error: unknown) {
       this.fail(error, { storeId }, 'Failed to list rentals');
+    }
+  }
+
+  /**
+   * GET /rental/agenda: what to do on each salon day of [from, to] — issues of
+   * bookings and returns of rentals out. A booking is due for issue on its
+   * start date, or today once started and not over (R5a); a rental out is due
+   * back on its end date, an overdue one today. Closed and cancelled rentals
+   * are not listed. Same scope as the list.
+   */
+  async getAgenda(query: RentalAgendaQuery, user: CurrentUser) {
+    const storeId = await this.assertRentalStore(user);
+    if (query.from > query.to) {
+      throw new BadRequestException('from must not be after to');
+    }
+    let dayCount = 0;
+    for (let d = query.from; d <= query.to; d = addLocalDays(d, 1)) {
+      if (++dayCount > MAX_CALENDAR_DAYS) {
+        throw new BadRequestException(
+          `The agenda range is limited to ${MAX_CALENDAR_DAYS} days`,
+        );
+      }
+    }
+    const now = new Date();
+    const today = todayLocalDate(now);
+    let rangeEnd: Date;
+    try {
+      rangeEnd = rentalBoundary(addLocalDays(query.to, 1));
+    } catch (error: unknown) {
+      throw new BadRequestException(
+        error instanceof Error ? error.message : 'Invalid date',
+      );
+    }
+
+    try {
+      // Active rentals that start before the range ends; the day is picked below
+      const rentals = await this.prisma.rental.findMany({
+        where: {
+          AND: [
+            this.scopeWhere(user, storeId),
+            {
+              status: { in: [RentalStatus.BOOKED, ...OUT_STATUSES] },
+              startDate: { lt: rangeEnd },
+            },
+          ],
+        },
+        orderBy: [{ startDate: 'asc' }, { createdAt: 'asc' }],
+        include: LIST_INCLUDE,
+      });
+
+      const events: {
+        date: string;
+        kind: 'ISSUE' | 'RETURN';
+        rental: ReturnType<typeof toListRow>;
+      }[] = [];
+      for (const rental of rentals) {
+        const row = toListRow(rental, now.getTime());
+        const notOver = rental.endDate.getTime() > now.getTime();
+        let event: { date: string; kind: 'ISSUE' | 'RETURN' };
+        if (rental.status === RentalStatus.BOOKED) {
+          const start = toLocalDate(rental.startDate);
+          event = {
+            kind: 'ISSUE',
+            date: notOver && start < today ? today : start,
+          };
+        } else {
+          event = {
+            kind: 'RETURN',
+            date: notOver ? toLocalDate(rental.endDate) : today,
+          };
+        }
+        if (event.date >= query.from && event.date <= query.to) {
+          events.push({ ...event, rental: row });
+        }
+      }
+
+      const counts = new Map<string, { issues: number; returns: number }>();
+      for (const e of events) {
+        const c = counts.get(e.date) ?? { issues: 0, returns: 0 };
+        if (e.kind === 'ISSUE') c.issues += 1;
+        else c.returns += 1;
+        counts.set(e.date, c);
+      }
+      return {
+        from: query.from,
+        to: query.to,
+        today,
+        days: [...counts.entries()]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([date, c]) => ({ date, ...c })),
+        events,
+      };
+    } catch (error: unknown) {
+      this.fail(error, { storeId }, 'Failed to load the rental agenda');
     }
   }
 

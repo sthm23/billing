@@ -710,6 +710,118 @@ describe('RentalService', () => {
     });
   });
 
+  describe('getAgenda', () => {
+    const today = todayLocalDate();
+    const row = (
+      id: string,
+      status: RentalStatus,
+      start: string,
+      end: string,
+    ) => ({
+      id,
+      status,
+      startDate: rentalBoundary(start),
+      endDate: rentalBoundary(end),
+      order: {
+        id: ORDER,
+        status: 'HOLD',
+        totalAmount: D(100),
+        paidAmount: D(0),
+        customer: null,
+        items: [],
+      },
+    });
+
+    it('puts issues on the start day (or today once started) and returns on the end day (overdue — today)', async () => {
+      prisma.rental.findMany.mockResolvedValue([
+        row(
+          'a0000000-0000-4000-8000-000000000001',
+          RentalStatus.BOOKED,
+          addLocalDays(today, 3),
+          addLocalDays(today, 5),
+        ),
+        row(
+          'a0000000-0000-4000-8000-000000000002',
+          RentalStatus.BOOKED,
+          addLocalDays(today, -1),
+          addLocalDays(today, 1),
+        ),
+        row(
+          'a0000000-0000-4000-8000-000000000003',
+          RentalStatus.ISSUED,
+          addLocalDays(today, -2),
+          addLocalDays(today, 2),
+        ),
+        row(
+          'a0000000-0000-4000-8000-000000000004',
+          RentalStatus.PARTIALLY_RETURNED,
+          addLocalDays(today, -5),
+          addLocalDays(today, -2),
+        ),
+        row(
+          'a0000000-0000-4000-8000-000000000005',
+          RentalStatus.ISSUED,
+          addLocalDays(today, -9),
+          addLocalDays(today, 40),
+        ),
+      ]);
+      const result = await service.getAgenda(
+        { from: addLocalDays(today, -3), to: addLocalDays(today, 7) },
+        makeUser(StaffRole.OWNER),
+      );
+      const brief = result.events.map((e) => [
+        e.rental.id.slice(-1),
+        e.kind,
+        e.date,
+      ]);
+      expect(brief).toEqual([
+        ['1', 'ISSUE', addLocalDays(today, 3)],
+        ['2', 'ISSUE', today],
+        ['3', 'RETURN', addLocalDays(today, 2)],
+        ['4', 'RETURN', today],
+      ]);
+      expect(result.days).toEqual([
+        { date: today, issues: 1, returns: 1 },
+        { date: addLocalDays(today, 2), issues: 0, returns: 1 },
+        { date: addLocalDays(today, 3), issues: 1, returns: 0 },
+      ]);
+      expect(result.events[3].rental.overdue).toBe(true);
+    });
+
+    it('lists active rentals of the seller warehouses only', async () => {
+      prisma.rental.findMany.mockResolvedValue([]);
+      await service.getAgenda(
+        { from: today, to: today },
+        makeUser(StaffRole.SELLER),
+      );
+      const [[args]] = prisma.rental.findMany.mock.calls as [
+        [{ where: { AND: Prisma.RentalWhereInput[] } }],
+      ];
+      expect(args.where.AND[0]).toEqual({
+        storeId: STORE,
+        warehouseId: { in: [WAREHOUSE] },
+      });
+      expect(args.where.AND[1]).toMatchObject({
+        status: {
+          in: [
+            RentalStatus.BOOKED,
+            RentalStatus.ISSUED,
+            RentalStatus.PARTIALLY_RETURNED,
+          ],
+        },
+      });
+    });
+
+    it('rejects a range over 93 days', async () => {
+      await expect(
+        service.getAgenda(
+          { from: today, to: addLocalDays(today, 93) },
+          makeUser(StaffRole.OWNER),
+        ),
+      ).rejects.toThrow('limited to 93 days');
+    });
+  });
+
   describe('getSummary', () => {
     it('counts every quick view in the user scope', async () => {
       prisma.rental.count.mockResolvedValue(3);
