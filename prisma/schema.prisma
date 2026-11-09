@@ -111,6 +111,11 @@ model Staff {
   role      StaffRole
   isActive  Boolean   @default(true)
   createdAt DateTime  @default(now())
+  /// Set when the owner deactivates the employee; cleared on restore
+  deactivatedAt      DateTime?
+  /// User id of who deactivated (no FK: users are never deleted)
+  deactivatedById    String?
+  deactivationReason StaffDeactivationReason?
 
   returnPayments   ReturnPayment[]    @relation("ReturnPayments")
   orders           Order[]            @relation("StaffOrders")
@@ -857,6 +862,13 @@ enum StaffRole {
   MANAGER
   CASHIER
   WAREHOUSE
+}
+
+/// Why an employee was deactivated (Staff.deactivationReason)
+enum StaffDeactivationReason {
+  LEFT
+  TEMPORARY
+  OTHER
 }
 
 enum StockMovementType {

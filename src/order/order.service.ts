@@ -30,6 +30,7 @@ import { CreateReturnOrderDto, ReturnItemDto } from './dto/create-return.dto';
 import { OrderQueryParams } from './entities/order.entity';
 import { DateRangeParams, resolveDateRange } from '@shared/dto/date-range.dto';
 import { canSeeCost } from '@shared/helper/role.helper';
+import { SOLD_ORDER_FILTER } from './entities/sold-order.filter';
 
 @Injectable()
 export class OrderService {
@@ -1113,10 +1114,7 @@ export class OrderService {
     const { from, to } = resolveDateRange(range);
     const where: Prisma.OrderWhereInput = {
       soldAt: { gte: from, lt: to },
-      OR: [
-        { status: { in: [OrderStatus.COMPLETED, OrderStatus.DEBT] } },
-        { status: OrderStatus.HOLD, rental: { isNot: null } },
-      ],
+      ...SOLD_ORDER_FILTER,
     };
     if (user.role !== UserRole.ADMIN) {
       if (!user.staff) throw new ForbiddenException('Staff only');

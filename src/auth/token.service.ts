@@ -1,113 +1,164 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
-import { InjectPinoLogger, PinoLogger } from "nestjs-pino";
-import { ConfigService } from "@nestjs/config";
-import { PrismaService } from "@prisma/prisma.service";
-import { addDays } from "@shared/helper/date.helper";
-import { HashingHelper } from "@shared/helper/hash.helper";
-import { AccessTokenPayload, LoginResponse, RefreshTokenPayload } from "./models/auth.model";
-import { JwtService, JwtSignOptions } from "@nestjs/jwt";
-
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
+import { ConfigService } from '@nestjs/config';
+import { PrismaService } from '@prisma/prisma.service';
+import { addDays } from '@shared/helper/date.helper';
+import { HashingHelper } from '@shared/helper/hash.helper';
+import {
+  AccessTokenPayload,
+  LoginResponse,
+  RefreshTokenPayload,
+} from './models/auth.model';
+import { JwtService, JwtSignOptions } from '@nestjs/jwt';
+import { isAccountActive } from './account-status';
 
 @Injectable()
 export class TokenService {
-    constructor(
-        private prisma: PrismaService,
-        private configService: ConfigService,
-        private jwtService: JwtService,
-        @InjectPinoLogger(TokenService.name) private readonly logger: PinoLogger,
-    ) { }
+  constructor(
+    private prisma: PrismaService,
+    private configService: ConfigService,
+    private jwtService: JwtService,
+    @InjectPinoLogger(TokenService.name) private readonly logger: PinoLogger,
+  ) {}
 
+  async refreshTokens(refreshToken: string): Promise<LoginResponse> {
+    this.logger.debug({}, 'Token refresh requested');
+    try {
+      const payload: RefreshTokenPayload = await this.jwtService.verifyAsync(
+        refreshToken,
+        {
+          secret: this.refreshTokenSecret,
+        },
+      );
 
-    async refreshTokens(refreshToken: string): Promise<LoginResponse> {
-        this.logger.debug({}, 'Token refresh requested');
-        try {
-            const payload: RefreshTokenPayload = await this.jwtService.verifyAsync(refreshToken, {
-                secret: this.refreshTokenSecret
-            });
+      const tokenFromDb = await this.findValidToken(payload.sub, refreshToken);
 
-            const tokenFromDb = await this.findValidToken(payload.sub, refreshToken);
+      if (!tokenFromDb) {
+        this.logger.warn(
+          { userId: payload.sub },
+          'Token refresh rejected: token not found or already revoked',
+        );
+        throw new UnauthorizedException('Invalid refresh token');
+      }
 
-            if (!tokenFromDb) {
-                this.logger.warn({ userId: payload.sub }, 'Token refresh rejected: token not found or already revoked');
-                throw new UnauthorizedException('Invalid refresh token');
-            }
+      await this.prisma.refreshSession.update({
+        where: { id: tokenFromDb.id },
+        data: { isRevoked: true },
+      });
 
-            await this.prisma.refreshSession.update({ where: { id: tokenFromDb.id }, data: { isRevoked: true } });
+      const account = await this.prisma.user.findUnique({
+        where: { id: payload.sub },
+        select: {
+          auth: { select: { isActive: true } },
+          staff: { select: { isActive: true } },
+        },
+      });
+      if (!account || !isAccountActive(account)) {
+        this.logger.warn(
+          { userId: payload.sub },
+          'Token refresh rejected: account deactivated',
+        );
+        throw new UnauthorizedException('Account is deactivated');
+      }
 
-            const newRefreshToken = await this.generateToken({
-                sub: payload.sub,
-                type: 'refresh'
-            }, {
-                secret: this.refreshTokenSecret,
-                expiresIn: this.refreshTokenExpire,
-            });
+      const newRefreshToken = await this.generateToken(
+        {
+          sub: payload.sub,
+          type: 'refresh',
+        },
+        {
+          secret: this.refreshTokenSecret,
+          expiresIn: this.refreshTokenExpire,
+        },
+      );
 
-            const savedRefreshToken = await this.saveRefreshToken(payload.sub, newRefreshToken);
-            const accessToken = await this.generateToken({
-                sub: payload.sub,
-                sid: savedRefreshToken.id,
-                type: 'access'
-            }, {
-                secret: this.accessTokenSecret,
-                expiresIn: this.accessTokenExpire,
-            });
-            this.logger.info({ userId: payload.sub }, 'Tokens refreshed successfully');
-            return { accessToken, refreshToken: newRefreshToken };
-        } catch (error: any) {
-            if (!(error instanceof UnauthorizedException)) {
-                this.logger.error({ err: error.message }, 'Token refresh error');
-            }
-            throw new UnauthorizedException(error.response || error.message)
-        }
+      const savedRefreshToken = await this.saveRefreshToken(
+        payload.sub,
+        newRefreshToken,
+      );
+      const accessToken = await this.generateToken(
+        {
+          sub: payload.sub,
+          sid: savedRefreshToken.id,
+          type: 'access',
+        },
+        {
+          secret: this.accessTokenSecret,
+          expiresIn: this.accessTokenExpire,
+        },
+      );
+      this.logger.info(
+        { userId: payload.sub },
+        'Tokens refreshed successfully',
+      );
+      return { accessToken, refreshToken: newRefreshToken };
+    } catch (error: any) {
+      if (!(error instanceof UnauthorizedException)) {
+        this.logger.error({ err: error.message }, 'Token refresh error');
+      }
+      throw new UnauthorizedException(error.response || error.message);
+    }
+  }
+
+  private async saveRefreshToken(userId: string, refreshToken: string) {
+    const hash = await HashingHelper.hash(
+      refreshToken,
+      Number(process.env.SALT) || 10,
+    );
+
+    const token = await this.prisma.refreshSession.create({
+      data: {
+        userId,
+        refreshHash: hash,
+        expiresAt: addDays(new Date(), 7),
+      },
+    });
+
+    return token;
+  }
+
+  private async findValidToken(userId: string, refreshToken: string) {
+    const tokens = await this.prisma.refreshSession.findMany({
+      where: { userId, isRevoked: false },
+    });
+
+    for (const token of tokens) {
+      const isMatch = await HashingHelper.isMatch(
+        refreshToken,
+        token.refreshHash,
+      );
+      if (isMatch) return token;
     }
 
-    private async saveRefreshToken(userId: string, refreshToken: string) {
-        const hash = await HashingHelper.hash(refreshToken, Number(process.env.SALT) || 10);
+    return null;
+  }
 
-        const token = await this.prisma.refreshSession.create({
-            data: {
-                userId,
-                refreshHash: hash,
-                expiresAt: addDays(new Date(), 7),
-            }
-        });
+  generateToken(
+    payload: AccessTokenPayload | RefreshTokenPayload,
+    options: JwtSignOptions,
+  ) {
+    return this.jwtService.signAsync(payload, options);
+  }
 
-        return token
-    }
+  get refreshTokenSecret() {
+    return this.configService.get<string>('JWT_REFRESH_SECRET');
+  }
 
-    private async findValidToken(userId: string, refreshToken: string) {
-        const tokens = await this.prisma.refreshSession.findMany({
-            where: { userId, isRevoked: false },
-        });
+  get refreshTokenExpire() {
+    return this.configService.get<number>('JWT_REFRESH_EXPIRE');
+  }
 
-        for (const token of tokens) {
-            const isMatch = await HashingHelper.isMatch(
-                refreshToken,
-                token.refreshHash,
-            );
-            if (isMatch) return token;
-        }
+  get accessTokenSecret() {
+    return this.configService.get<string>('JWT_ACCESS_SECRET');
+  }
 
-        return null;
-    }
-
-    generateToken(payload: AccessTokenPayload | RefreshTokenPayload, options: JwtSignOptions) {
-        return this.jwtService.signAsync(payload, options);
-    }
-
-    get refreshTokenSecret() {
-        return this.configService.get<string>('JWT_REFRESH_SECRET');
-    }
-
-    get refreshTokenExpire() {
-        return this.configService.get<number>('JWT_REFRESH_EXPIRE');
-    }
-
-    get accessTokenSecret() {
-        return this.configService.get<string>('JWT_ACCESS_SECRET');
-    }
-
-    get accessTokenExpire() {
-        return this.configService.get<number>('JWT_ACCESS_EXPIRE');
-    }
+  get accessTokenExpire() {
+    return this.configService.get<number>('JWT_ACCESS_EXPIRE');
+  }
 }

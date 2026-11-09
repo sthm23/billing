@@ -206,11 +206,7 @@ export class RentalAvailabilityService {
       });
     }
 
-    // An overdue unit is kept even when "now" is before the range: callers
-    // that look ahead (next-free search) treat it as busy with no end
-    return result.filter(
-      (o) => o.overdue || o.to.getTime() > params.range.from.getTime(),
-    );
+    return result.filter((o) => o.to.getTime() > params.range.from.getTime());
   }
 
   /** Owned and free units per variant on `[from, to)`. */
@@ -278,13 +274,18 @@ export class RentalAvailabilityService {
       select: { variantId: true, quantity: true },
     });
     const owned = new Map(inventories.map((i) => [i.variantId, i.quantity]));
+    const now = params.now ?? new Date();
     const occupancy = (
       await this.findOccupancy(db, {
         warehouseId: params.warehouseId,
         variantIds: params.variantIds,
-        range,
+        // From before "now", so an overdue unit (busy until now) is not cut off
+        range: {
+          from: new Date(Math.min(range.from.getTime(), now.getTime() - 1)),
+          to: range.to,
+        },
         excludeRentalId: params.excludeRentalId,
-        now: params.now,
+        now,
       })
     ).map((o) => (o.overdue ? { ...o, to: range.to } : o));
 
