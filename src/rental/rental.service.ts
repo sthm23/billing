@@ -2020,12 +2020,32 @@ export class RentalService {
     });
     const variantIds = [...new Set(query.variantIds.split(','))];
     try {
-      return await this.availability.getAvailability(this.prisma, {
+      const result = await this.availability.getAvailability(this.prisma, {
         warehouseId: query.warehouseId,
         variantIds,
         range: { from: start, to: end },
         excludeRentalId: query.excludeRentalId,
       });
+      if (query.nextFree !== 'true') return result;
+
+      // Busy variants: the earliest later start for the same number of days
+      // (not in the past, at most MAX_CALENDAR_DAYS after the asked start)
+      const busy = result.filter((r) => r.available === 0);
+      const tomorrow = addLocalDays(query.startDate, 1);
+      const today = todayLocalDate();
+      const next = await this.availability.findNextFreeStart(this.prisma, {
+        warehouseId: query.warehouseId,
+        variantIds: busy.map((r) => r.variantId),
+        firstStart: tomorrow > today ? tomorrow : today,
+        lastStart: addLocalDays(query.startDate, MAX_CALENDAR_DAYS),
+        days: plannedDays(start, end),
+        excludeRentalId: query.excludeRentalId,
+      });
+      return result.map((r) => ({
+        ...r,
+        nextFreeStart:
+          r.available > 0 ? query.startDate : (next.get(r.variantId) ?? null),
+      }));
     } catch (error: unknown) {
       this.fail(
         error,
@@ -2164,6 +2184,9 @@ export class RentalService {
         }),
         rentals: rentals.map((r) => ({
           id: r.id,
+          code: rentalCode(r.id),
+          overdue:
+            OUT_STATUSES.includes(r.status) && r.endDate.getTime() < Date.now(),
           orderId: r.orderId,
           status: r.status,
           startDate: r.startDate,

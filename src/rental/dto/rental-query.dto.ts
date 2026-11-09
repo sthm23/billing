@@ -36,6 +36,11 @@ export class RentalAvailabilityQuery {
   @IsOptional()
   @IsUUID('4')
   excludeRentalId?: string;
+
+  /** `true` — also return `nextFreeStart` per variant */
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  nextFree?: string;
 }
 
 /** GET /rental/agenda: issues and returns per salon day, at most 93 days */

@@ -52,11 +52,17 @@
 ```
 ?warehouseId=uuid&startDate=2027-05-14&endDate=2027-05-16&variantIds=a,b
 &excludeRentalId=uuid   // при редактировании брони — не считать её саму
+&nextFree=true          // опционально: ближайшая свободная дата начала (2026-11-09)
 ```
 ```json
-[{ "variantId": "a", "owned": 3, "available": 2 }]
+[{ "variantId": "a", "owned": 3, "available": 2, "nextFreeStart": "2027-05-14" }]
 ```
 `owned` — `Inventory.quantity` на складе, `available` — `owned − пиковое занятие` на `[startDate 12:00, endDate 12:00)` (R1). `startDate` в прошлом здесь разрешён.
+
+`nextFreeStart` (только с `nextFree=true`) — для карточки вещи: «Освободится …» и «Сдвинуть на …».
+- `available > 0` → сам `startDate`.
+- Иначе — самая ранняя дата начала брони **той же длины** (`plannedDays`), на которую есть свободная единица: ищется со дня после `startDate` (не раньше сегодня) до `startDate + 93` дней; не нашлось или салон не владеет вещью — `null`.
+- Вещь у клиента с просрочкой (не возвращена после `endDate`) в этом поиске занята **без конца** — момент возврата неизвестен; если других единиц нет, ответ `null` («когда освободится — неизвестно»).
 
 ## GET /rental/agenda
 
@@ -96,7 +102,7 @@
     "bookings": [{ "rentalId": "uuid", "from": "2027-05-14T07:00:00.000Z", "to": "2027-05-16T07:00:00.000Z", "quantity": 1 }],
     "cleanings": [{ "cleaningId": "uuid", "from": "2027-05-18T07:00:00.000Z", "to": "2027-05-19T07:00:00.000Z" }]
   }],
-  "rentals": [{ "id": "uuid", "orderId": "uuid", "status": "BOOKED", "startDate": "...", "endDate": "...", "customerName": "Иванова" }]
+  "rentals": [{ "id": "uuid", "code": "3F2A9C", "overdue": false, "orderId": "uuid", "status": "BOOKED", "startDate": "...", "endDate": "...", "customerName": "Иванова" }]
 }
 ```
 `bookings[].to` уже учитывает химчистку после возврата (`availableFrom`) и просрочку (`max(endDate, now)`). Запланированные химчистки (R13) входят в `busy`; `days[].cleaning` — сколько единиц из них в химчистке, `cleanings[]` — их интервалы (2026-11-07).

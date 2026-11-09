@@ -200,3 +200,74 @@ describe('RentalAvailabilityService', () => {
     expect(where.order.rental.warehouseId).toBe(WAREHOUSE);
   });
 });
+
+describe('RentalAvailabilityService.findNextFreeStart', () => {
+  const service = new RentalAvailabilityService();
+  const db = {
+    orderItem: { findMany: jest.fn() },
+    inventory: { findMany: jest.fn() },
+    rentalCleaning: { findMany: jest.fn() },
+  };
+  const booking = (start: string, end: string) => ({
+    variantId: DRESS,
+    quantity: 1,
+    rentalReturnItems: [],
+    order: {
+      rental: { id: `r-${start}`, startDate: day(start), endDate: day(end) },
+    },
+  });
+  const find = (now: Date, firstStart = '2027-05-15', days = 2) =>
+    service
+      .findNextFreeStart(db as unknown as Prisma.TransactionClient, {
+        warehouseId: WAREHOUSE,
+        variantIds: [DRESS],
+        firstStart,
+        lastStart: '2027-06-30',
+        days,
+        now,
+      })
+      .then((m) => m.get(DRESS));
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    db.inventory.findMany.mockResolvedValue([
+      { variantId: DRESS, quantity: 1 },
+    ]);
+    db.rentalCleaning.findMany.mockResolvedValue([]);
+  });
+
+  it('returns the first start with a free unit for the whole period', async () => {
+    // 14 → 17 busy, 18 → 19 busy: a 2-day booking fits only from the 19th
+    db.orderItem.findMany.mockResolvedValue([
+      booking('2027-05-14', '2027-05-17'),
+      booking('2027-05-18', '2027-05-19'),
+    ]);
+    expect(await find(day('2027-05-01'))).toBe('2027-05-19');
+  });
+
+  it('counts a planned dry cleaning as busy', async () => {
+    db.orderItem.findMany.mockResolvedValue([]);
+    db.rentalCleaning.findMany.mockResolvedValue([
+      {
+        id: 'c',
+        variantId: DRESS,
+        startDate: day('2027-05-15'),
+        endDate: day('2027-05-16'),
+      },
+    ]);
+    expect(await find(day('2027-05-01'))).toBe('2027-05-16');
+  });
+
+  it('never frees a unit that is still out after its end date', async () => {
+    db.orderItem.findMany.mockResolvedValue([
+      booking('2027-05-10', '2027-05-12'),
+    ]);
+    expect(await find(day('2027-05-14'))).toBeNull();
+  });
+
+  it('returns null when the salon owns no unit', async () => {
+    db.inventory.findMany.mockResolvedValue([]);
+    db.orderItem.findMany.mockResolvedValue([]);
+    expect(await find(day('2027-05-01'))).toBeNull();
+  });
+});

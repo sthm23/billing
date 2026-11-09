@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@generated/client';
 import { RentalCleaningStatus, RentalStatus } from '@generated/enums';
+import { addLocalDays, rentalBoundary } from './rental-days';
 
 /**
  * Units of one variant busy on `[from, to)`: by a rental (`rentalId`) or by a
@@ -13,6 +14,11 @@ export interface Occupancy {
   from: Date;
   to: Date;
   quantity: number;
+  /**
+   * Not returned after its end date: `to` is only "now", the real return
+   * moment is unknown (set by `findOccupancy`, used by the next-free search).
+   */
+  overdue?: boolean;
 }
 
 export interface VariantAvailability {
@@ -161,6 +167,7 @@ export class RentalAvailabilityService {
           from: rental.startDate,
           to: r.availableFrom,
           quantity: r.quantity,
+          overdue: false,
         });
       }
       const outstanding = item.quantity - returned;
@@ -172,6 +179,7 @@ export class RentalAvailabilityService {
           from: rental.startDate,
           to: new Date(Math.max(rental.endDate.getTime(), now.getTime())),
           quantity: outstanding,
+          overdue: rental.endDate.getTime() <= now.getTime(),
         });
       }
     }
@@ -194,10 +202,15 @@ export class RentalAvailabilityService {
         from: c.startDate,
         to: c.endDate,
         quantity: 1,
+        overdue: false,
       });
     }
 
-    return result.filter((o) => o.to.getTime() > params.range.from.getTime());
+    // An overdue unit is kept even when "now" is before the range: callers
+    // that look ahead (next-free search) treat it as busy with no end
+    return result.filter(
+      (o) => o.overdue || o.to.getTime() > params.range.from.getTime(),
+    );
   }
 
   /** Owned and free units per variant on `[from, to)`. */
@@ -228,5 +241,73 @@ export class RentalAvailabilityService {
       );
       return { variantId, owned: own, available: Math.max(0, own - busy) };
     });
+  }
+
+  /**
+   * Earliest start date in `[firstStart, lastStart]` (local `YYYY-MM-DD`)
+   * from which a booking of `days` days finds a free unit, per variant;
+   * `null` when there is none in the window. A unit still out after its end
+   * date has no known return moment, so it stays busy for the whole search.
+   */
+  async findNextFreeStart(
+    db: Db,
+    params: {
+      warehouseId: string;
+      variantIds: string[];
+      firstStart: string;
+      lastStart: string;
+      days: number;
+      excludeRentalId?: string;
+      now?: Date;
+    },
+  ): Promise<Map<string, string | null>> {
+    const result = new Map<string, string | null>();
+    if (params.firstStart > params.lastStart) {
+      params.variantIds.forEach((id) => result.set(id, null));
+      return result;
+    }
+    const range = {
+      from: rentalBoundary(params.firstStart),
+      to: rentalBoundary(addLocalDays(params.lastStart, params.days)),
+    };
+    const inventories = await db.inventory.findMany({
+      where: {
+        warehouseId: params.warehouseId,
+        variantId: { in: params.variantIds },
+      },
+      select: { variantId: true, quantity: true },
+    });
+    const owned = new Map(inventories.map((i) => [i.variantId, i.quantity]));
+    const occupancy = (
+      await this.findOccupancy(db, {
+        warehouseId: params.warehouseId,
+        variantIds: params.variantIds,
+        range,
+        excludeRentalId: params.excludeRentalId,
+        now: params.now,
+      })
+    ).map((o) => (o.overdue ? { ...o, to: range.to } : o));
+
+    for (const variantId of params.variantIds) {
+      const own = owned.get(variantId) ?? 0;
+      const intervals = occupancy.filter((o) => o.variantId === variantId);
+      let found: string | null = null;
+      for (
+        let start = params.firstStart;
+        own > 0 && start <= params.lastStart;
+        start = addLocalDays(start, 1)
+      ) {
+        const busy = peakOccupancy(intervals, {
+          from: rentalBoundary(start),
+          to: rentalBoundary(addLocalDays(start, params.days)),
+        });
+        if (busy < own) {
+          found = start;
+          break;
+        }
+      }
+      result.set(variantId, found);
+    }
+    return result;
   }
 }
