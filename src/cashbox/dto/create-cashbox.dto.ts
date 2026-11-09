@@ -1,58 +1,77 @@
-import { CashStatus, CashTransactionType, CashTransactionCategory, PaymentType } from "@generated/enums"
-import { IsOptional, IsNumber, Min, IsEnum, IsNotEmpty, IsString, IsUUID, IsDateString } from "class-validator"
-import { PaginationParams } from "@shared/dto/pagination-params.dto"
+import {
+  CashStatus,
+  CashTransactionType,
+  CashTransactionCategory,
+  PaymentType,
+} from '@generated/enums';
+import {
+  IsOptional,
+  IsNumber,
+  Min,
+  IsEnum,
+  IsNotEmpty,
+  IsString,
+  IsUUID,
+  IsDateString,
+} from 'class-validator';
+import { PaginationParams } from '@shared/dto/pagination-params.dto';
 
 export class CreateCashBoxDto {
-    @IsOptional()
-    @IsNumber()
-    @Min(0)
-    balance!: number
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  balance!: number;
 
-    /** Ignored: a new cashbox is always OPEN (kept for older clients) */
-    @IsOptional()
-    @IsEnum(CashStatus)
-    status?: CashStatus
+  /** Ignored: a new cashbox is always OPEN (kept for older clients) */
+  @IsOptional()
+  @IsEnum(CashStatus)
+  status?: CashStatus;
 
-    /** Ignored: the store comes from the token (kept for older clients) */
-    @IsOptional()
-    @IsUUID('4')
-    storeId?: string
+  /** Ignored: the store comes from the token (kept for older clients) */
+  @IsOptional()
+  @IsUUID('4')
+  storeId?: string;
 
-    @IsNotEmpty()
-    @IsUUID('4')
-    warehouseId!: string
+  @IsNotEmpty()
+  @IsUUID('4')
+  warehouseId!: string;
 }
 
 export class CreateCashTransactionDto {
-    @IsEnum(CashTransactionType)
-    type: CashTransactionType = CashTransactionType.EXPENSE
+  @IsEnum(CashTransactionType)
+  type: CashTransactionType = CashTransactionType.EXPENSE;
 
-    @IsEnum(CashTransactionCategory)
-    category: CashTransactionCategory = CashTransactionCategory.DELIVERY
+  @IsEnum(CashTransactionCategory)
+  category: CashTransactionCategory = CashTransactionCategory.DELIVERY;
 
-    @IsEnum(PaymentType)
-    paymentType: PaymentType = PaymentType.CASH
+  @IsEnum(PaymentType)
+  paymentType: PaymentType = PaymentType.CASH;
 
-    @IsNotEmpty()
-    @IsNumber()
-    @Min(0)
-    amount!: number
+  @IsNotEmpty()
+  @IsNumber()
+  @Min(0)
+  amount!: number;
 
-    @IsNotEmpty()
-    @IsString()
-    comment!: string
+  @IsNotEmpty()
+  @IsString()
+  comment!: string;
 
-    @IsOptional()
-    @IsUUID('4')
-    orderId?: string
+  @IsOptional()
+  @IsUUID('4')
+  orderId?: string;
 }
 /** `GET /cashbox`: pagination + the day for the `today` block (client's local bounds). */
 export class CashboxListParams extends PaginationParams {
   @IsOptional()
   @IsDateString()
-  from?: string
+  from?: string;
 
   @IsOptional()
   @IsDateString()
-  to?: string
+  to?: string;
+
+  /** Only cashboxes of this warehouse (the app's working warehouse) */
+  @IsOptional()
+  @IsUUID('4')
+  warehouseId?: string;
 }

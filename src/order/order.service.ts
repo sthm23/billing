@@ -27,10 +27,11 @@ import {
 } from '@generated/enums';
 import { OrderItem, Prisma } from '@generated/client';
 import { CreateReturnOrderDto, ReturnItemDto } from './dto/create-return.dto';
-import { OrderQueryParams } from './entities/order.entity';
+import { OrderQueryParams, OrderSummaryParams } from './entities/order.entity';
 import { DateRangeParams, resolveDateRange } from '@shared/dto/date-range.dto';
 import { canSeeCost } from '@shared/helper/role.helper';
 import { SOLD_ORDER_FILTER } from './entities/sold-order.filter';
+import { assertWarehouseAccess } from '@shared/helper/warehouse-access.helper';
 
 @Injectable()
 export class OrderService {
@@ -1027,15 +1028,22 @@ export class OrderService {
       status,
       fromDate,
       toDate,
+      warehouseId,
     }: OrderQueryParams,
     user: CurrentUser,
   ) {
     const skip = (currentPage - 1) * pageSize;
+    if (warehouseId) {
+      await assertWarehouseAccess(this.prisma, user, warehouseId);
+    }
     try {
       const params = {};
 
       if (user.type === UserType.STAFF) {
         params['storeId'] = user.staff.storeId;
+      }
+      if (warehouseId) {
+        params['warehouseId'] = warehouseId;
       }
 
       if (status) {
@@ -1110,7 +1118,10 @@ export class OrderService {
    * A rental counts from its issue (`soldAt`) even while the order is still HOLD.
    * Owner/admin — the whole store; manager — their warehouses; seller/cashier — own sales.
    */
-  async getSummary(range: DateRangeParams, user: CurrentUser) {
+  async getSummary(range: OrderSummaryParams, user: CurrentUser) {
+    if (range.warehouseId) {
+      await assertWarehouseAccess(this.prisma, user, range.warehouseId);
+    }
     const { from, to } = resolveDateRange(range);
     const where: Prisma.OrderWhereInput = {
       soldAt: { gte: from, lt: to },
@@ -1129,6 +1140,8 @@ export class OrderService {
         }
       }
     }
+    // Narrows the role scope to one warehouse (access checked above)
+    if (range.warehouseId) where.warehouseId = range.warehouseId;
     try {
       const result = await this.prisma.order.aggregate({
         where,
@@ -1150,11 +1163,17 @@ export class OrderService {
     }
   }
 
-  async searchOrders(search: string, user: CurrentUser) {
+  async searchOrders(search: string, user: CurrentUser, warehouseId?: string) {
+    if (warehouseId) {
+      await assertWarehouseAccess(this.prisma, user, warehouseId);
+    }
     try {
       const params = {};
       if (user.type === UserType.STAFF) {
         params['storeId'] = user.staff.storeId;
+      }
+      if (warehouseId) {
+        params['warehouseId'] = warehouseId;
       }
       if (search) {
         params['customer'] = {

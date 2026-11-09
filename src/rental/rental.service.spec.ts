@@ -825,7 +825,7 @@ describe('RentalService', () => {
   describe('getSummary', () => {
     it('counts every quick view in the user scope', async () => {
       prisma.rental.count.mockResolvedValue(3);
-      const res = await service.getSummary(makeUser(StaffRole.SELLER));
+      const res = await service.getSummary({}, makeUser(StaffRole.SELLER));
       expect(res).toEqual({
         issueToday: 3,
         returnToday: 3,
@@ -839,6 +839,30 @@ describe('RentalService', () => {
         storeId: STORE,
         warehouseId: { in: [WAREHOUSE] },
       });
+    });
+
+    it('narrows to the working warehouse', async () => {
+      prisma.rental.count.mockResolvedValue(1);
+      prisma.warehouse.findFirst.mockResolvedValue({ id: WAREHOUSE });
+      await service.getSummary(
+        { warehouseId: WAREHOUSE },
+        makeUser(StaffRole.SELLER),
+      );
+      expect(prisma.rental.count.mock.calls[0][0].where.AND[0]).toEqual({
+        storeId: STORE,
+        warehouseId: WAREHOUSE,
+      });
+    });
+
+    it('rejects a warehouse the seller has no access to', async () => {
+      prisma.warehouse.findFirst.mockResolvedValue({ id: 'other' });
+      await expect(
+        service.getSummary(
+          { warehouseId: '44444444-4444-4444-8444-444444444444' },
+          makeUser(StaffRole.SELLER),
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.rental.count).not.toHaveBeenCalled();
     });
   });
 

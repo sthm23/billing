@@ -35,6 +35,7 @@ import {
   RentalAvailabilityQuery,
   RentalCalendarQuery,
   RentalListQuery,
+  RentalSummaryQuery,
   RentalSimilarQuery,
 } from './dto/rental-query.dto';
 
@@ -59,8 +60,11 @@ export class RentalController {
   }
 
   @Get('summary')
-  getSummary(@CurrentUser() user: CurrentUserType) {
-    return this.rentalService.getSummary(user);
+  getSummary(
+    @Query() query: RentalSummaryQuery,
+    @CurrentUser() user: CurrentUserType,
+  ) {
+    return this.rentalService.getSummary(query, user);
   }
 
   @Get('similar')

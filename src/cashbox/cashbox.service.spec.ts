@@ -115,6 +115,28 @@ describe('CashboxService', () => {
       });
     });
 
+    it('narrows the role scope to the working warehouse', async () => {
+      await service.findAll(
+        { warehouseId: WAREHOUSE },
+        makeUser(StaffRole.SELLER),
+      );
+      expect(prisma.cashbox.findMany.mock.calls[0][0].where).toEqual({
+        storeId: STORE,
+        sellerId: 'staff',
+        warehouseId: WAREHOUSE,
+      });
+    });
+
+    it('rejects a warehouse the employee has no access to', async () => {
+      await expect(
+        service.findAll(
+          { warehouseId: '44444444-4444-4444-8444-444444444444' },
+          makeUser(StaffRole.MANAGER),
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.cashbox.findMany).not.toHaveBeenCalled();
+    });
+
     it('works for an admin without a staff profile', async () => {
       await service.findAll({}, {
         id: 'admin',
@@ -183,11 +205,19 @@ describe('CashboxService', () => {
     const FOREIGN_STORE = '22222222-2222-4222-8222-222222222222';
 
     it('opens in the store from the token, ignoring storeId and status from the body', async () => {
-      prisma.warehouse.findFirst.mockResolvedValue({ id: WAREHOUSE, storeId: STORE });
+      prisma.warehouse.findFirst.mockResolvedValue({
+        id: WAREHOUSE,
+        storeId: STORE,
+      });
       prisma.cashbox.findFirst.mockResolvedValue(null);
       prisma.cashbox.create.mockResolvedValue({ id: CASHBOX });
       await service.createCashBox(
-        { warehouseId: WAREHOUSE, storeId: FOREIGN_STORE, status: CashStatus.CLOSED, balance: 0 },
+        {
+          warehouseId: WAREHOUSE,
+          storeId: FOREIGN_STORE,
+          status: CashStatus.CLOSED,
+          balance: 0,
+        },
         makeUser(StaffRole.MANAGER),
       );
       expect(prisma.warehouse.findFirst).toHaveBeenCalledWith({
@@ -205,26 +235,46 @@ describe('CashboxService', () => {
     it('rejects a warehouse of another store', async () => {
       prisma.warehouse.findFirst.mockResolvedValue(null);
       await expect(
-        service.createCashBox({ warehouseId: WAREHOUSE, balance: 0 }, makeUser(StaffRole.OWNER)),
+        service.createCashBox(
+          { warehouseId: WAREHOUSE, balance: 0 },
+          makeUser(StaffRole.OWNER),
+        ),
       ).rejects.toThrow('Warehouse does not belong to the store');
       expect(prisma.cashbox.create).not.toHaveBeenCalled();
     });
 
     it('lets a seller open their own cashbox, one per warehouse', async () => {
-      prisma.warehouse.findFirst.mockResolvedValue({ id: WAREHOUSE, storeId: STORE });
+      prisma.warehouse.findFirst.mockResolvedValue({
+        id: WAREHOUSE,
+        storeId: STORE,
+      });
       prisma.cashbox.findFirst.mockResolvedValue({ id: CASHBOX });
       await expect(
-        service.createCashBox({ warehouseId: WAREHOUSE, balance: 0 }, makeUser(StaffRole.SELLER)),
+        service.createCashBox(
+          { warehouseId: WAREHOUSE, balance: 0 },
+          makeUser(StaffRole.SELLER),
+        ),
       ).rejects.toThrow('You already have an open cashbox on this warehouse');
       expect(prisma.cashbox.findFirst).toHaveBeenCalledWith({
-        where: { storeId: STORE, warehouseId: WAREHOUSE, sellerId: 'staff', status: CashStatus.OPEN },
+        where: {
+          storeId: STORE,
+          warehouseId: WAREHOUSE,
+          sellerId: 'staff',
+          status: CashStatus.OPEN,
+        },
       });
     });
 
     it('rejects a manager outside the warehouse', async () => {
-      prisma.warehouse.findFirst.mockResolvedValue({ id: 'other', storeId: STORE });
+      prisma.warehouse.findFirst.mockResolvedValue({
+        id: 'other',
+        storeId: STORE,
+      });
       await expect(
-        service.createCashBox({ warehouseId: 'other', balance: 0 }, makeUser(StaffRole.MANAGER)),
+        service.createCashBox(
+          { warehouseId: 'other', balance: 0 },
+          makeUser(StaffRole.MANAGER),
+        ),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.cashbox.create).not.toHaveBeenCalled();
     });

@@ -26,4 +26,9 @@ export class ProductListParams extends PaginationParams {
   @Transform(({ value }) => value === true || value === 'true')
   @IsBoolean()
   lowStock?: boolean;
+
+  /** Only products of this warehouse (the app's working warehouse) */
+  @IsOptional()
+  @IsUUID('4')
+  warehouseId?: string;
 }

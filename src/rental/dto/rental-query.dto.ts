@@ -50,6 +50,19 @@ export class RentalAgendaQuery {
 
   @Matches(LOCAL_DATE, { message: LOCAL_DATE_MESSAGE })
   to!: string;
+
+  /** Only rentals of this warehouse (the app's working warehouse) */
+  @IsOptional()
+  @IsUUID('4')
+  warehouseId?: string;
+}
+
+/** GET /rental/summary */
+export class RentalSummaryQuery {
+  /** Only rentals of this warehouse (the app's working warehouse) */
+  @IsOptional()
+  @IsUUID('4')
+  warehouseId?: string;
 }
 
 /** GET /rental/calendar */
@@ -86,6 +99,11 @@ export type RentalView = (typeof RENTAL_VIEWS)[number];
 
 /** GET /rental */
 export class RentalListQuery {
+  /** Only rentals of this warehouse (the app's working warehouse) */
+  @IsOptional()
+  @IsUUID('4')
+  warehouseId?: string;
+
   @IsOptional()
   @IsNumberString()
   pageSize?: string;

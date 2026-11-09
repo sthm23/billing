@@ -25,6 +25,7 @@ import { canSeeCost } from '@shared/helper/role.helper';
 import { UpdateProductVariantPriceDTO } from './dto/update-product.dto';
 import { ProductListParams } from './dto/product-list-params.dto';
 import { LOW_STOCK_THRESHOLD } from './product.constants';
+import { assertWarehouseAccess } from '@shared/helper/warehouse-access.helper';
 
 @Injectable()
 export class ProductService {
@@ -245,8 +246,12 @@ export class ProductService {
     const pageSize = params.pageSize ?? 10;
     const currentPage = params.currentPage ?? 1;
     const skip = (currentPage - 1) * pageSize;
+    if (params.warehouseId) {
+      await assertWarehouseAccess(this.prisma, user, params.warehouseId);
+    }
     try {
       const and: Prisma.ProductWhereInput[] = [{ isArchived: false }];
+      if (params.warehouseId) and.push({ warehouseId: params.warehouseId });
       if (user.role !== UserRole.ADMIN) {
         if (!user.staff) throw new ForbiddenException('Staff only');
         and.push({ storeId: user.staff.storeId });
@@ -355,7 +360,7 @@ export class ProductService {
               canSell: v.canSell,
               canRent: v.canRent,
               rentPricePerDay: v.rentPricePerDay,
-          defaultCleaningDays: v.defaultCleaningDays,
+              defaultCleaningDays: v.defaultCleaningDays,
               quantity:
                 v.inventory.reduce((acc, curr) => acc + curr.quantity, 0) || 0,
             })),

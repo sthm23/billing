@@ -36,6 +36,7 @@ import {
   RentalAvailabilityQuery,
   RentalCalendarQuery,
   RentalListQuery,
+  RentalSummaryQuery,
   RentalSimilarQuery,
   RentalView,
 } from './dto/rental-query.dto';
@@ -1638,11 +1639,16 @@ export class RentalService {
     };
   }
 
-  /** Rentals the user may see: the store; non-owners only their warehouses */
+  /**
+   * Rentals the user may see: the store; non-owners only their warehouses.
+   * `warehouseId` (checked by `assertWarehouse` first) narrows it to one.
+   */
   private scopeWhere(
     user: CurrentUser,
     storeId: string,
+    warehouseId?: string,
   ): Prisma.RentalWhereInput {
+    if (warehouseId) return { storeId, warehouseId };
     return this.isStoreOwner(user)
       ? { storeId }
       : {
@@ -1712,7 +1718,9 @@ export class RentalService {
     storeId: string,
     now: Date,
   ): Prisma.RentalWhereInput {
-    const and: Prisma.RentalWhereInput[] = [this.scopeWhere(user, storeId)];
+    const and: Prisma.RentalWhereInput[] = [
+      this.scopeWhere(user, storeId, query.warehouseId),
+    ];
     if (query.status) {
       const statuses = query.status.split(',');
       const valid = Object.values(RentalStatus) as string[];
@@ -1745,9 +1753,12 @@ export class RentalService {
   }
 
   /** GET /rental/summary: counters of the quick list views */
-  async getSummary(user: CurrentUser) {
+  async getSummary(query: RentalSummaryQuery, user: CurrentUser) {
     const storeId = await this.assertRentalStore(user);
-    const scope = this.scopeWhere(user, storeId);
+    if (query.warehouseId) {
+      await this.assertWarehouse(user, storeId, query.warehouseId);
+    }
+    const scope = this.scopeWhere(user, storeId, query.warehouseId);
     const now = new Date();
     try {
       const counts = await Promise.all(
@@ -1767,6 +1778,9 @@ export class RentalService {
 
   async findAll(query: RentalListQuery, user: CurrentUser) {
     const storeId = await this.assertRentalStore(user);
+    if (query.warehouseId) {
+      await this.assertWarehouse(user, storeId, query.warehouseId);
+    }
     const pageSize = Math.min(
       Math.max(Number(query.pageSize) || DEFAULT_PAGE_SIZE, 1),
       MAX_PAGE_SIZE,
@@ -1810,6 +1824,9 @@ export class RentalService {
    */
   async getAgenda(query: RentalAgendaQuery, user: CurrentUser) {
     const storeId = await this.assertRentalStore(user);
+    if (query.warehouseId) {
+      await this.assertWarehouse(user, storeId, query.warehouseId);
+    }
     if (query.from > query.to) {
       throw new BadRequestException('from must not be after to');
     }
@@ -1837,7 +1854,7 @@ export class RentalService {
       const rentals = await this.prisma.rental.findMany({
         where: {
           AND: [
-            this.scopeWhere(user, storeId),
+            this.scopeWhere(user, storeId, query.warehouseId),
             {
               status: { in: [RentalStatus.BOOKED, ...OUT_STATUSES] },
               startDate: { lt: rangeEnd },

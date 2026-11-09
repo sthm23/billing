@@ -51,9 +51,11 @@ describe('WarehouseService', () => {
   const prisma = {
     $transaction: jest.fn(),
     productVariant: { findUnique: jest.fn(), update: jest.fn() },
-    warehouse: { findUnique: jest.fn() },
+    warehouse: { findUnique: jest.fn(), create: jest.fn() },
     inventory: { upsert: jest.fn(), updateMany: jest.fn() },
     stockMovement: { create: jest.fn() },
+    store: { findUnique: jest.fn() },
+    staff: { findFirst: jest.fn() },
   };
   const logger = {
     debug: jest.fn(),
@@ -86,6 +88,45 @@ describe('WarehouseService', () => {
     }).compile();
 
     service = module.get<WarehouseService>(WarehouseService);
+  });
+
+  describe('createWarehouse', () => {
+    const dto = { storeId: STORE, name: 'Склад 2', ownerId: 'owner-user' };
+
+    it("links the owner's Staff record, not the User id from the request", async () => {
+      prisma.store.findUnique.mockResolvedValue({
+        id: STORE,
+        ownerId: 'owner-user',
+      });
+      prisma.staff.findFirst.mockResolvedValue({ id: 'owner-staff' });
+      prisma.warehouse.create.mockResolvedValue({ id: WAREHOUSE });
+
+      await service.createWarehouse(dto);
+
+      expect(prisma.staff.findFirst).toHaveBeenCalledWith({
+        where: {
+          storeId: STORE,
+          OR: [{ role: StaffRole.OWNER }, { userId: 'owner-user' }],
+        },
+        select: { id: true },
+      });
+      expect(prisma.warehouse.create).toHaveBeenCalledWith({
+        data: {
+          name: 'Склад 2',
+          storeId: STORE,
+          staffs: { create: { staffId: 'owner-staff' } },
+        },
+      });
+    });
+
+    it('rejects an unknown store', async () => {
+      prisma.store.findUnique.mockResolvedValue(null);
+
+      await expect(service.createWarehouse(dto)).rejects.toThrow(
+        'Store not found',
+      );
+      expect(prisma.warehouse.create).not.toHaveBeenCalled();
+    });
   });
 
   describe('inventoryMovement', () => {

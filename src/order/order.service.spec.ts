@@ -709,6 +709,27 @@ describe('OrderService', () => {
         'warehouseId',
       );
     });
+
+    it('narrows a manager to the working warehouse', async () => {
+      await service.getSummary(
+        { ...range, warehouseId: WAREHOUSE },
+        makeUser(StaffRole.MANAGER),
+      );
+      expect(prisma.order.aggregate.mock.calls[0][0].where).toMatchObject({
+        storeId: STORE,
+        warehouseId: WAREHOUSE,
+      });
+    });
+
+    it('rejects a warehouse the employee has no access to', async () => {
+      await expect(
+        service.getSummary(
+          { ...range, warehouseId: '44444444-4444-4444-8444-444444444444' },
+          makeUser(StaffRole.SELLER),
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.order.aggregate).not.toHaveBeenCalled();
+    });
   });
   describe('rental orders and sale flags', () => {
     const rentalOrder = (overrides: Record<string, unknown> = {}) =>
