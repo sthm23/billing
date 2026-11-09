@@ -86,7 +86,7 @@ model AuthAccount {
 
 **Логика**:
 - `passwordHash` создается через bcrypt (salt rounds: 10)
-- `isActive = false` → пользователь не может войти
+- `isActive = false` → пользователь не может войти, обновить токен и вызвать API (401 на каждом запросе; с 2026-11-09 проверяется в `POST /login`, `GET /refresh` и JWT-стратегии — `billing/src/auth/account-status.ts`). То же для `Staff.isActive = false`.
 
 ---
 
@@ -190,6 +190,9 @@ model Staff {
   role      StaffRole  // OWNER | SELLER | MANAGER | CASHIER | WAREHOUSE
   isActive  Boolean   @default(true)
   createdAt DateTime  @default(now())
+  deactivatedAt      DateTime?                // когда владелец деактивировал; null после восстановления
+  deactivatedById    String?                  // User.id того, кто деактивировал (без FK)
+  deactivationReason StaffDeactivationReason? // LEFT | TEMPORARY | OTHER
   
   store            Store              @relation(fields: [storeId], references: [id])
   user             User               @relation(fields: [userId], references: [id])
@@ -210,10 +213,12 @@ model Staff {
 
 **Enums**:
 - `StaffRole`: OWNER, SELLER, MANAGER, CASHIER, WAREHOUSE
+- `StaffDeactivationReason`: LEFT (увольнение), TEMPORARY, OTHER
 
 **Логика**:
 - Один Staff привязан к ОДНОМУ магазину
 - Может иметь доступ к НЕСКОЛЬКИМ складам (через `StaffOnWarehouse`)
+- Деактивация (`POST /store/staff/:id/deactivate`, миграция `20261109120000_staff_deactivation`): `isActive = false` + `deactivatedAt` / `deactivatedById` / `deactivationReason`, `AuthAccount.isActive = false`, все `RefreshSession` отозваны — одной транзакцией. Восстановление (`…/activate`) очищает эти поля. Продажи, заказы и история кассы сотрудника не трогаются. `DELETE /users/:id` (web) тоже деактивирует, но поля причины/даты не заполняет.
 
 ---
 
@@ -232,7 +237,7 @@ model StaffOnWarehouse {
 }
 ```
 
-**Логика**: Сотрудник может работать только на складах, к которым у него есть доступ.
+**Логика**: Сотрудник может работать только на складах, к которым у него есть доступ. `staffId` — это `Staff.id`, **не** `User.id` (при создании склада `POST /warehouse` бэкенд сам находит Staff владельца магазина). Владелец магазина работает со всеми складами независимо от этих строк.
 
 ---
 
@@ -1248,6 +1253,15 @@ enum StaffRole {
   MANAGER    // Менеджер (полный доступ без сотрудников/отчетов)
   CASHIER    // Кассир (права как у продавца)
   WAREHOUSE  // Складской работник (права как у продавца; отдельных проверок нет)
+}
+```
+
+### StaffDeactivationReason
+```prisma
+enum StaffDeactivationReason {
+  LEFT       // Увольнение
+  TEMPORARY  // Временно
+  OTHER      // Другое
 }
 ```
 
