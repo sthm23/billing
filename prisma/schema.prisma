@@ -144,18 +144,19 @@ model StaffOnWarehouse {
  */
 
 model Warehouse {
-  id             String             @id @default(uuid())
-  storeId        String
-  name           String
-  isActive       Boolean            @default(true)
-  createdAt      DateTime           @default(now())
-  inventory      Inventory[]
-  orders         Order[]
-  staffs         StaffOnWarehouse[]
-  stockMovements StockMovement[]
-  products       Product[]
-  store          Store              @relation(fields: [storeId], references: [id])
-  cashboxes      Cashbox[]
+  id              String             @id @default(uuid())
+  storeId         String
+  name            String
+  isActive        Boolean            @default(true)
+  createdAt       DateTime           @default(now())
+  inventory       Inventory[]
+  orders          Order[]
+  staffs          StaffOnWarehouse[]
+  stockMovements  StockMovement[]
+  products        Product[]
+  store           Store              @relation(fields: [storeId], references: [id])
+  cashboxes       Cashbox[]
+  rentalCleanings RentalCleaning[]
 
   @@index([storeId])
   @@map("warehouses")
@@ -263,6 +264,7 @@ model ProductVariant {
   product             Product                 @relation(fields: [productId], references: [id])
   stockMovements      StockMovement[]
   attributes          VariantAttributeValue[]
+  rentalCleanings     RentalCleaning[]
 
   @@unique([storeId, sku])
   @@unique([barCode])
@@ -587,6 +589,40 @@ model RentalReturnItem {
   @@map("rental_return_items")
 }
 
+/// Dry cleaning planned by an OWNER/MANAGER outside a return (R13): one unit
+/// of the variant is busy on [startDate, endDate) like a booking; the expense
+/// goes to the cashbox at once, a cancel before the start writes it back.
+model RentalCleaning {
+  id          String               @id @default(uuid())
+  storeId     String
+  warehouseId String
+  variantId   String
+  startDate   DateTime // 12:00 of the first cleaning day
+  endDate     DateTime // 12:00 after the last cleaning day: the unit is free again
+  days        Int
+  amount      Decimal
+  paymentType PaymentType
+  comment     String?
+  status      RentalCleaningStatus @default(ACTIVE)
+
+  expenseTransactionId String  @unique // CashTransaction EXPENSE/DRY_CLEANING
+  refundTransactionId  String? @unique // CashTransaction INCOME/DRY_CLEANING on cancel
+
+  createdBy   String // staffId
+  createdAt   DateTime  @default(now())
+  cancelledBy String? // staffId
+  cancelledAt DateTime?
+
+  warehouse          Warehouse        @relation(fields: [warehouseId], references: [id])
+  variant            ProductVariant   @relation(fields: [variantId], references: [id])
+  expenseTransaction CashTransaction  @relation("RentalCleaningExpense", fields: [expenseTransactionId], references: [id])
+  refundTransaction  CashTransaction? @relation("RentalCleaningRefund", fields: [refundTransactionId], references: [id])
+
+  @@index([warehouseId, variantId, endDate])
+  @@index([storeId, startDate])
+  @@map("rental_cleanings")
+}
+
 /**
  * =======================
  * RETURN ORDERS
@@ -692,6 +728,9 @@ model CashTransaction {
 
   order Order?       @relation(fields: [orderId], references: [id])
   debt  DebtPayment? @relation(fields: [debtId], references: [id])
+
+  rentalCleaningExpense RentalCleaning? @relation("RentalCleaningExpense")
+  rentalCleaningRefund  RentalCleaning? @relation("RentalCleaningRefund")
 }
 
 model CustomerDebt {
@@ -774,6 +813,7 @@ enum CashTransactionCategory {
   RETURN
   OTHER
   RENTAL // income of a rental order; not to be confused with RENT (premises rent expense)
+  DRY_CLEANING // planned dry cleaning of a rental item (EXPENSE; INCOME when cancelled)
 }
 
 enum RentalStatus {
@@ -782,6 +822,11 @@ enum RentalStatus {
   PARTIALLY_RETURNED // some items are back
   RETURNED // all items are back
   CANCELLED // booking cancelled before issue
+}
+
+enum RentalCleaningStatus {
+  ACTIVE
+  CANCELLED
 }
 
 enum CollateralType {

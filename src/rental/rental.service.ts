@@ -327,7 +327,8 @@ export class RentalService {
 
   // ---------------------------------------------------------------- access
 
-  private canManageStore(user: CurrentUser): boolean {
+  /** OWNER or MANAGER of the store (shared with RentalCleaningService) */
+  canManageStore(user: CurrentUser): boolean {
     return (
       user.role === UserRole.OWNER ||
       user.staff?.role === StaffRole.OWNER ||
@@ -340,7 +341,7 @@ export class RentalService {
   }
 
   /** Staff of a store with rental enabled; returns the store id from the token. */
-  private async assertRentalStore(user: CurrentUser): Promise<string> {
+  async assertRentalStore(user: CurrentUser): Promise<string> {
     if (!user.staff) throw new ForbiddenException('Staff only');
     const store = await this.prisma.store.findUnique({
       where: { id: user.staff.storeId },
@@ -356,14 +357,14 @@ export class RentalService {
   }
 
   /** The owner works with every warehouse of the store, others with their own. */
-  private hasWarehouseAccess(user: CurrentUser, warehouseId: string): boolean {
+  hasWarehouseAccess(user: CurrentUser, warehouseId: string): boolean {
     return (
       this.isStoreOwner(user) ||
       user.staff.warehouse.some((w) => w.warehouseId === warehouseId)
     );
   }
 
-  private async assertWarehouse(
+  async assertWarehouse(
     user: CurrentUser,
     storeId: string,
     warehouseId: string,
@@ -391,7 +392,7 @@ export class RentalService {
   }
 
   /** Logs and rethrows: HTTP errors as they are, anything else as 400. */
-  private fail(
+  fail(
     error: unknown,
     context: Record<string, unknown>,
     message: string,
@@ -1369,6 +1370,7 @@ export class RentalService {
       ...item.rentalReturnItems.map((r) => ({
         variantId: item.variantId,
         rentalId: rental.id,
+        cleaningId: null,
         from: rental.startDate,
         to: r.availableFrom,
         quantity: r.quantity,
@@ -1376,6 +1378,7 @@ export class RentalService {
       {
         variantId: item.variantId,
         rentalId: rental.id,
+        cleaningId: null,
         from: rental.startDate,
         to: window.to,
         quantity,
@@ -1383,13 +1386,18 @@ export class RentalService {
       {
         variantId: item.variantId,
         rentalId: rental.id,
+        cleaningId: null,
         from: rental.startDate,
         to: new Date(Math.max(rental.endDate.getTime(), now.getTime())),
         quantity: outstanding,
       },
     ];
 
-    const candidateIds = [...new Set(others.map((o) => o.rentalId))];
+    // Planned dry cleanings (R13) stay in `others` as busy units, but only
+    // bookings can be reported as conflicts
+    const candidateIds = [
+      ...new Set(others.flatMap((o) => (o.rentalId ? [o.rentalId] : []))),
+    ];
     if (candidateIds.length === 0) return [];
     const [inventory, candidates] = await Promise.all([
       this.prisma.inventory.findFirst({
@@ -2085,7 +2093,15 @@ export class RentalService {
         range,
       });
       const rentals = await this.prisma.rental.findMany({
-        where: { id: { in: [...new Set(occupancy.map((o) => o.rentalId))] } },
+        where: {
+          id: {
+            in: [
+              ...new Set(
+                occupancy.flatMap((o) => (o.rentalId ? [o.rentalId] : [])),
+              ),
+            ],
+          },
+        },
         select: {
           id: true,
           orderId: true,
@@ -2106,6 +2122,7 @@ export class RentalService {
         variants: variants.map((v) => {
           const owned = v.inventory.reduce((sum, i) => sum + i.quantity, 0);
           const own = occupancy.filter((o) => o.variantId === v.id);
+          const cleaning = own.filter((o) => o.cleaningId);
           return {
             variantId: v.id,
             sku: v.sku,
@@ -2113,17 +2130,35 @@ export class RentalService {
             productName: v.product.name,
             owned,
             days: days.map((date) => {
-              const busy = peakOccupancy(own, {
+              const day = {
                 from: rentalBoundary(date),
                 to: rentalBoundary(addLocalDays(date, 1)),
-              });
-              return { date, busy, available: Math.max(0, owned - busy) };
+              };
+              const busy = peakOccupancy(own, day);
+              return {
+                date,
+                busy,
+                available: Math.max(0, owned - busy),
+                // Units in planned dry cleaning (R13), part of `busy`
+                cleaning: peakOccupancy(cleaning, day),
+              };
             }),
-            bookings: own.map((o) => ({
-              rentalId: o.rentalId,
+            bookings: own.flatMap((o) =>
+              o.rentalId
+                ? [
+                    {
+                      rentalId: o.rentalId,
+                      from: o.from,
+                      to: o.to,
+                      quantity: o.quantity,
+                    },
+                  ]
+                : [],
+            ),
+            cleanings: cleaning.map((o) => ({
+              cleaningId: o.cleaningId,
               from: o.from,
               to: o.to,
-              quantity: o.quantity,
             })),
           };
         }),

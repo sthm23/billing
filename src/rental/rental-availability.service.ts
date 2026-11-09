@@ -1,11 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@generated/client';
-import { RentalStatus } from '@generated/enums';
+import { RentalCleaningStatus, RentalStatus } from '@generated/enums';
 
-/** Units of one variant busy on `[from, to)`. */
+/**
+ * Units of one variant busy on `[from, to)`: by a rental (`rentalId`) or by a
+ * planned dry cleaning (`cleaningId`, R13) — exactly one of the two is set.
+ */
 export interface Occupancy {
   variantId: string;
-  rentalId: string;
+  rentalId: string | null;
+  cleaningId: string | null;
   from: Date;
   to: Date;
   quantity: number;
@@ -80,7 +84,8 @@ export class RentalAvailabilityService {
    * Busy intervals of the variants overlapping `range`:
    * - not returned units: `[startDate, max(endDate, now))` — an overdue item keeps its unit;
    * - returned units: `[startDate, availableFrom)` — includes dry cleaning;
-   * - cancelled rentals hold nothing.
+   * - cancelled rentals hold nothing;
+   * - an active planned dry cleaning (R13): one unit on `[startDate, endDate)`.
    */
   async findOccupancy(
     db: Db,
@@ -152,6 +157,7 @@ export class RentalAvailabilityService {
         result.push({
           variantId: item.variantId,
           rentalId: rental.id,
+          cleaningId: null,
           from: rental.startDate,
           to: r.availableFrom,
           quantity: r.quantity,
@@ -162,12 +168,35 @@ export class RentalAvailabilityService {
         result.push({
           variantId: item.variantId,
           rentalId: rental.id,
+          cleaningId: null,
           from: rental.startDate,
           to: new Date(Math.max(rental.endDate.getTime(), now.getTime())),
           quantity: outstanding,
         });
       }
     }
+
+    const cleanings = await db.rentalCleaning.findMany({
+      where: {
+        warehouseId: params.warehouseId,
+        variantId: { in: params.variantIds },
+        status: RentalCleaningStatus.ACTIVE,
+        startDate: { lt: params.range.to },
+        endDate: { gt: params.range.from },
+      },
+      select: { id: true, variantId: true, startDate: true, endDate: true },
+    });
+    for (const c of cleanings) {
+      result.push({
+        variantId: c.variantId,
+        rentalId: null,
+        cleaningId: c.id,
+        from: c.startDate,
+        to: c.endDate,
+        quantity: 1,
+      });
+    }
+
     return result.filter((o) => o.to.getTime() > params.range.from.getTime());
   }
 

@@ -24,6 +24,13 @@ import {
 } from './dto/rental-lifecycle.dto';
 import { CreateRentalPaymentDto } from './dto/rental-payment.dto';
 import {
+  CancelRentalCleaningDto,
+  CreateRentalCleaningDto,
+  RentalCleaningCheckQuery,
+  RentalCleaningListQuery,
+} from './dto/rental-cleaning.dto';
+import { RentalCleaningService } from './rental-cleaning.service';
+import {
   RentalAgendaQuery,
   RentalAvailabilityQuery,
   RentalCalendarQuery,
@@ -38,7 +45,10 @@ import {
 @UseGuards(AuthJWTGuard)
 @Controller('rental')
 export class RentalController {
-  constructor(private readonly rentalService: RentalService) {}
+  constructor(
+    private readonly rentalService: RentalService,
+    private readonly cleaningService: RentalCleaningService,
+  ) {}
 
   @Get('availability')
   getAvailability(
@@ -76,6 +86,46 @@ export class RentalController {
   ) {
     return this.rentalService.getAgenda(query, user);
   }
+
+  // ------------------------------------------- planned dry cleaning (R13)
+
+  @Get('cleanings/check')
+  checkCleaning(
+    @Query() query: RentalCleaningCheckQuery,
+    @CurrentUser() user: CurrentUserType,
+  ) {
+    return this.cleaningService.check(query, user);
+  }
+
+  @Get('cleanings')
+  findCleanings(
+    @Query() query: RentalCleaningListQuery,
+    @CurrentUser() user: CurrentUserType,
+  ) {
+    return this.cleaningService.findAll(query, user);
+  }
+
+  /** OWNER/MANAGER — checked in the service */
+  @Post('cleanings')
+  createCleaning(
+    @Body() dto: CreateRentalCleaningDto,
+    @CurrentUser() user: CurrentUserType,
+  ) {
+    return this.cleaningService.create(dto, user);
+  }
+
+  /** OWNER/MANAGER — checked in the service */
+  @Post('cleanings/:id/cancel')
+  @HttpCode(HttpStatus.OK)
+  cancelCleaning(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: CancelRentalCleaningDto,
+    @CurrentUser() user: CurrentUserType,
+  ) {
+    return this.cleaningService.cancel(id, dto, user);
+  }
+
+  // ------------------------------------------------------------- bookings
 
   @Post()
   create(@Body() dto: CreateRentalDto, @CurrentUser() user: CurrentUserType) {

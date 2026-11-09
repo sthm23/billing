@@ -52,6 +52,7 @@ describe('RentalAvailabilityService', () => {
   const db = {
     orderItem: { findMany: jest.fn() },
     inventory: { findMany: jest.fn() },
+    rentalCleaning: { findMany: jest.fn() },
   };
   const rental = {
     id: 'rental-a',
@@ -71,6 +72,41 @@ describe('RentalAvailabilityService', () => {
     db.inventory.findMany.mockResolvedValue([
       { variantId: DRESS, quantity: 1 },
     ]);
+    db.rentalCleaning.findMany.mockResolvedValue([]);
+  });
+
+  it('keeps a unit busy during a planned dry cleaning (R13), freeing it at noon after the last day', async () => {
+    db.orderItem.findMany.mockResolvedValue([]);
+    db.rentalCleaning.findMany.mockResolvedValue([
+      {
+        id: 'cleaning-a',
+        variantId: DRESS,
+        startDate: day('2027-05-18'),
+        endDate: day('2027-05-19'),
+      },
+    ]);
+    const now = day('2027-05-01');
+    const [onThe18th] = await call(
+      { from: day('2027-05-17'), to: day('2027-05-19') },
+      now,
+    );
+    expect(onThe18th.available).toBe(0);
+    const [from19th] = await call(
+      { from: day('2027-05-19'), to: day('2027-05-21') },
+      now,
+    );
+    expect(from19th.available).toBe(1);
+    const [{ where }] = db.rentalCleaning.findMany.mock.calls[0] as [
+      { where: Record<string, unknown> },
+    ];
+    expect(where).toEqual(
+      expect.objectContaining({
+        warehouseId: WAREHOUSE,
+        status: 'ACTIVE',
+        startDate: { lt: day('2027-05-19') },
+        endDate: { gt: day('2027-05-17') },
+      }),
+    );
   });
 
   it('frees the unit on the end date for the next booking', async () => {

@@ -92,13 +92,14 @@
   "variants": [{
     "variantId": "a", "sku": "DR-M", "productId": "uuid", "productName": "Платье Белла",
     "owned": 1,
-    "days": [{ "date": "2027-05-14", "busy": 1, "available": 0 }],
-    "bookings": [{ "rentalId": "uuid", "from": "2027-05-14T07:00:00.000Z", "to": "2027-05-16T07:00:00.000Z", "quantity": 1 }]
+    "days": [{ "date": "2027-05-14", "busy": 1, "available": 0, "cleaning": 0 }],
+    "bookings": [{ "rentalId": "uuid", "from": "2027-05-14T07:00:00.000Z", "to": "2027-05-16T07:00:00.000Z", "quantity": 1 }],
+    "cleanings": [{ "cleaningId": "uuid", "from": "2027-05-18T07:00:00.000Z", "to": "2027-05-19T07:00:00.000Z" }]
   }],
   "rentals": [{ "id": "uuid", "orderId": "uuid", "status": "BOOKED", "startDate": "...", "endDate": "...", "customerName": "Иванова" }]
 }
 ```
-`bookings[].to` уже учитывает химчистку (`availableFrom`) и просрочку (`max(endDate, now)`).
+`bookings[].to` уже учитывает химчистку после возврата (`availableFrom`) и просрочку (`max(endDate, now)`). Запланированные химчистки (R13) входят в `busy`; `days[].cleaning` — сколько единиц из них в химчистке, `cleanings[]` — их интервалы (2026-11-07).
 
 ## POST /rental
 
@@ -317,6 +318,54 @@
 - Только OWNER/MANAGER (`403`), только `BOOKED` (выданное — через возврат).
 - `0 ≤ refundAmount ≤ paidAmount`; `refundAmount > 0` требует `refundPaymentType` и открытую кассу → `CashTransaction EXPENSE / RETURN`, баланс кассы уменьшается.
 - Order → CANCELLED, `paidAmount −= refundAmount`; Rental → CANCELLED (`cancelledAt`, `cancelledBy`, `refundAmount`, `cancelReason`).
+
+---
+
+## Химчистка вне возврата (R13, 2026-11-07)
+
+`RentalCleaningService` (`rental-cleaning.service.ts`). Строка химчистки в ответах:
+
+```json
+{
+  "id": "uuid", "warehouseId": "uuid", "variantId": "uuid",
+  "sku": "AU-46", "productId": "uuid", "productName": "Платье Aurora",
+  "startDate": "2027-05-18T07:00:00.000Z", "endDate": "2027-05-19T07:00:00.000Z",
+  "firstDay": "2027-05-18", "lastDay": "2027-05-18", "days": 1,
+  "amount": "80000", "paymentType": "CASH", "comment": "Oq Tong",
+  "status": "ACTIVE", "state": "PLANNED", "canCancel": true,
+  "createdBy": "staffId", "createdAt": "...", "cancelledBy": null, "cancelledAt": null
+}
+```
+`state`: `PLANNED` (не началась) · `IN_PROGRESS` · `DONE` (единица свободна) · `CANCELLED`. Отменить можно только при `canCancel`.
+
+### GET /rental/cleanings/check
+`?warehouseId&variantId&startDate=2027-05-18&days=2` — все сотрудники; ничего не сохраняет.
+```json
+{
+  "ok": false, "owned": 1, "available": 0,
+  "startDate": "...", "endDate": "...",
+  "conflicts": [{
+    "date": "2027-05-19",
+    "rentals": [{ "rentalId": "uuid", "code": "A1B2C3", "orderId": "uuid", "customerName": "Азиз К.", "startDate": "...", "endDate": "...", "quantity": 1 }],
+    "cleanings": [{ "cleaningId": "uuid", "startDate": "...", "endDate": "..." }]
+  }]
+}
+```
+`available` — свободно на весь период без этой химчистки; `conflicts` — только дни, где единицы не хватает.
+
+### POST /rental/cleanings
+```json
+{ "warehouseId": "uuid", "variantId": "uuid", "startDate": "2027-05-18", "days": 1, "amount": 80000, "paymentType": "CASH", "comment": "Oq Tong", "cashboxId": "uuid" }
+```
+- OWNER/MANAGER (`403`); вариант магазина с `canRent` (`400 VARIANT_NOT_RENTABLE`); `startDate` не в прошлом, `days` 1…30, `amount > 0`, `comment` ≤ 500.
+- Нет свободной единицы → `409 { code: "NOT_AVAILABLE", variantId, available, conflicts }` (как в `/check`).
+- Нет открытой кассы → `400`. Успех — строка химчистки (`201`); `CashTransaction EXPENSE / DRY_CLEANING`, баланс кассы уменьшается.
+
+### GET /rental/cleanings
+`?warehouseId[&variantId][&from=YYYY-MM-DD][&to=YYYY-MM-DD]` — все сотрудники. Активные химчистки, не закончившиеся до `from` (по умолчанию — сегодня) и начинающиеся не позже `to`; по `startDate`, не больше 200.
+
+### POST /rental/cleanings/:id/cancel
+`{ "cashboxId": "uuid" }` (необязательно). OWNER/MANAGER; только `ACTIVE` и до начала (иначе `400`). Сторно `INCOME / DRY_CLEANING` в кассу расхода, если она открыта, иначе в свою открытую. Ответ — строка химчистки (`200`, `state: CANCELLED`).
 
 ---
 

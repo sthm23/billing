@@ -726,6 +726,45 @@ model RentalReturnItem {
 
 ---
 
+### RentalCleaning
+Химчистка, запланированная владельцем/менеджером вне возврата (R13, миграция `20261107120000_rental_cleaning`). Занимает **одну** единицу варианта на `[startDate, endDate)` так же, как бронь; Inventory не меняет.
+
+```prisma
+model RentalCleaning {
+  id          String               @id @default(uuid())
+  storeId     String
+  warehouseId String
+  variantId   String
+  startDate   DateTime // 12:00 первого дня химчистки
+  endDate     DateTime // 12:00 после последнего дня: единица снова свободна
+  days        Int
+  amount      Decimal
+  paymentType PaymentType
+  comment     String?
+  status      RentalCleaningStatus @default(ACTIVE) // ACTIVE | CANCELLED
+
+  expenseTransactionId String  @unique // CashTransaction EXPENSE/DRY_CLEANING
+  refundTransactionId  String? @unique // CashTransaction INCOME/DRY_CLEANING при отмене
+
+  createdBy   String // staffId
+  createdAt   DateTime  @default(now())
+  cancelledBy String? // staffId
+  cancelledAt DateTime?
+
+  warehouse          Warehouse        @relation(...)
+  variant            ProductVariant   @relation(...)
+  expenseTransaction CashTransaction  @relation("RentalCleaningExpense", ...)
+  refundTransaction  CashTransaction? @relation("RentalCleaningRefund", ...)
+
+  @@index([warehouseId, variantId, endDate])
+  @@index([storeId, startDate])
+  @@map("rental_cleanings")
+}
+```
+Состояние для UI (`PLANNED` / `IN_PROGRESS` / `DONE`) вычисляется из дат; хранится только `ACTIVE`/`CANCELLED`. В `CashTransactionCategory` добавлена `DRY_CLEANING`.
+
+---
+
 ## Returns
 
 ### ReturnedOrder
@@ -872,7 +911,7 @@ model CashTransaction {
   cashboxId   String
   createdById String                  // Staff ID
   type        CashTransactionType     // INCOME | EXPENSE
-  category    CashTransactionCategory // SALE | DEBT_PAYMENT | RENT | DELIVERY | SALARY | PURCHASE | RETURN | OTHER | RENTAL
+  category    CashTransactionCategory // SALE | DEBT_PAYMENT | RENT | DELIVERY | SALARY | PURCHASE | RETURN | OTHER | RENTAL | DRY_CLEANING
   paymentType PaymentType             // CASH | CARD | ONLINE | TRANSFER
   amount      Decimal
   comment     String?
@@ -892,7 +931,7 @@ model CashTransaction {
 
 **Enums**:
 - `CashTransactionType`: INCOME (приход), EXPENSE (расход)
-- `CashTransactionCategory`: SALE, DEBT_PAYMENT, RENT, DELIVERY, SALARY, PURCHASE, RETURN, OTHER, RENTAL (`RENT` — расход на помещение, `RENTAL` — доход от аренды товаров)
+- `CashTransactionCategory`: SALE, DEBT_PAYMENT, RENT, DELIVERY, SALARY, PURCHASE, RETURN, OTHER, RENTAL, DRY_CLEANING (`RENT` — расход на помещение, `RENTAL` — доход от аренды товаров, `DRY_CLEANING` — запланированная химчистка вне возврата: EXPENSE, при отмене INCOME)
 
 **Логика**:
 
@@ -1297,6 +1336,7 @@ enum CashTransactionCategory {
   RETURN       // Возврат денег клиенту
   OTHER        // Прочее
   RENTAL       // Доход от аренды товаров (INCOME)
+  DRY_CLEANING // Химчистка вне возврата (EXPENSE; INCOME при отмене), R13
 }
 ```
 
@@ -1310,6 +1350,14 @@ enum RentalStatus {
   PARTIALLY_RETURNED // Часть вещей вернули
   RETURNED           // Всё вернули
   CANCELLED          // Бронь отменена до выдачи
+}
+```
+
+### RentalCleaningStatus
+```prisma
+enum RentalCleaningStatus {
+  ACTIVE    // химчистка запланирована / идёт / прошла
+  CANCELLED // отменена до начала, расход возвращён в кассу
 }
 ```
 

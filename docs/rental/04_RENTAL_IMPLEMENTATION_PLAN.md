@@ -86,6 +86,14 @@
 
 ---
 
+## Фаза 8. Химчистка вне возврата (R13, план 2026-11-07)
+
+Дизайн: STHM, страница «Аренда · товар и настройки», макеты 13 (`CleaningNew`, `RentalProductCleaning`). Решения пользователя: без экземпляров (1 единица варианта), расход сразу в открытую кассу, конфликт с бронью запрещает сохранение, отмена до начала со сторно.
+
+- **8.1 Backend — готово 2026-11-07.** Модель `RentalCleaning` + `RentalCleaningStatus`, категория `DRY_CLEANING`, миграция `20261107120000_rental_cleaning`. `findOccupancy` учитывает активные химчистки (`Occupancy.cleaningId`; `rentalId` может быть `null`). `RentalCleaningService`: `GET /rental/cleanings/check`, `GET /rental/cleanings`, `POST /rental/cleanings`, `POST /rental/cleanings/:id/cancel`. Календарь: `days[].cleaning`, `variants[].cleanings[]`; `bookings[]` — только брони. Тесты `rental-cleaning.service.spec.ts`.
+- **8.2 Web (billing_ui).** `DRY_CLEANING` в моделях и подписях кассы («Химчистка», скрыть из ручной формы); блок «Химчистка» в карточке варианта аренды + диалог «В химчистку» (дата, дни, сумма, способ оплаты, комментарий, живая проверка `/check`); отмена с подтверждением; календарь подсвечивает химчистку по `days[].cleaning`. Действия — только OWNER/MANAGER.
+- **8.3 Mobile (billing-mobile).** services/rental: типы, `useCleaningCheck` (debounce), мутации create/cancel с инвалидацией availability/calendar/cleanings; `RentalItemScreen` — блок «Химчистка» и кнопка «В химчистку»; новый экран по макету `CleaningNew` без блока «Экземпляр», счётчик дней до 30, подпись «Свободно с 12:00 <дата>»; отмена через Sheet; категория `DRY_CLEANING` в кассе.
+
 ## Риски
 
 | Риск | Мера |
