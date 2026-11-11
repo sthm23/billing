@@ -31,6 +31,15 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt-access') {
             role: true,
             storeId: true,
             warehouse: true,
+            // Subscription check (SubscriptionGuard) — reloaded on every request
+            store: {
+              select: {
+                name: true,
+                status: true,
+                suspendedAt: true,
+                suspendReason: true,
+              },
+            },
           },
         },
         auth: {

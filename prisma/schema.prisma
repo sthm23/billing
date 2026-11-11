@@ -78,6 +78,25 @@ model Store {
   /// Store rents goods out (rental module); at least one of the two flags is true
   rentalEnabled Boolean @default(false)
 
+  /// Subscription state: TRIAL (first month, free) → ACTIVE (paid) → SUSPENDED (blocked by an admin)
+  status         StoreStatus         @default(TRIAL)
+  /// End of the free trial (createdAt + 1 month); no auto-suspend when it passes
+  trialEndsAt    DateTime?
+  /// Paid until — entered by the admin when the store is resumed / paid
+  paidUntil      DateTime?
+  suspendedAt    DateTime?
+  /// User id of the admin who suspended the store (no FK: users are never deleted)
+  suspendedById  String?
+  suspendReason  StoreSuspendReason?
+  /// Optional comment for the owner shown with the suspension
+  suspendComment String?
+
+  /// Application data entered by the admin
+  address String?
+  /// Taxpayer number (INN), exactly 9 digits
+  inn     String?
+  note    String?
+
   warehouse Warehouse[]
   staff     Staff[]
   customers Customer[]  @relation("CustomerStores")
@@ -105,12 +124,12 @@ model Customer {
 }
 
 model Staff {
-  id        String    @id @default(uuid())
-  userId    String    @unique
-  storeId   String
-  role      StaffRole
-  isActive  Boolean   @default(true)
-  createdAt DateTime  @default(now())
+  id                 String                   @id @default(uuid())
+  userId             String                   @unique
+  storeId            String
+  role               StaffRole
+  isActive           Boolean                  @default(true)
+  createdAt          DateTime                 @default(now())
   /// Set when the owner deactivates the employee; cleared on restore
   deactivatedAt      DateTime?
   /// User id of who deactivated (no FK: users are never deleted)
@@ -349,6 +368,8 @@ model Attribute {
   id      String             @id @default(uuid())
   name    String             @unique
   type    AttributeType
+  /// Unit for NUMBER attributes (м, кг, л); shown as «Длина — 6 м»
+  unit    String?
   values  AttributeValue[]
   store   AttributeOnStore[]
   product ProductAttribute[]
@@ -862,6 +883,20 @@ enum StaffRole {
   MANAGER
   CASHIER
   WAREHOUSE
+}
+
+/// Store subscription state (Store.status)
+enum StoreStatus {
+  TRIAL
+  ACTIVE
+  SUSPENDED
+}
+
+/// Why an admin suspended a store (Store.suspendReason)
+enum StoreSuspendReason {
+  UNPAID
+  OWNER_REQUEST
+  OTHER
 }
 
 /// Why an employee was deactivated (Staff.deactivationReason)

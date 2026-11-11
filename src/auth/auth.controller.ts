@@ -20,6 +20,7 @@ import type { Response, Request } from 'express';
 import { AuthJWTGuard } from './guard/auth.guard';
 import { LogoutDto } from './dto/logout-dto';
 import { TokenValidationPipe } from './pipes/token-validation.pipe';
+import { AllowSuspendedStore } from '@shared/decorators/allow-suspended-store.decorator';
 
 @Controller()
 export class AuthController {
@@ -99,6 +100,8 @@ export class AuthController {
     return { accessToken: null };
   }
 
+  /** Available for a suspended store: the app reads `staff.store.status` here */
+  @AllowSuspendedStore()
   @UseGuards(AuthJWTGuard)
   @Get('auth/me')
   async me(@CurrentUser() user: UserAuth) {
