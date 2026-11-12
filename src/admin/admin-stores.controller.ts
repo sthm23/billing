@@ -8,6 +8,8 @@ import {
   Post,
   Query,
   UseGuards,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import type { CurrentUser as UserInfo } from '@auth/models/auth.model';
@@ -24,6 +26,9 @@ import {
 
 /** Store administration — platform ADMIN only (mobile: Profile → «Магазины»). */
 @UseGuards(AuthJWTGuard, AdminGuard)
+// The global ValidationPipe has no `transform`: without it query numbers stay
+// strings (Prisma `take: "10"`) and the DTO @Transform (trim, digits) is lost.
+@UsePipes(new ValidationPipe({ transform: true }))
 @Controller('admin/stores')
 export class AdminStoresController {
   constructor(private readonly storesService: AdminStoresService) {}

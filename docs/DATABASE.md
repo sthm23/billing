@@ -132,6 +132,20 @@ model Store {
   salesEnabled  Boolean @default(true)  // магазин продаёт товары
   rentalEnabled Boolean @default(false) // магазин сдаёт товары в аренду
   
+  // Подписка: TRIAL (первый месяц бесплатно) → ACTIVE (оплачен) → SUSPENDED (приостановлен админом)
+  status         StoreStatus         @default(TRIAL)
+  trialEndsAt    DateTime?           // конец пробного периода (createdAt + 1 месяц)
+  paidUntil      DateTime?           // «Оплачено до» — вводит админ при возобновлении
+  suspendedAt    DateTime?
+  suspendedById  String?             // User ID админа, приостановившего магазин (без FK)
+  suspendReason  StoreSuspendReason?
+  suspendComment String?
+  
+  // Данные заявки (вводит админ)
+  address String?
+  inn     String?                    // ИНН, ровно 9 цифр
+  note    String?
+  
   creator       User                @relation(fields: [createdBy], references: [id])
   warehouse     Warehouse[]
   staff         Staff[]
@@ -153,7 +167,15 @@ model Store {
 **Режимы магазина** (миграция `20261105120000_rental_schema`):
 - `salesEnabled` — продажи (заказы, оплаты, возвраты продаж); при `false` продажа отклоняется
 - `rentalEnabled` — модуль аренды; при `false` все `/rental` эндпоинты отвечают 400 `RENTAL_DISABLED`
-- Хотя бы один флаг всегда `true` (проверяется в `PUT /store/:id`)
+- Хотя бы один флаг всегда `true` (проверяется в `PUT /store/:id` и `PATCH /admin/stores/:id`)
+
+**Статус подписки** (миграция `20261110120000_store_subscription`; существующие магазины получили `ACTIVE`):
+- `status` (`StoreStatus`): `TRIAL` — новый магазин из `POST /admin/stores`, `trialEndsAt = now + 1 месяц`; `ACTIVE` — оплачен (`paidUntil` вводит админ); `SUSPENDED` — приостановлен админом (`POST /admin/stores/:id/suspend`: `suspendedAt`, `suspendedById`, `suspendReason`, `suspendComment`)
+- По окончании пробного периода автоматической приостановки нет — список админа показывает «пробный истёк» (`trialExpired`)
+- Возобновление (`POST /admin/stores/:id/resume`) очищает поля приостановки; с `paidUntil` → `ACTIVE`, без — `TRIAL`, пока пробный не истёк, иначе `ACTIVE`
+- При `SUSPENDED` любой JWT-запрос пользователя магазина (кроме `GET /auth/me`) → 403 `STORE_SUSPENDED` (`SubscriptionGuard`)
+- `address`, `inn`, `note` — данные заявки, заполняются при создании магазина админом
+- Правила: `docs/features/stores-warehouses.md`
 
 ---
 
@@ -289,6 +311,8 @@ model Brand {
 ```
 
 **Уникальность**: `name` уникален глобально
+
+При создании магазина админом (`POST /admin/stores`, `brandNames`) бренд ищется по имени без учёта регистра или создаётся — новый бренд доступен и другим магазинам.
 
 ---
 
@@ -1075,7 +1099,7 @@ model Category {
 ```
 
 **Логика**:
-- Поддерживает вложенность (parent → children)
+- Поддерживает вложенность (parent → children); по бизнес-правилу (2026-11-10) — **не больше 2 уровней**: уровень 1 — направление магазина (выбирает админ при создании магазина, `POST /admin/stores` принимает только категорию без `parentId`), уровень 2 — категории товаров. Глубина — правило, не ограничение схемы
 - Связывается с магазинами через M2M (`CategoriesOnStore`)
 
 ---
@@ -1088,6 +1112,7 @@ model Attribute {
   id      String             @id @default(uuid())
   name    String             @unique
   type    AttributeType       // STRING | NUMBER | BOOLEAN
+  unit    String?             // единица для NUMBER (м, кг, л): «Длина — 6 м»
   
   values  AttributeValue[]
   store   AttributeOnStore[]
@@ -1099,6 +1124,8 @@ model Attribute {
 - `AttributeType`: STRING, NUMBER, BOOLEAN
 
 **Примеры**: Размер (STRING), Вес (NUMBER), Водонепроницаемость (BOOLEAN)
+
+**Логика**: атрибут — глобальная группа значений (`Attribute` → `AttributeValue`, например Материал → Хлопок / Шёлк), связывается с магазинами через `AttributeOnStore`. При создании магазина админом новый атрибут с уже существующим именем переиспользуется, только если совпадает тип (иначе 400). `unit` добавлен миграцией `20261110120000_store_subscription`.
 
 ---
 
@@ -1253,6 +1280,24 @@ enum StaffRole {
   MANAGER    // Менеджер (полный доступ без сотрудников/отчетов)
   CASHIER    // Кассир (права как у продавца)
   WAREHOUSE  // Складской работник (права как у продавца; отдельных проверок нет)
+}
+```
+
+### StoreStatus
+```prisma
+enum StoreStatus {
+  TRIAL      // Пробный период (первый месяц бесплатно)
+  ACTIVE     // Оплачен
+  SUSPENDED  // Приостановлен админом
+}
+```
+
+### StoreSuspendReason
+```prisma
+enum StoreSuspendReason {
+  UNPAID         // Не оплачен
+  OWNER_REQUEST  // По просьбе владельца
+  OTHER          // Другое
 }
 ```
 
@@ -1572,5 +1617,5 @@ ORDER BY sm.created_at DESC;
 
 ---
 
-**Последнее обновление**: 2026-08-15  
+**Последнее обновление**: 2026-11-10  
 **Версия схемы**: Prisma 6 / PostgreSQL 17

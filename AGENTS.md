@@ -39,7 +39,7 @@ This application is the **source of truth for business logic**.
 src/
 ├── auth/              # JWT authentication (login, refresh, logout)
 ├── user/              # User management (CUSTOMER, STAFF)
-├── admin/             # Admin operations (only ADMIN role)
+├── admin/             # Admin operations (only ADMIN role); admin-stores.* — /admin/stores (store list/card, create with new owner, suspend/resume)
 ├── store/             # Store management
 ├── warehouse/         # Warehouse management, inventory movements
 ├── product/           # Products and variants (SKU)
@@ -162,6 +162,7 @@ type CurrentUser = User & {
   auth: AuthAccount;
   staff: Staff & {
     warehouse: { warehouseId: string }[];
+    store: Pick<Store, 'name' | 'status' | 'suspendedAt' | 'suspendReason'>; // for SubscriptionGuard
   };
 };
 ```
@@ -182,6 +183,13 @@ type CurrentUser = User & {
 **AuthJWTGuard** — Validates JWT token
 ```typescript
 @UseGuards(AuthJWTGuard)  // All routes protected by default
+```
+
+**SubscriptionGuard** (`src/shared/guards/subscription.guard.ts`) — runs **inside** `AuthJWTGuard` (no separate `@UseGuards` needed): a user of a store with `status = SUSPENDED` (owner included) gets 403 `{ code: 'STORE_SUSPENDED', ... }`; ADMIN always passes. Mark a route that must work for a suspended store with `@AllowSuspendedStore()` (`src/shared/decorators/allow-suspended-store.decorator.ts`) — currently only `GET /auth/me`. See `docs/features/authentication.md` → «Suspended Store».
+
+**AdminGuard** (`src/shared/guards/admin.guard.ts`) — platform ADMIN only
+```typescript
+@UseGuards(AuthJWTGuard, AdminGuard)  // e.g. /admin/stores
 ```
 
 **RolesGuard** — Checks staff role
