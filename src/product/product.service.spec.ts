@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getLoggerToken } from 'nestjs-pino';
 import { StaffRole, UserRole, UserType } from '@generated/enums';
@@ -34,7 +34,13 @@ function makeUser(overrides: Partial<CurrentUser> = {}): CurrentUser {
 describe('ProductService', () => {
   let service: ProductService;
   const prisma = {
-    product: { findMany: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
+    product: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      update: jest.fn(),
+      create: jest.fn(),
+    },
+    category: { findFirst: jest.fn() },
     productVariant: {
       count: jest.fn(),
       findMany: jest.fn(),
@@ -141,15 +147,11 @@ describe('ProductService', () => {
       expect(res.total).toBe(2);
     });
 
-    it('matches a category and its subcategories', async () => {
+    it('matches a category and its subcategories (two levels)', async () => {
       await service.findAll({ categoryId: 'cat' }, makeUser());
       const where = prisma.product.findMany.mock.calls[1][0].where;
       expect(where.AND).toContainEqual({
-        OR: [
-          { categoryId: 'cat' },
-          { category: { parentId: 'cat' } },
-          { category: { parent: { parentId: 'cat' } } },
-        ],
+        OR: [{ categoryId: 'cat' }, { category: { parentId: 'cat' } }],
       });
     });
 
@@ -353,6 +355,23 @@ describe('ProductService', () => {
       prisma.productVariant.create.mockResolvedValue({ id: 'variant' });
     });
 
+    it('builds the SKU from the category name in the DB, not the client string', async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        id: 'product',
+        name: 'Dress',
+        storeId: STORE,
+        warehouseId: WAREHOUSE,
+        category: { name: 'Платья' },
+      });
+      await service.createProductVariant(
+        { ...createDto({}), category: 'Hacked' },
+        owner(),
+      );
+      const sku = prisma.productVariant.create.mock.calls[0][0].data.sku;
+      expect(sku).toContain('ПЛАТЬЯ');
+      expect(sku).not.toContain('HACKED');
+    });
+
     it('creates a sellable, not rentable variant by default', async () => {
       await service.createProductVariant(createDto({}), owner());
       expect(prisma.productVariant.create.mock.calls[0][0].data).toMatchObject({
@@ -462,6 +481,52 @@ describe('ProductService', () => {
         }),
       );
       expect(prisma.warehouse.findUnique).not.toHaveBeenCalled();
+    });
+
+    describe('category of a new product', () => {
+      const dto = {
+        warehouseId: WAREHOUSE,
+        categoryId: 'sub',
+        brandId: 'brand',
+        name: 'Брус 50×50',
+        images: [],
+        attributeIds: [],
+        tagIds: [],
+      } as never;
+
+      beforeEach(() => {
+        prisma.warehouse.findFirst.mockResolvedValue({ id: WAREHOUSE });
+        prisma.warehouse.findUnique.mockResolvedValue({
+          id: WAREHOUSE,
+          storeId: STORE,
+        });
+        prisma.product.create.mockResolvedValue({ id: 'product' });
+      });
+
+      it('requires a subcategory of one of the store directions', async () => {
+        prisma.category.findFirst.mockResolvedValue({ id: 'sub' });
+        await service.createProduct(dto, owner());
+        expect(prisma.category.findFirst).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: {
+              id: 'sub',
+              parent: { parentId: null, store: { some: { storeId: STORE } } },
+            },
+          }),
+        );
+        expect(prisma.product.create.mock.calls[0][0].data).toMatchObject({
+          categoryId: 'sub',
+          storeId: STORE,
+        });
+      });
+
+      it('rejects a direction, a foreign direction subcategory or an unknown id with 400', async () => {
+        prisma.category.findFirst.mockResolvedValue(null);
+        await expect(
+          service.createProduct(dto, owner()),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(prisma.product.create).not.toHaveBeenCalled();
+      });
     });
 
     it('rejects creating a product in a warehouse the manager does not work in', async () => {

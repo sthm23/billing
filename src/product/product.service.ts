@@ -27,6 +27,19 @@ import { ProductListParams } from './dto/product-list-params.dto';
 import { LOW_STOCK_THRESHOLD } from './product.constants';
 import { assertWarehouseAccess } from '@shared/helper/warehouse-access.helper';
 
+/** Category label in every language; the client picks one (falls back to `name`, Russian). */
+function categoryI18n(
+  category: {
+    name: string;
+    nameUz: string | null;
+    nameEn: string | null;
+  } | null,
+) {
+  return category
+    ? { name: category.name, nameUz: category.nameUz, nameEn: category.nameEn }
+    : null;
+}
+
 @Injectable()
 export class ProductService {
   constructor(
@@ -41,19 +54,19 @@ export class ProductService {
   ): Promise<Product> {
     // The warehouse must belong to the caller's store (403 before the try)
     await assertWarehouseAccess(this.prisma, user, dto.warehouseId);
+    const warehouse = await this.prisma.warehouse.findUnique({
+      where: { id: dto.warehouseId },
+    });
+    if (!warehouse) throw new NotFoundException('Warehouse not found');
+    await this.assertStoreSubcategory(dto.categoryId, warehouse.storeId);
     try {
-      const warehouse = await this.prisma.warehouse.findUnique({
-        where: { id: dto.warehouseId },
-      });
-      if (!warehouse) throw new NotFoundException('Warehouse not found');
-
       const product = await this.prisma.product.create({
         data: {
           name: dto.name,
           warehouseId: dto.warehouseId,
           storeId: warehouse.storeId,
           brandId: dto.brandId ?? null,
-          categoryId: dto.categoryId ?? null,
+          categoryId: dto.categoryId,
           description: dto.description ?? null,
           images: {
             createMany: {
@@ -96,9 +109,12 @@ export class ProductService {
     try {
       const product = await this.prisma.product.findUnique({
         where: { id: dto.productId },
+        include: { category: { select: { name: true } } },
       });
       if (!product) throw new NotFoundException('Product not found');
       this.assertWarehouseAccess(product.storeId, product.warehouseId, user);
+      // SKU uses the category name from the DB, never the client's `dto.category`
+      const categoryName = product.category?.name ?? '';
       const warehouse = await this.prisma.warehouse.findUnique({
         where: { id: product.warehouseId },
       });
@@ -118,7 +134,7 @@ export class ProductService {
               storeId: warehouse.storeId, // важно: берем из warehouse, не из dto
               sku: buildSku(
                 product.name,
-                dto.category,
+                categoryName,
                 variant.attributes.map((a) => a.value),
               ),
               barCode,
@@ -174,6 +190,25 @@ export class ProductService {
    * defaults canSell = true, canRent = false). A rentable variant needs a
    * positive rent price per day.
    */
+  /**
+   * A product's category must be a subcategory (level 2) of one of the store's directions.
+   * Throws 400 before the create `try`.
+   */
+  private async assertStoreSubcategory(categoryId: string, storeId: string) {
+    const category = await this.prisma.category.findFirst({
+      where: {
+        id: categoryId,
+        parent: { parentId: null, store: { some: { storeId } } },
+      },
+      select: { id: true },
+    });
+    if (!category) {
+      throw new BadRequestException(
+        'Category must be a subcategory of the store direction',
+      );
+    }
+  }
+
   private resolveSaleRent(
     input: {
       canSell?: boolean;
@@ -289,12 +324,11 @@ export class ProductService {
         });
       }
       if (params.categoryId) {
-        // A chip is a top category: include products of its subcategories.
+        // A direction chip includes products of its subcategories (two levels only).
         and.push({
           OR: [
             { categoryId: params.categoryId },
             { category: { parentId: params.categoryId } },
-            { category: { parent: { parentId: params.categoryId } } },
           ],
         });
       }
@@ -358,6 +392,7 @@ export class ProductService {
           return {
             brand: product.brand?.name,
             category: product.category?.name,
+            categoryI18n: categoryI18n(product.category),
             variants: product.variants.map((v) => ({
               id: v.id,
               price: v.price,
@@ -498,6 +533,7 @@ export class ProductService {
         name: product.name,
         brand: product.brand?.name,
         category: product.category?.name,
+        categoryI18n: categoryI18n(product.category),
         description: product.description,
         images: product.images,
         attributes: product.attributes.map((a) => ({ ...a.attribute })),

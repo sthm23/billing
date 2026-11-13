@@ -16,7 +16,7 @@ export class ProductListParams extends PaginationParams {
   @MaxLength(100)
   search?: string;
 
-  /** Category or one of its parents */
+  /** A subcategory, or a store direction (then all its subcategories match) */
   @IsOptional()
   @IsUUID()
   categoryId?: string;

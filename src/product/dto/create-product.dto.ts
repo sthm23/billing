@@ -83,9 +83,10 @@ export class CreateProductVariantDto {
   @IsNotEmpty()
   productId: string = '';
 
-  @IsNotEmpty()
+  /** @deprecated Ignored — the SKU uses the product's category name from the DB. Kept so old clients still validate. */
+  @IsOptional()
   @IsString()
-  category: string = '';
+  category?: string;
 
   @IsArray()
   @ArrayMinSize(1, { message: 'At least one variant is required' })
