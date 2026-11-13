@@ -39,6 +39,8 @@ export class ProductService {
     dto: CreateProductDto,
     user: CurrentUser,
   ): Promise<Product> {
+    // The warehouse must belong to the caller's store (403 before the try)
+    await assertWarehouseAccess(this.prisma, user, dto.warehouseId);
     try {
       const warehouse = await this.prisma.warehouse.findUnique({
         where: { id: dto.warehouseId },
@@ -96,6 +98,7 @@ export class ProductService {
         where: { id: dto.productId },
       });
       if (!product) throw new NotFoundException('Product not found');
+      this.assertWarehouseAccess(product.storeId, product.warehouseId, user);
       const warehouse = await this.prisma.warehouse.findUnique({
         where: { id: product.warehouseId },
       });
@@ -161,6 +164,7 @@ export class ProductService {
         { productId: dto.productId, err: error.message },
         'Failed to create product variants',
       );
+      if (error instanceof ForbiddenException) throw error;
       throw new BadRequestException(error.response || error.message);
     }
   }
@@ -717,23 +721,8 @@ export class ProductService {
         where: { id },
       });
       if (!variant) throw new NotFoundException('Product variant not found');
-      const warehouse = await this.prisma.warehouse.findUnique({
-        where: { id: variant.warehouseId },
-      });
-
-      if (!warehouse) throw new NotFoundException('Warehouse not found');
-      const hasAccess =
-        user.role === UserRole.OWNER ||
-        (user.staff && user.staff.role === StaffRole.MANAGER);
-
-      if (
-        hasAccess &&
-        !user.staff.warehouse.some((w) => w.warehouseId === warehouse.id)
-      ) {
-        throw new ForbiddenException(
-          'You do not have access to this warehouse',
-        );
-      }
+      // Own store; a non-owner also needs the variant's warehouse
+      this.assertWarehouseAccess(variant.storeId, variant.warehouseId, user);
 
       await this.prisma.productVariant.update({
         where: { id },
@@ -749,6 +738,7 @@ export class ProductService {
         { variantId: id, err: error.message },
         'Failed to update product variant price',
       );
+      if (error instanceof ForbiddenException) throw error;
       throw new BadRequestException(error.response || error.message);
     }
   }

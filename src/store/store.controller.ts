@@ -43,7 +43,9 @@ export class StoreController {
     private readonly staffService: StoreStaffService,
   ) {}
 
+  /** Platform ADMIN only (legacy web org-create; mobile uses POST /admin/stores). */
   @Roles(UserRole.OWNER)
+  @UseGuards(AdminGuard)
   @Post()
   createStore(
     @CurrentUser() user: UserAuth,

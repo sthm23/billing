@@ -10,12 +10,15 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtStrategy } from './strategy/jwt-access.strategy';
 import { AdminModule } from '@admin/admin.module';
 import { TokenService } from './token.service';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { authThrottleOptions } from './auth-throttle';
 
 @Module({
   imports: [
     UserModule,
     AdminModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
+    ThrottlerModule.forRoot(authThrottleOptions),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => {

@@ -22,6 +22,15 @@ import { LoggerModule } from 'nestjs-pino';
     ConfigModule.forRoot({ isGlobal: true }),
     LoggerModule.forRoot({
       pinoHttp: {
+        // Never log tokens / session cookies (request and response headers)
+        redact: {
+          paths: [
+            'req.headers.authorization',
+            'req.headers.cookie',
+            'res.headers["set-cookie"]',
+          ],
+          censor: '[REDACTED]',
+        },
         transport: {
           targets: [
             ...(process.env.NODE_ENV !== 'production'

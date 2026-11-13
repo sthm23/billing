@@ -7,7 +7,7 @@ Production: https://your-domain.com/api
 ```
 
 ## Authentication
-Все endpoints (кроме `/login`, `/signup`, `/refresh`) требуют JWT токен в header:
+Все endpoints (кроме `/login`, `/refresh`, `/logout`, `/health*`) требуют JWT токен в header:
 ```
 Authorization: Bearer <access_token>
 ```
@@ -43,32 +43,9 @@ Authorization: Bearer <access_token>
 
 ---
 
-### POST /signup
-**Public endpoint**
+### POST /signup — удалён (2026-11-13)
 
-Регистрация нового пользователя.
-
-**Request**:
-```json
-{
-  "fullName": "string",
-  "phone": "string",
-  "login": "string",
-  "password": "string",
-  "type": "CUSTOMER" | "STAFF"
-}
-```
-
-**Response**:
-```json
-{
-  "id": "uuid",
-  "fullName": "string",
-  "phone": "string",
-  "type": "CUSTOMER" | "STAFF",
-  "createdAt": "2026-08-15T10:00:00Z"
-}
-```
+Маршрут и `AuthService.signUp` удалены: ни один клиент их не использовал. Саморегистрация будет отдельным потоком. См. `docs/security.md`.
 
 ---
 

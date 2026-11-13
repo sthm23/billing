@@ -42,7 +42,7 @@ describe('ProductService', () => {
       create: jest.fn(),
       update: jest.fn(),
     },
-    warehouse: { findUnique: jest.fn() },
+    warehouse: { findUnique: jest.fn(), findFirst: jest.fn() },
     inventory: { create: jest.fn() },
     variantAttributeValue: { createMany: jest.fn() },
     $transaction: jest.fn(),
@@ -343,6 +343,7 @@ describe('ProductService', () => {
       prisma.product.findUnique.mockResolvedValue({
         id: 'product',
         name: 'Dress',
+        storeId: STORE,
         warehouseId: WAREHOUSE,
       });
       prisma.warehouse.findUnique.mockResolvedValue({
@@ -387,6 +388,7 @@ describe('ProductService', () => {
     it('keeps the saved rent price when only canRent is updated', async () => {
       prisma.productVariant.findUnique.mockResolvedValue({
         id: 'variant',
+        storeId: STORE,
         warehouseId: WAREHOUSE,
         canSell: true,
         canRent: false,
@@ -406,6 +408,7 @@ describe('ProductService', () => {
     it('rejects enabling rent on a variant without a rent price', async () => {
       prisma.productVariant.findUnique.mockResolvedValue({
         id: 'variant',
+        storeId: STORE,
         warehouseId: WAREHOUSE,
         canSell: true,
         canRent: false,
@@ -420,6 +423,112 @@ describe('ProductService', () => {
         ),
       ).rejects.toThrow('rent price per day');
       expect(prisma.productVariant.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('store checks on create / update', () => {
+    const FOREIGN_STORE = '22222222-2222-4222-8222-222222222222';
+    const owner = () =>
+      makeUser({
+        role: UserRole.OWNER,
+        staff: {
+          id: 'staff',
+          storeId: STORE,
+          role: StaffRole.OWNER,
+          warehouse: [{ warehouseId: WAREHOUSE }],
+        },
+      } as unknown as Partial<CurrentUser>);
+    const manager = () =>
+      makeUser({
+        staff: {
+          id: 'staff',
+          storeId: STORE,
+          role: StaffRole.MANAGER,
+          warehouse: [{ warehouseId: WAREHOUSE }],
+        },
+      } as unknown as Partial<CurrentUser>);
+
+    it('rejects creating a product in a warehouse of another store', async () => {
+      prisma.warehouse.findFirst.mockResolvedValue(null);
+      await expect(
+        service.createProduct(
+          { warehouseId: FOREIGN_WAREHOUSE } as never,
+          owner(),
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.warehouse.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: FOREIGN_WAREHOUSE, storeId: STORE },
+        }),
+      );
+      expect(prisma.warehouse.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('rejects creating a product in a warehouse the manager does not work in', async () => {
+      await expect(
+        service.createProduct(
+          { warehouseId: FOREIGN_WAREHOUSE } as never,
+          manager(),
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('rejects adding variants to a product of another store', async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        id: 'product',
+        name: 'Dress',
+        storeId: FOREIGN_STORE,
+        warehouseId: FOREIGN_WAREHOUSE,
+      });
+      await expect(
+        service.createProductVariant(
+          { productId: 'product', variants: [] } as never,
+          owner(),
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects updating a variant of another store', async () => {
+      prisma.productVariant.findUnique.mockResolvedValue({
+        id: 'variant',
+        storeId: FOREIGN_STORE,
+        warehouseId: FOREIGN_WAREHOUSE,
+      });
+      await expect(
+        service.updateProductVariant('variant', { price: 1 }, owner()),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.productVariant.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a staff OWNER (User.role USER) updating a variant of another store', async () => {
+      prisma.productVariant.findUnique.mockResolvedValue({
+        id: 'variant',
+        storeId: FOREIGN_STORE,
+        warehouseId: FOREIGN_WAREHOUSE,
+      });
+      const staffOwner = makeUser({
+        staff: {
+          id: 'staff',
+          storeId: STORE,
+          role: StaffRole.OWNER,
+          warehouse: [],
+        },
+      } as unknown as Partial<CurrentUser>);
+      await expect(
+        service.updateProductVariant('variant', { price: 1 }, staffOwner),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('rejects a manager updating a variant of a warehouse they do not work in', async () => {
+      prisma.productVariant.findUnique.mockResolvedValue({
+        id: 'variant',
+        storeId: STORE,
+        warehouseId: FOREIGN_WAREHOUSE,
+      });
+      await expect(
+        service.updateProductVariant('variant', { price: 1 }, manager()),
+      ).rejects.toBeInstanceOf(ForbiddenException);
     });
   });
 });

@@ -250,7 +250,7 @@ npm run start:prod                # Start production server
 - ✅ SQL injection защита (Prisma parameterized queries)
 
 ### Рекомендации для production
-- [ ] Rate limiting (express-rate-limit)
+- [x] Rate limiting на `POST /login` и `GET /refresh` (`@nestjs/throttler`, 2026-11-13; см. `docs/security.md` → Rate Limiting)
 - [ ] CORS configuration (whitelist allowed origins)
 - [ ] Helmet.js для security headers
 - [ ] HTTPS only

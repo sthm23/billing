@@ -8,25 +8,7 @@
 
 ### 1.1. Регистрация нового клиента
 
-**Кто**: Любой посетитель
-
-**Шаги**:
-1. `POST /signup`
-   ```json
-   {
-     "fullName": "Иван Иванов",
-     "phone": "+998901234567",
-     "login": "ivan@example.com",
-     "password": "secure123",
-     "type": "CUSTOMER"
-   }
-   ```
-2. Система создает:
-   - `User` (type: CUSTOMER)
-   - `AuthAccount` (passwordHash через bcrypt)
-   - `Customer`
-3. Ответ: данные пользователя
-4. Клиент может логиниться
+Саморегистрации нет: `POST /signup` удалён 2026-11-13. Клиентов создают сотрудники через `POST /users/customers`.
 
 ### 1.2. Создание сотрудника (Staff)
 

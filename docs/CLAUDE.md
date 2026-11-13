@@ -65,7 +65,7 @@ This folder contains **legacy detailed documentation** that may still be useful 
 
 ### 🌐 API Reference
 **[API_MODULES.md](API_MODULES.md)** — полная документация API
-- Auth Module (login, signup, refresh, logout, me)
+- Auth Module (login, refresh, logout, me)
 - Order Module (create, add items, pay, return, search)
 - Cashbox Module (open, close, transactions)
 - Product Module (create, variants, search, update price)

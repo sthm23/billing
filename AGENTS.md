@@ -9,7 +9,8 @@
 - **Framework**: NestJS 10+
 - **ORM**: Prisma 6
 - **Database**: PostgreSQL 17
-- **Auth**: JWT (access + refresh tokens) via Passport
+- **Auth**: JWT (access + refresh tokens) via Passport; access token bound to its `RefreshSession` (`sid`)
+- **Rate limiting**: `@nestjs/throttler` ^6.7.1 — auth routes only (`src/auth/auth-throttle.ts`)
 - **File Storage**: AWS S3 (LocalStack in dev)
 - **Container**: Docker Compose for PostgreSQL
 
@@ -182,7 +183,7 @@ type CurrentUser = User & {
 
 **AuthJWTGuard** — Validates JWT token
 ```typescript
-@UseGuards(AuthJWTGuard)  // All routes protected by default
+@UseGuards(AuthJWTGuard)  // Per controller / route — NOT global
 ```
 
 **SubscriptionGuard** (`src/shared/guards/subscription.guard.ts`) — runs **inside** `AuthJWTGuard` (no separate `@UseGuards` needed): a user of a store with `status = SUSPENDED` (owner included) gets 403 `{ code: 'STORE_SUSPENDED', ... }`; ADMIN always passes. Mark a route that must work for a suspended store with `@AllowSuspendedStore()` (`src/shared/decorators/allow-suspended-store.decorator.ts`) — currently only `GET /auth/me`. See `docs/features/authentication.md` → «Suspended Store».
@@ -198,11 +199,11 @@ type CurrentUser = User & {
 @UseGuards(AuthJWTGuard, RolesGuard)
 ```
 
-**Public Routes**
-```typescript
-@Public()  // Skip AuthJWTGuard
-async login() { ... }
-```
+**JwtStrategy** (`src/auth/strategy/jwt-access.strategy.ts`) reloads the user on every request **and** requires the token's `sid` session to be active (not revoked, not expired); otherwise 401. Logout and refresh rotation therefore invalidate the old access token at once.
+
+**ThrottlerGuard** (`@nestjs/throttler`, config `src/auth/auth-throttle.ts`, `ThrottlerModule.forRoot` in `AuthModule`) — **not global**, only on `POST /login` (`ip` 30/min + `login` 5/min per IP+login) and `GET /refresh` (`@SkipThrottle({ login: true })`, `ip` only). 429 `Too many attempts, try again later`. In-memory counters (single PM2 instance); `main.ts` sets `trust proxy: 'loopback'` so `req.ip` is the client behind local nginx. Do not add it to other routes without a decision.
+
+**Public Routes**: a route without `@UseGuards(AuthJWTGuard)` is public (the guard is not global). `@Public()` is only a marker — no guard reads it. There is no `POST /signup` (removed 2026-11-13).
 
 ---
 
@@ -496,7 +497,7 @@ npm run test:cov                  # Coverage report
 
 **Test Files**: `*.spec.ts` co-located with source
 
-**Current state**: most specs are generated "should be defined" stubs that don't provide their dependencies and fail. Working examples with mocked `PrismaService` and Pino logger (`getLoggerToken`): `src/store/store.service.spec.ts`, `src/order/order.service.spec.ts` (`$transaction` mocked as `cb => cb(prisma)`), `src/product/product.service.spec.ts`, `src/user/user.service.spec.ts`.
+**Current state**: most specs are generated "should be defined" stubs that don't provide their dependencies and fail. Working examples with mocked `PrismaService` and Pino logger (`getLoggerToken`): `src/store/store.service.spec.ts`, `src/order/order.service.spec.ts` (`$transaction` mocked as `cb => cb(prisma)`; store-scope tests), `src/product/product.service.spec.ts` (store / warehouse access tests), `src/user/user.service.spec.ts`, `src/auth/auth.service.spec.ts` (logout), `src/auth/strategy/jwt-access.strategy.spec.ts` (session check).
 
 **Error wrapping**: most services catch everything and rethrow `BadRequestException(error.response)`, which turns a 403 into a 400. Run access checks before the `try`, or rethrow `ForbiddenException` in the `catch` (see `OrderService.createOrderItems`, `ProductService.search`). Run a subset with `npx jest src/<module>`.
 

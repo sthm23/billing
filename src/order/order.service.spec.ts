@@ -663,6 +663,41 @@ describe('OrderService', () => {
     });
   });
 
+  describe('store scope of lists and cancel', () => {
+    const customer = () =>
+      ({
+        id: 'customer-user',
+        role: UserRole.USER,
+        type: UserType.CUSTOMER,
+        staff: null,
+      }) as unknown as CurrentUser;
+
+    it('rejects a user without staff on list, search and cancel', async () => {
+      await expect(
+        service.findAll({} as never, customer()),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(
+        service.searchOrders('ali', customer()),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.remove(ORDER, customer())).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(prisma.order.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('cancels only an order of the staff store', async () => {
+      prisma.order.findUnique.mockResolvedValue(null);
+      await expect(
+        service.remove(ORDER, makeUser(StaffRole.OWNER)),
+      ).rejects.toThrow('Order not found');
+      expect(prisma.order.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: ORDER, storeId: STORE }),
+        }),
+      );
+    });
+  });
+
   describe('getSummary', () => {
     const range = {
       from: '2026-10-20T19:00:00.000Z',

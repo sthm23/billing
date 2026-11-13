@@ -1033,14 +1033,15 @@ export class OrderService {
     user: CurrentUser,
   ) {
     const skip = (currentPage - 1) * pageSize;
+    const storeId = this.storeScope(user);
     if (warehouseId) {
       await assertWarehouseAccess(this.prisma, user, warehouseId);
     }
     try {
       const params = {};
 
-      if (user.type === UserType.STAFF) {
-        params['storeId'] = user.staff.storeId;
+      if (storeId) {
+        params['storeId'] = storeId;
       }
       if (warehouseId) {
         params['warehouseId'] = warehouseId;
@@ -1118,6 +1119,17 @@ export class OrderService {
    * A rental counts from its issue (`soldAt`) even while the order is still HOLD.
    * Owner/admin — the whole store; manager — their warehouses; seller/cashier — own sales.
    */
+  /**
+   * Store filter for order lists: the caller's store; `undefined` only for
+   * ADMIN (all stores). A user without staff (not ADMIN) gets 403.
+   * Call it before a `try` that wraps errors into 400.
+   */
+  private storeScope(user: CurrentUser): string | undefined {
+    if (user.role === UserRole.ADMIN) return undefined;
+    if (!user.staff) throw new ForbiddenException('Staff only');
+    return user.staff.storeId;
+  }
+
   async getSummary(range: OrderSummaryParams, user: CurrentUser) {
     if (range.warehouseId) {
       await assertWarehouseAccess(this.prisma, user, range.warehouseId);
@@ -1164,13 +1176,14 @@ export class OrderService {
   }
 
   async searchOrders(search: string, user: CurrentUser, warehouseId?: string) {
+    const storeId = this.storeScope(user);
     if (warehouseId) {
       await assertWarehouseAccess(this.prisma, user, warehouseId);
     }
     try {
       const params = {};
-      if (user.type === UserType.STAFF) {
-        params['storeId'] = user.staff.storeId;
+      if (storeId) {
+        params['storeId'] = storeId;
       }
       if (warehouseId) {
         params['warehouseId'] = warehouseId;
@@ -1311,10 +1324,11 @@ export class OrderService {
 
   async remove(id: string, user: CurrentUser) {
     this.logger.debug({ orderId: id }, 'Cancelling order');
+    const storeId = this.storeScope(user);
     try {
       const params = {};
-      if (user.type === UserType.STAFF) {
-        params['storeId'] = user.staff.storeId;
+      if (storeId) {
+        params['storeId'] = storeId;
       }
       if (user.type === UserType.STAFF && user.role !== UserRole.OWNER) {
         params['cashierId'] = user.staff.id;
