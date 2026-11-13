@@ -27,6 +27,7 @@ model User {
   refreshSessions RefreshSession[]
   staff           Staff?
   stores          Store[] //created stores by this auth account
+  categories      Category[] // subcategories created by this user
 
   @@map("users")
 }
@@ -345,15 +346,23 @@ model StockMovement {
  * =======================
  */
 
+/// Two levels: parentId = null → store direction (system, seed); parentId = direction → product subcategory.
+/// Case-insensitive uniqueness per parent for name / nameUz / nameEn is enforced by partial expression
+/// indexes created in SQL (migration 20261113120000_category_two_levels), not representable in Prisma.
 model Category {
-  id       String              @id @default(uuid())
-  name     String              @unique
-  parentId String?
-  parent   Category?           @relation("CategoryTree", fields: [parentId], references: [id])
-  children Category[]          @relation("CategoryTree")
-  store    CategoriesOnStore[]
-  products Product[]
+  id          String              @id @default(uuid())
+  name        String // Russian, primary
+  nameUz      String?
+  nameEn      String?
+  parentId    String?
+  parent      Category?           @relation("CategoryTree", fields: [parentId], references: [id])
+  children    Category[]          @relation("CategoryTree")
+  createdById String?
+  createdBy   User?               @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  store       CategoriesOnStore[]
+  products    Product[]
 
+  @@unique([parentId, name])
   @@index([parentId])
   @@map("categories")
 }

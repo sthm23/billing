@@ -1084,22 +1084,28 @@ model DebtPayment {
 
 ```prisma
 model Category {
-  id       String              @id @default(uuid())
-  name     String              @unique
-  parentId String?
-  
-  parent   Category?           @relation("CategoryTree", fields: [parentId], references: [id])
-  children Category[]          @relation("CategoryTree")
-  
-  store    CategoriesOnStore[]
-  products Product[]
-  
+  id          String              @id @default(uuid())
+  name        String              // русское название, основное
+  nameUz      String?
+  nameEn      String?
+  parentId    String?
+  parent      Category?           @relation("CategoryTree", fields: [parentId], references: [id])
+  children    Category[]          @relation("CategoryTree")
+  createdById String?             // кто создал подкатегорию; null у системных (сид)
+  createdBy   User?               @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  store       CategoriesOnStore[]
+  products    Product[]
+
+  @@unique([parentId, name])
   @@index([parentId])
 }
 ```
 
 **Логика**:
-- Поддерживает вложенность (parent → children); по бизнес-правилу (2026-11-10) — **не больше 2 уровней**: уровень 1 — направление магазина (выбирает админ при создании магазина, `POST /admin/stores` принимает только категорию без `parentId`), уровень 2 — категории товаров. Глубина — правило, не ограничение схемы
+- **Ровно 2 уровня** (миграция `20261113120000_category_two_levels` выровняла старое 3–4-уровневое дерево): уровень 1 — направление магазина (`parentId = null`, системные из сида; выбирает админ при создании магазина, `POST /admin/stores` принимает только категорию без `parentId`), уровень 2 — подкатегории товаров. Глубина — правило, не ограничение схемы
+- **Названия**: `name` — русский (основной), `nameUz` / `nameEn` — переводы (у системных заполнены сидом, у созданных пользователями могут быть null). Клиент показывает перевод на языке приложения, иначе `name`. Системный список — `prisma/seed/category.seed.ts` (`CATEGORY_TREE`)
+- **Уникальность** — внутри родителя без учёта регистра, отдельно для `name`, `nameUz`, `nameEn`. Обеспечивается частичными индексами по выражению `lower(...)` (`categories_root_*_ci_key` для корней, `categories_child_*_ci_key` для подкатегорий), созданными SQL в миграции: в `schema.prisma` их не выразить, `prisma migrate diff` их не трогает
+- Справочник общий для всех магазинов: подкатегории направления видят все магазины этого направления. План доработки (API, права, mobile) — `billing/docs/categories/PLAN.md`
 - Связывается с магазинами через M2M (`CategoriesOnStore`)
 
 ---
