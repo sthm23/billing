@@ -5,13 +5,19 @@ import { CreateDebtDto, CreateDebtPaymentDto } from './dto/create-debt.dto';
 import { CurrentUser } from '@shared/decorators/user.decorator';
 import type { CurrentUser as UserInfo } from '@auth/models/auth.model';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
+import { Roles } from '@shared/decorators/role.decorator';
+import { RolesGuard } from '@shared/guards/role.guard';
+import { StaffRole, UserRole } from '@generated/enums';
 
 @UseGuards(AuthJWTGuard)
 @Controller('debt')
 export class DebtController {
   constructor(private readonly debtService: DebtService) { }
 
+  /** Manual (pre-STHM) debt — owner/manager only */
   @Post()
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OWNER, StaffRole.MANAGER)
   create(
     @Body() createDebtDto: CreateDebtDto,
     @CurrentUser() user: UserInfo,

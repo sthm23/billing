@@ -29,7 +29,8 @@ describe('UserService', () => {
   let service: UserService;
   const prisma = {
     $transaction: jest.fn(),
-    order: { findUnique: jest.fn(), update: jest.fn() },
+    order: { findUnique: jest.fn(), update: jest.fn(), findMany: jest.fn() },
+    customerDebt: { findMany: jest.fn() },
     customer: { findUnique: jest.fn(), create: jest.fn() },
     user: { findFirst: jest.fn(), create: jest.fn(), count: jest.fn(), findMany: jest.fn() },
   };
@@ -120,6 +121,26 @@ describe('UserService', () => {
           { phone: { in: ['901234567', '998901234567', '+998901234567'] } },
         ],
       });
+    });
+
+    it('adds the open debt of each customer in the store', async () => {
+      prisma.user.findMany.mockResolvedValue([
+        { id: 'u1', customer: { id: 'c1' } },
+        { id: 'u2', customer: { id: 'c2' } },
+      ]);
+      prisma.order.findMany.mockResolvedValue([
+        { customerId: 'c1', totalAmount: 1000000, returnedAmount: 100000, paidAmount: 200000 },
+      ]);
+      prisma.customerDebt.findMany.mockResolvedValue([
+        { customerId: 'c1', totalAmount: 500000, paidAmount: 0 },
+      ]);
+      const res = await service.getCustomers(10, 1, 'али', makeUser());
+      expect(prisma.order.findMany.mock.calls[0][0].where).toMatchObject({
+        storeId: STORE,
+        customerId: { in: ['c1', 'c2'] },
+        status: 'DEBT',
+      });
+      expect(res.data.map((u) => u.debtTotal)).toEqual([1200000, 0]);
     });
 
     it('lets an admin search everyone', async () => {

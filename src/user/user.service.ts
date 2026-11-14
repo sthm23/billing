@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { Prisma, User, UserRole, UserType } from '@generated/client';
+import { DebtStatus, OrderStatus, Prisma, User, UserRole, UserType } from '@generated/client';
 import { CreateUserDto } from './dto/create-user.dto';
 import { CurrentUser } from '@auth/models/auth.model';
 import { UpdateCustomerDto } from './dto/update-user.dto';
@@ -332,15 +332,51 @@ export class UserService {
           },
         }),
       ]);
+      const debts = user.staff
+        ? await this.openDebtByCustomer(
+            user.staff.storeId,
+            data.flatMap((u) => (u.customer ? [u.customer.id] : [])),
+          )
+        : null;
       return {
         currentPage,
         pageSize,
         total: count,
-        data,
+        // debtTotal — open debt in the user's store (null for an admin)
+        data: data.map((u) => ({
+          ...u,
+          debtTotal: debts ? (u.customer ? debts.get(u.customer.id) ?? 0 : 0) : null,
+        })),
       };
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message);
     }
+  }
+
+  /**
+   * Open debt of the customers in the store: DEBT orders (total − returned −
+   * paid) + ACTIVE manual debts (total − paid). Same sums as the debtors list.
+   */
+  private async openDebtByCustomer(storeId: string, customerIds: string[]) {
+    const sums = new Map<string, number>();
+    if (!customerIds.length) return sums;
+    const [orders, debts] = await Promise.all([
+      this.prismaService.order.findMany({
+        where: { storeId, customerId: { in: customerIds }, status: OrderStatus.DEBT },
+        select: { customerId: true, totalAmount: true, returnedAmount: true, paidAmount: true },
+      }),
+      this.prismaService.customerDebt.findMany({
+        where: { storeId, customerId: { in: customerIds }, status: DebtStatus.ACTIVE },
+        select: { customerId: true, totalAmount: true, paidAmount: true },
+      }),
+    ]);
+    const add = (customerId: string | null, remaining: number) => {
+      if (!customerId || remaining <= 0) return;
+      sums.set(customerId, (sums.get(customerId) ?? 0) + remaining);
+    };
+    for (const o of orders) add(o.customerId, +o.totalAmount - +o.returnedAmount - +o.paidAmount);
+    for (const d of debts) add(d.customerId, +d.totalAmount - +d.paidAmount);
+    return sums;
   }
 
   async setCustomerToOrder(dto: UpdateCustomerDto, user: CurrentUser) {

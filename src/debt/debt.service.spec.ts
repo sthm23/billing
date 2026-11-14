@@ -11,7 +11,7 @@ import {
 } from '@generated/enums';
 import { PrismaService } from '@prisma/prisma.service';
 import type { CurrentUser } from '@auth/models/auth.model';
-import { CreateDebtPaymentDto } from './dto/create-debt.dto';
+import { CreateDebtDto, CreateDebtPaymentDto } from './dto/create-debt.dto';
 import { DebtService } from './debt.service';
 
 const STORE = '11111111-1111-4111-8111-111111111111';
@@ -49,12 +49,13 @@ describe('DebtService', () => {
       findUnique: jest.fn(),
       findMany: jest.fn(),
       update: jest.fn(),
+      create: jest.fn(),
     },
     debtPayment: { create: jest.fn() },
     cashTransaction: { create: jest.fn(), aggregate: jest.fn() },
     cashbox: { findFirst: jest.fn(), findMany: jest.fn(), update: jest.fn() },
     order: { findMany: jest.fn() },
-    customer: { findUnique: jest.fn() },
+    customer: { findUnique: jest.fn(), update: jest.fn() },
   };
   const logger = {
     debug: jest.fn(),
@@ -90,6 +91,82 @@ describe('DebtService', () => {
     }).compile();
 
     service = module.get<DebtService>(DebtService);
+  });
+
+  describe('createCustomerDebt', () => {
+    const CUSTOMER = '77777777-7777-4777-8777-777777777777';
+    const manager = {
+      ...cashier,
+      staff: { ...cashier.staff, role: StaffRole.MANAGER },
+    } as unknown as CurrentUser;
+    const dto = (extra: Partial<CreateDebtDto> = {}) =>
+      ({ customerId: CUSTOMER, amount: 2500000, ...extra }) as CreateDebtDto;
+
+    beforeEach(() => {
+      prisma.$transaction.mockImplementation((ops: unknown) =>
+        Array.isArray(ops) ? Promise.all(ops) : (ops as (tx: typeof prisma) => unknown)(prisma),
+      );
+      prisma.customer.findUnique.mockResolvedValue({ id: CUSTOMER });
+      prisma.customerDebt.create.mockImplementation(({ data }) => Promise.resolve({ id: DEBT, ...data }));
+      prisma.customer.update.mockResolvedValue({ id: CUSTOMER });
+    });
+
+    it('creates the debt in the staff store with no term and links the customer', async () => {
+      const debt = await service.createCustomerDebt(
+        dto({ createdAt: '2026-09-12T00:00:00.000Z', description: '  накладная №45 ' }),
+        manager,
+      );
+      expect(prisma.customerDebt.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          storeId: STORE,
+          customerId: CUSTOMER,
+          totalAmount: 2500000,
+          status: DebtStatus.ACTIVE,
+          description: 'накладная №45',
+          createdAt: new Date('2026-09-12T00:00:00.000Z'),
+          returnedAt: null,
+        }),
+      });
+      expect(prisma.customer.update).toHaveBeenCalledWith({
+        where: { id: CUSTOMER },
+        data: { stores: { connect: { id: STORE } } },
+      });
+      expect(debt.id).toBe(DEBT);
+    });
+
+    it('keeps the repay-by date', async () => {
+      await service.createCustomerDebt(
+        dto({ createdAt: '2026-09-12T00:00:00.000Z', returnedAt: '2026-11-28T18:59:59.999Z' }),
+        manager,
+      );
+      expect(prisma.customerDebt.create.mock.calls[0][0].data.returnedAt).toEqual(
+        new Date('2026-11-28T18:59:59.999Z'),
+      );
+    });
+
+    it('rejects another store, future date, term before creation and unknown customer', async () => {
+      const other = '22222222-2222-4222-8222-222222222222';
+      await expect(service.createCustomerDebt(dto({ storeId: other }), manager)).rejects.toThrow('Wrong StoreId given!');
+      await expect(
+        service.createCustomerDebt(dto({ createdAt: new Date(Date.now() + 2 * DAY).toISOString() }), manager),
+      ).rejects.toThrow('в будущем');
+      await expect(
+        service.createCustomerDebt(
+          dto({ createdAt: '2026-09-12T00:00:00.000Z', returnedAt: '2026-09-10T00:00:00.000Z' }),
+          manager,
+        ),
+      ).rejects.toThrow('раньше даты создания');
+      prisma.customer.findUnique.mockResolvedValue(null);
+      await expect(service.createCustomerDebt(dto(), manager)).rejects.toThrow('Клиент не найден');
+      expect(prisma.customerDebt.create).not.toHaveBeenCalled();
+    });
+
+    it('needs storeId from an admin', async () => {
+      const admin = { role: UserRole.ADMIN, staff: null } as unknown as CurrentUser;
+      await expect(service.createCustomerDebt(dto(), admin)).rejects.toThrow('storeId is required');
+      await service.createCustomerDebt(dto({ storeId: STORE }), admin);
+      expect(prisma.customerDebt.create.mock.calls[0][0].data.storeId).toBe(STORE);
+    });
   });
 
   describe('createDebtPayment', () => {
@@ -176,6 +253,7 @@ describe('DebtService', () => {
           totalAmount: 2400000,
           paidAmount: 0,
           createdAt: new Date(now - 29 * DAY),
+          returnedAt: new Date(now - DAY),
           payments: [],
         },
       ]);
@@ -203,7 +281,10 @@ describe('DebtService', () => {
         debtsCount: 1,
         ageDays: 29,
         lastPaymentAt: null,
+        overdue: true,
       });
+      expect(res.data[1].dueAt).toBeInstanceOf(Date);
+      expect(res.data[0]).toMatchObject({ dueAt: null, overdue: false });
     });
 
     it('counts DEBT orders without a customer as a separate row in the totals', async () => {
@@ -280,6 +361,7 @@ describe('DebtService', () => {
           paidAmount: 0,
           description: 'Старый долг',
           createdAt: new Date('2026-09-01'),
+          returnedAt: new Date('2999-01-01'),
           payments: [],
         },
       ]);
@@ -290,6 +372,8 @@ describe('DebtService', () => {
         ['MANUAL', 'd1', 500000],
         ['ORDER', 'o1', 2000000],
       ]);
+      expect(res.debts[0]).toMatchObject({ dueAt: new Date('2999-01-01'), overdue: false });
+      expect(res.debts[1]).toMatchObject({ dueAt: null, overdue: false });
       expect(res.debts[1].payments[0]).toMatchObject({
         amount: 1000000,
         createdBy: 'Кассир',

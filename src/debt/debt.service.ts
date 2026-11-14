@@ -1,8 +1,17 @@
-import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+} from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { CreateDebtDto, CreateDebtPaymentDto } from './dto/create-debt.dto';
 import { PrismaService } from '@prisma/prisma.service';
-import { CashTransactionCategory, CashTransactionType, DebtStatus, OrderStatus } from '@generated/enums';
+import {
+  CashTransactionCategory,
+  CashTransactionType,
+  DebtStatus,
+  OrderStatus,
+} from '@generated/enums';
 import { Prisma } from '@generated/client';
 import { resolvePaymentCashbox } from 'src/cashbox/payment-cashbox';
 import { resolveDateRange } from '@shared/dto/date-range.dto';
@@ -11,35 +20,79 @@ import { DebtQueryParams, DebtorsQueryParams } from './dto/param.dto';
 
 @Injectable()
 export class DebtService {
-
   constructor(
     private readonly prisma: PrismaService,
     @InjectPinoLogger(DebtService.name) private readonly logger: PinoLogger,
-  ) { }
+  ) {}
 
+  /**
+   * Manual debt (existed before STHM). Owner/manager (guarded in the
+   * controller). Store from the token; createdAt may be backdated but not in
+   * the future; returnedAt — optional term, not before createdAt. The
+   * customer gets linked to the store.
+   */
   async createCustomerDebt(dto: CreateDebtDto, user: CurrentUser) {
     try {
-      if (user.staff && user.staff.storeId !== dto.storeId) {
-        throw new BadRequestException('Wrong StoreId given!')
+      const storeId = user.staff ? user.staff.storeId : dto.storeId;
+      if (!storeId) {
+        throw new BadRequestException('storeId is required');
+      }
+      if (user.staff && dto.storeId && dto.storeId !== storeId) {
+        throw new BadRequestException('Wrong StoreId given!');
       }
 
-      const debt = await this.prisma.customerDebt.create({
-        data: {
-          storeId: dto.storeId,
-          customerId: dto.customerId,
-          description: dto.description ?? null,
-          totalAmount: dto.amount,
-          paidAmount: 0,
-          status: DebtStatus.ACTIVE,
-          createdAt: dto.createdAt ?? new Date(),
-          returnedAt: dto.returnedAt ?? new Date(),
-        }
+      const now = new Date();
+      const createdAt = dto.createdAt ? new Date(dto.createdAt) : now;
+      const returnedAt = dto.returnedAt ? new Date(dto.returnedAt) : null;
+      if (createdAt.getTime() > now.getTime() + FUTURE_SLACK_MS) {
+        throw new BadRequestException(
+          'Дата создания долга не может быть в будущем',
+        );
+      }
+      if (returnedAt && returnedAt < createdAt) {
+        throw new BadRequestException(
+          'Дата возврата не может быть раньше даты создания',
+        );
+      }
+
+      const customer = await this.prisma.customer.findUnique({
+        where: { id: dto.customerId },
+        select: { id: true },
       });
-      this.logger.info({ debtId: debt.id, customerId: dto.customerId, amount: dto.amount }, 'Customer debt created');
+      if (!customer) {
+        throw new BadRequestException('Клиент не найден');
+      }
+
+      const [debt] = await this.prisma.$transaction([
+        this.prisma.customerDebt.create({
+          data: {
+            storeId,
+            customerId: dto.customerId,
+            description: dto.description?.trim() || null,
+            totalAmount: dto.amount,
+            paidAmount: 0,
+            status: DebtStatus.ACTIVE,
+            createdAt,
+            returnedAt,
+          },
+        }),
+        // A customer found by the full phone may belong to another store
+        this.prisma.customer.update({
+          where: { id: dto.customerId },
+          data: { stores: { connect: { id: storeId } } },
+        }),
+      ]);
+      this.logger.info(
+        { debtId: debt.id, customerId: dto.customerId, amount: dto.amount },
+        'Customer debt created',
+      );
       return debt;
     } catch (err: any) {
-      this.logger.error({ customerId: dto.customerId, err: err.message }, 'Failed to create customer debt');
-      throw new BadRequestException(err.response || err.message)
+      this.logger.error(
+        { customerId: dto.customerId, err: err.message },
+        'Failed to create customer debt',
+      );
+      throw new BadRequestException(err.response || err.message);
     }
   }
 
@@ -49,10 +102,15 @@ export class DebtService {
    * ACTIVE and the payment may not exceed what is left.
    */
   async createDebtPayment(dto: CreateDebtPaymentDto, user: CurrentUser) {
-    this.logger.debug({ debtId: dto.debtId, cashboxId: dto.cashboxId }, 'Processing debt payment');
+    this.logger.debug(
+      { debtId: dto.debtId, cashboxId: dto.cashboxId },
+      'Processing debt payment',
+    );
     const staff = this.requireStaff(user);
     try {
-      const debt = await this.prisma.customerDebt.findUnique({ where: { id: dto.debtId } });
+      const debt = await this.prisma.customerDebt.findUnique({
+        where: { id: dto.debtId },
+      });
       if (!debt) {
         throw new BadRequestException('Долг не найден');
       }
@@ -62,7 +120,10 @@ export class DebtService {
       if (debt.status !== DebtStatus.ACTIVE) {
         throw new BadRequestException('Долг уже погашен');
       }
-      const totalPaymentAmount = dto.payments.reduce((sum, payment) => sum + +payment.amount, 0);
+      const totalPaymentAmount = dto.payments.reduce(
+        (sum, payment) => sum + +payment.amount,
+        0,
+      );
       const remaining = +debt.totalAmount - +debt.paidAmount;
       if (totalPaymentAmount > remaining) {
         throw new BadRequestException('Сумма оплаты больше остатка долга');
@@ -106,20 +167,44 @@ export class DebtService {
           where: { id: debt.id },
           data: {
             paidAmount: { increment: totalPaymentAmount },
-            status: newPaidAmount >= +debt.totalAmount ? DebtStatus.PAID : DebtStatus.ACTIVE,
+            status:
+              newPaidAmount >= +debt.totalAmount
+                ? DebtStatus.PAID
+                : DebtStatus.ACTIVE,
           },
         });
-        this.logger.info({ debtId: debt.id, amount: totalPaymentAmount, status: updated.status, cashboxId: cashBox.id }, 'Debt payment processed');
+        this.logger.info(
+          {
+            debtId: debt.id,
+            amount: totalPaymentAmount,
+            status: updated.status,
+            cashboxId: cashBox.id,
+          },
+          'Debt payment processed',
+        );
         return updated;
       });
     } catch (error: any) {
-      this.logger.error({ debtId: dto.debtId, err: error.message }, 'Failed to process debt payment');
+      this.logger.error(
+        { debtId: dto.debtId, err: error.message },
+        'Failed to process debt payment',
+      );
       if (error instanceof ForbiddenException) throw error;
       throw new BadRequestException(error.response || error.message);
     }
   }
 
-  async findAll({ pageSize = 10, currentPage = 1, status, customerId, fromDate, toDate }: DebtQueryParams, user: CurrentUser) {
+  async findAll(
+    {
+      pageSize = 10,
+      currentPage = 1,
+      status,
+      customerId,
+      fromDate,
+      toDate,
+    }: DebtQueryParams,
+    user: CurrentUser,
+  ) {
     const staff = this.requireStaff(user);
     try {
       const where: Prisma.CustomerDebtWhereInput = { storeId: staff.storeId };
@@ -145,7 +230,12 @@ export class DebtService {
         }),
         this.prisma.customerDebt.count({ where }),
       ]);
-      return { data: result, total, currentPage: +currentPage, pageSize: +pageSize };
+      return {
+        data: result,
+        total,
+        currentPage: +currentPage,
+        pageSize: +pageSize,
+      };
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message);
     }
@@ -178,7 +268,9 @@ export class DebtService {
     const staff = this.requireStaff(user);
     const storeId = staff.storeId;
     try {
-      const { from, to } = params.from ? resolveDateRange(params) : currentMonthRange();
+      const { from, to } = params.from
+        ? resolveDateRange(params)
+        : currentMonthRange();
       const [orders, debts, paid] = await Promise.all([
         this.prisma.order.findMany({
           where: { storeId, status: OrderStatus.DEBT },
@@ -189,8 +281,14 @@ export class DebtService {
             returnedAmount: true,
             soldAt: true,
             createdAt: true,
-            customer: { select: { user: { select: { fullName: true, phone: true } } } },
-            payments: { select: { createdAt: true }, orderBy: { createdAt: 'desc' }, take: 1 },
+            customer: {
+              select: { user: { select: { fullName: true, phone: true } } },
+            },
+            payments: {
+              select: { createdAt: true },
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+            },
           },
         }),
         this.prisma.customerDebt.findMany({
@@ -200,8 +298,15 @@ export class DebtService {
             totalAmount: true,
             paidAmount: true,
             createdAt: true,
-            customer: { select: { user: { select: { fullName: true, phone: true } } } },
-            payments: { select: { createdAt: true }, orderBy: { createdAt: 'desc' }, take: 1 },
+            returnedAt: true,
+            customer: {
+              select: { user: { select: { fullName: true, phone: true } } },
+            },
+            payments: {
+              select: { createdAt: true },
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+            },
           },
         }),
         this.prisma.cashTransaction.aggregate({
@@ -227,6 +332,7 @@ export class DebtService {
         since: Date,
         lastPayment: Date | undefined,
         kind: 'order' | 'manual',
+        dueAt: Date | null = null,
       ) => {
         if (remaining <= 0) return;
         if (since.getTime() < over30Before) over30 += remaining;
@@ -240,19 +346,28 @@ export class DebtService {
           lastPaymentAt: null,
           since,
           ageDays: 0,
+          dueAt: null,
+          overdue: false,
         };
         row.total += remaining;
+        if (dueAt && (!row.dueAt || dueAt < row.dueAt)) row.dueAt = dueAt;
         if (kind === 'order') row.ordersCount += 1;
         else row.debtsCount += 1;
         if (since < row.since) row.since = since;
-        if (lastPayment && (!row.lastPaymentAt || lastPayment > row.lastPaymentAt)) {
+        if (
+          lastPayment &&
+          (!row.lastPaymentAt || lastPayment > row.lastPaymentAt)
+        ) {
           row.lastPaymentAt = lastPayment;
         }
         byCustomer.set(customerId, row);
       };
 
       // DEBT orders without a customer: one separate row
-      let unassigned: Omit<DebtorRow, 'customerId' | 'fullName' | 'phone' | 'debtsCount'> | null = null;
+      let unassigned: Omit<
+        DebtorRow,
+        'customerId' | 'fullName' | 'phone' | 'debtsCount' | 'dueAt' | 'overdue'
+      > | null = null;
       for (const o of orders) {
         if (!o.customerId || !o.customer) {
           const remaining = +o.totalAmount - +o.returnedAmount - +o.paidAmount;
@@ -260,11 +375,21 @@ export class DebtService {
           const since = o.soldAt ?? o.createdAt;
           const lastPayment = o.payments[0]?.createdAt;
           if (since.getTime() < over30Before) over30 += remaining;
-          unassigned ??= { total: 0, ordersCount: 0, lastPaymentAt: null, since, ageDays: 0 };
+          unassigned ??= {
+            total: 0,
+            ordersCount: 0,
+            lastPaymentAt: null,
+            since,
+            ageDays: 0,
+          };
           unassigned.total += remaining;
           unassigned.ordersCount += 1;
           if (since < unassigned.since) unassigned.since = since;
-          if (lastPayment && (!unassigned.lastPaymentAt || lastPayment > unassigned.lastPaymentAt)) {
+          if (
+            lastPayment &&
+            (!unassigned.lastPaymentAt ||
+              lastPayment > unassigned.lastPaymentAt)
+          ) {
             unassigned.lastPaymentAt = lastPayment;
           }
           continue;
@@ -279,22 +404,41 @@ export class DebtService {
         );
       }
       for (const d of debts) {
-        add(d.customerId, d.customer.user, +d.totalAmount - +d.paidAmount, d.createdAt, d.payments[0]?.createdAt, 'manual');
+        add(
+          d.customerId,
+          d.customer.user,
+          +d.totalAmount - +d.paidAmount,
+          d.createdAt,
+          d.payments[0]?.createdAt,
+          'manual',
+          d.returnedAt,
+        );
       }
 
       const all = [...byCustomer.values()].map((row) => ({
         ...row,
         ageDays: Math.floor((now - row.since.getTime()) / DAY_MS),
+        overdue: !!row.dueAt && row.dueAt.getTime() < now,
       }));
       const search = params.search?.trim().toLowerCase();
-      const data = (search
-        ? all.filter((r) => r.fullName.toLowerCase().includes(search) || r.phone.toLowerCase().includes(search))
-        : all
-      ).sort((a, b) => (params.sort === 'date' ? a.since.getTime() - b.since.getTime() : b.total - a.total));
+      const data = (
+        search
+          ? all.filter(
+              (r) =>
+                r.fullName.toLowerCase().includes(search) ||
+                r.phone.toLowerCase().includes(search),
+            )
+          : all
+      ).sort((a, b) =>
+        params.sort === 'date'
+          ? a.since.getTime() - b.since.getTime()
+          : b.total - a.total,
+      );
 
       return {
         summary: {
-          total: all.reduce((sum, r) => sum + r.total, 0) + (unassigned?.total ?? 0),
+          total:
+            all.reduce((sum, r) => sum + r.total, 0) + (unassigned?.total ?? 0),
           customers: all.length,
           over30,
           paidInPeriod: Number(paid._sum.amount ?? 0),
@@ -303,7 +447,10 @@ export class DebtService {
         },
         data,
         unassigned: unassigned
-          ? { ...unassigned, ageDays: Math.floor((now - unassigned.since.getTime()) / DAY_MS) }
+          ? {
+              ...unassigned,
+              ageDays: Math.floor((now - unassigned.since.getTime()) / DAY_MS),
+            }
           : null,
       };
     } catch (error: any) {
@@ -322,10 +469,14 @@ export class DebtService {
       const customer = customerId
         ? await this.prisma.customer.findUnique({
             where: { id: customerId },
-            select: { id: true, user: { select: { fullName: true, phone: true } } },
+            select: {
+              id: true,
+              user: { select: { fullName: true, phone: true } },
+            },
           })
         : null;
-      if (customerId && !customer) throw new BadRequestException('Customer not found');
+      if (customerId && !customer)
+        throw new BadRequestException('Customer not found');
 
       const paymentSelect = {
         id: true,
@@ -346,12 +497,23 @@ export class DebtService {
         customerId
           ? this.prisma.customerDebt.findMany({
               where: { storeId, customerId, status: DebtStatus.ACTIVE },
-              include: { payments: { select: paymentSelect, orderBy: { createdAt: 'asc' } } },
+              include: {
+                payments: {
+                  select: paymentSelect,
+                  orderBy: { createdAt: 'asc' },
+                },
+              },
             })
           : Promise.resolve([]),
       ]);
 
-      const toPayment = (p: { id: string; amount: Prisma.Decimal; type: string; createdAt: Date; cashier: { user: { fullName: string } } | null }) => ({
+      const toPayment = (p: {
+        id: string;
+        amount: Prisma.Decimal;
+        type: string;
+        createdAt: Date;
+        cashier: { user: { fullName: string } } | null;
+      }) => ({
         id: p.id,
         amount: Number(p.amount),
         type: p.type,
@@ -370,6 +532,8 @@ export class DebtService {
             total,
             paid: +o.paidAmount,
             remaining: total - +o.paidAmount,
+            dueAt: null,
+            overdue: false,
             payments: o.payments.map(toPayment),
           };
         }),
@@ -382,6 +546,8 @@ export class DebtService {
           total: +d.totalAmount,
           paid: +d.paidAmount,
           remaining: +d.totalAmount - +d.paidAmount,
+          dueAt: d.returnedAt,
+          overdue: !!d.returnedAt && d.returnedAt.getTime() < Date.now(),
           payments: d.payments.map(toPayment),
         })),
       ]
@@ -390,7 +556,11 @@ export class DebtService {
 
       return {
         customer: customer
-          ? { id: customer.id, fullName: customer.user.fullName, phone: customer.user.phone }
+          ? {
+              id: customer.id,
+              fullName: customer.user.fullName,
+              phone: customer.user.phone,
+            }
           : null,
         total: items.reduce((sum, i) => sum + i.remaining, 0),
         debts: items,
@@ -407,6 +577,8 @@ export class DebtService {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** Clock skew allowed for a «now» createdAt sent by a client */
+const FUTURE_SLACK_MS = 5 * 60 * 1000;
 
 interface DebtorRow {
   customerId: string;
@@ -420,6 +592,10 @@ interface DebtorRow {
   /** Date of the oldest open debt */
   since: Date;
   ageDays: number;
+  /** Nearest repay-by date of the open manual debts (orders have none) */
+  dueAt: Date | null;
+  /** dueAt has passed */
+  overdue: boolean;
 }
 
 /** The current calendar month (server time) — default period for «paid». */
