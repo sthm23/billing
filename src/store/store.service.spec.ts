@@ -5,7 +5,7 @@ import { StaffRole, UserRole, UserType } from '@generated/enums';
 import { PrismaService } from '@prisma/prisma.service';
 import { HashingHelper } from '@shared/helper/hash.helper';
 import type { CurrentUser } from '@auth/models/auth.model';
-import { CreateStaffDto } from './dto/create-store.dto';
+import { CreateStaffDto, CreateStoreDto } from './dto/create-store.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
 import { StoreService } from './store.service';
 
@@ -45,7 +45,8 @@ describe('StoreService', () => {
   let service: StoreService;
   const prisma = {
     warehouse: { findFirst: jest.fn() },
-    user: { findFirst: jest.fn(), create: jest.fn() },
+    user: { findFirst: jest.fn(), findUnique: jest.fn(), create: jest.fn() },
+    category: { findUnique: jest.fn() },
     store: { findUnique: jest.fn(), update: jest.fn() },
     $transaction: jest.fn(),
   };
@@ -191,6 +192,29 @@ describe('StoreService', () => {
         ),
       ).rejects.toThrow('sales or rental');
       expect(prisma.store.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('createStore', () => {
+    it('rejects a subcategory as the store direction', async () => {
+      prisma.user.findUnique.mockResolvedValue({ id: 'owner' });
+      prisma.category.findUnique.mockResolvedValue({
+        id: 'sub',
+        parentId: 'direction',
+      });
+      await expect(
+        service.createStore(
+          {
+            name: 'Shop',
+            ownerId: 'owner',
+            categoryId: 'sub',
+            brandIds: [],
+            attributeIds: [],
+          } as unknown as CreateStoreDto,
+          'admin',
+        ),
+      ).rejects.toThrow('direction');
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
   });
 });

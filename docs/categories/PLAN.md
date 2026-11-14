@@ -5,6 +5,8 @@
 > **Этап 2 (backend API) — сделан 2026-11-13**: `POST /category/subcategory`, `PATCH`/`DELETE /category/subcategory/:id`, 2-уровневые ответы с `nameUz`/`nameEn`, проверка категории в `POST /product`, SKU из имени в БД, `categoryI18n` в товарах; тесты в `category-attributes.service.spec.ts` и `product.service.spec.ts`; `docs/api-map.md`, `docs/security.md`, `docs/features/products.md` обновлены. Уточнения к плану: строку категории присылал `CreateProductVariantDto.category` (не `CreateProductDto`) — теперь optional и игнорируется; ручки, меняющей категорию у существующего товара, нет — проверка только при создании. Дальше — этап 3 (mobile).
 >
 > **Этап 3 (mobile) — сделан 2026-11-13**: `services/category/` (хуки + инвалидация), `libs/category.ts` (`categoryLabel`), `components/product/CategorySheet.tsx` (ждёт формы товара), чипы списка товаров = подкатегории направления («Мало» перенесён перед ними), админ «Каталог» → `SubcategorySheet` (rename/переводы/delete), блок `category` из локалей удалён. Нужна проверка на устройстве. Дальше — этап 4 (web).
+>
+> **Этап 4 (web) — сделан 2026-11-14**: `product-create` — направления в дереве не выбираются (`selectable: false`), только подкатегория; названия по `name`; `product-variant` показывает `product.category` без `category.*` ключа; `org-create` предлагает только направления. Плюс бэкенд: `POST /store` (web org-create) отклоняет подкатегорию как направление магазина → 400 (тест в `store.service.spec.ts`). `ng build` проходит. Остался этап 5 — документация в основном уже обновлена по ходу.
 > Читать вместе с: `docs/features/products.md` («Categories and Attributes»), `docs/security.md`, `billing/docs/DATABASE.md`.
 
 ## Решения владельца продукта

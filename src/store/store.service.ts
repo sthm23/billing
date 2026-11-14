@@ -39,6 +39,12 @@ export class StoreService {
       if (!category) {
         throw new NotFoundException('Category not found');
       }
+      // A store direction is a top-level category; subcategories belong to products
+      if (category.parentId) {
+        throw new BadRequestException(
+          'Store category must be a direction (top level)',
+        );
+      }
 
       return this.prisma.$transaction(async (tx) => {
         const store = await tx.store.create({
