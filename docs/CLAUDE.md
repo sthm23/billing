@@ -105,7 +105,7 @@ This folder contains **legacy detailed documentation** that may still be useful 
 ### Tech Stack
 - **Backend**: NestJS 10+ + Prisma 6 + PostgreSQL 17
 - **Auth**: JWT (access + refresh tokens) via Passport
-- **Storage**: AWS S3 (LocalStack в dev)
+- **Storage**: Uztelecom Object Storage (S3-совместимое)
 - **Container**: Docker Compose
 
 ### Path Aliases

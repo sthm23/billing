@@ -1583,19 +1583,10 @@ Authorization: Bearer <access_token>
 
 ## 10. File Module (`/api/file`)
 
-### POST /file/upload
-**Требует JWT + Staff**
+### POST /image/upload
+**Требует JWT + OWNER/MANAGER**
 
-Загрузка файла в S3.
-
-**Request**: multipart/form-data с полем `file`
-
-**Response**:
-```json
-{
-  "url": "https://s3.amazonaws.com/bucket/file.jpg"
-}
-```
+Устарело: актуальный контракт (presigned PUT в Uztelecom Object Storage, 1–5 файлов, ≤ 5 MB, jpeg/png/webp) — [docs/api-map.md → POST /image/upload](../../docs/api-map.md#post-imageupload).
 
 ---
 

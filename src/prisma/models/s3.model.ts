@@ -1,15 +1,12 @@
-
-
 export interface PresignedUrlResult {
-    url: string;
-    expiresIn: number;
-}
-export interface S3KeyParams {
-    storeId: string;
-    imgName: string;
-    pathName: string;
+  /** Presigned PUT URL */
+  url: string;
+  /** Object key; send it back in `images` when creating the product */
+  key: string;
+  expiresIn: number;
 }
 
-export interface UploadFileParam extends S3KeyParams {
-    mimetype: string;
+export interface S3ObjectInfo {
+  size: number;
+  contentType: string;
 }

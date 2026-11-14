@@ -3,6 +3,8 @@
 > Статус: план согласован 2026-11-12, открытые вопросы закрыты 2026-11-13.
 > **Этап 1 (схема и сид) — сделан 2026-11-13**: миграция `20261113120000_category_two_levels`, сид `CATEGORY_TREE`; проверено на копии старого дерева и на чистой базе.
 > **Этап 2 (backend API) — сделан 2026-11-13**: `POST /category/subcategory`, `PATCH`/`DELETE /category/subcategory/:id`, 2-уровневые ответы с `nameUz`/`nameEn`, проверка категории в `POST /product`, SKU из имени в БД, `categoryI18n` в товарах; тесты в `category-attributes.service.spec.ts` и `product.service.spec.ts`; `docs/api-map.md`, `docs/security.md`, `docs/features/products.md` обновлены. Уточнения к плану: строку категории присылал `CreateProductVariantDto.category` (не `CreateProductDto`) — теперь optional и игнорируется; ручки, меняющей категорию у существующего товара, нет — проверка только при создании. Дальше — этап 3 (mobile).
+>
+> **Этап 3 (mobile) — сделан 2026-11-13**: `services/category/` (хуки + инвалидация), `libs/category.ts` (`categoryLabel`), `components/product/CategorySheet.tsx` (ждёт формы товара), чипы списка товаров = подкатегории направления («Мало» перенесён перед ними), админ «Каталог» → `SubcategorySheet` (rename/переводы/delete), блок `category` из локалей удалён. Нужна проверка на устройстве. Дальше — этап 4 (web).
 > Читать вместе с: `docs/features/products.md` («Categories and Attributes»), `docs/security.md`, `billing/docs/DATABASE.md`.
 
 ## Решения владельца продукта

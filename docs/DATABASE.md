@@ -403,7 +403,7 @@ model ProductVariant {
 model ProductImage {
   id        String  @id @default(uuid())
   productId String
-  url       String  // S3 URL
+  key       String  // ключ объекта в хранилище: products/<storeId>/<file>
   isMain    Boolean @default(false)
   order     Int     @default(0)
   
@@ -414,7 +414,9 @@ model ProductImage {
 ```
 
 **Логика**:
-- Первая картинка помечается `isMain: true`
+- Первая картинка помечается `isMain: true`, `order` = позиция в `images` запроса `POST /product`
+- Хранится **ключ**, не URL (2026-11-13, миграция `20261113150000_product_image_key`: колонка `url` → `key`, все старые строки с AWS-URL удалены). Публичный URL строит backend: `S3_PUBLIC_URL/<key>`; API по-прежнему отдаёт `images: [{ id, isMain, url }]`
+- Файлы лежат в Uztelecom Object Storage (S3-совместимое); правила загрузки — [docs/security.md → File Uploads and S3](../../docs/security.md#file-uploads-and-s3)
 
 ---
 
@@ -1623,5 +1625,5 @@ ORDER BY sm.created_at DESC;
 
 ---
 
-**Последнее обновление**: 2026-11-10  
+**Последнее обновление**: 2026-11-13  
 **Версия схемы**: Prisma 6 / PostgreSQL 17

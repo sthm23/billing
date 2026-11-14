@@ -11,7 +11,7 @@
 - **Database**: PostgreSQL 17
 - **Auth**: JWT (access + refresh tokens) via Passport; access token bound to its `RefreshSession` (`sid`)
 - **Rate limiting**: `@nestjs/throttler` ^6.7.1 — auth routes only (`src/auth/auth-throttle.ts`)
-- **File Storage**: AWS S3 (LocalStack in dev)
+- **File Storage**: Uztelecom Object Storage (S3-compatible, `@aws-sdk/client-s3` with `S3_ENDPOINT`); product photos only, presigned PUT — see `docs/security.md` → File Uploads and S3
 - **Container**: Docker Compose for PostgreSQL
 
 ---
@@ -524,9 +524,12 @@ JWT_ACCESS_EXPIRE=15m
 JWT_REFRESH_SECRET=your-refresh-secret
 JWT_REFRESH_EXPIRE=7d
 AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=test
-AWS_SECRET_ACCESS_KEY=test
-AWS_BUCKET=billing-bucket
+AWS_ACCESS_KEY_ID=<storage-access-key>
+AWS_SECRET_ACCESS_KEY=<storage-secret-key>
+AWS_S3_BUCKET_NAME=sthm-media-dev            # prod: sthm-media; created by hand, not on startup
+AWS_S3_FORCE_PATH_STYLE=true
+S3_ENDPOINT=https://s3.uztelecom.uz          # omit → AWS
+S3_PUBLIC_URL=https://s3.uztelecom.uz/sthm-media-dev   # public base INCLUDING the bucket
 PORT=4000
 ```
 

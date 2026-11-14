@@ -54,6 +54,7 @@ import {
   toLocalDate,
 } from './rental-days';
 import { ReturnSettlement, settleReturn } from './rental-return';
+import { FileHelper } from '@shared/helper/file.helper';
 
 type Db = Prisma.TransactionClient;
 type Decimal = Prisma.Decimal;
@@ -113,7 +114,7 @@ const LIST_INCLUDE = {
                   images: {
                     orderBy: [{ isMain: 'desc' }, { order: 'asc' }],
                     take: 1,
-                    select: { url: true },
+                    select: { key: true },
                   },
                 },
               },
@@ -126,6 +127,11 @@ const LIST_INCLUDE = {
 } satisfies Prisma.RentalInclude;
 
 type ListRental = Prisma.RentalGetPayload<{ include: typeof LIST_INCLUDE }>;
+
+/** First (main) product image row → public URL */
+function imageUrl(images: { key: string }[]): string | null {
+  return images[0] ? FileHelper.toPublicUrl(images[0].key) : null;
+}
 
 function toListRow({ order, ...rental }: ListRental, now: number) {
   return {
@@ -155,7 +161,7 @@ function toListRow({ order, ...rental }: ListRental, now: number) {
     items: order.items.map((i) => ({
       variantId: i.variant.id,
       productName: i.variant.product.name,
-      imageUrl: i.variant.product.images[0]?.url ?? null,
+      imageUrl: imageUrl(i.variant.product.images),
       quantity: i.quantity,
     })),
   };
@@ -1948,7 +1954,7 @@ export class RentalService {
           images: {
             orderBy: [{ isMain: 'desc' }, { order: 'asc' }],
             take: 1,
-            select: { url: true },
+            select: { key: true },
           },
         },
       },
@@ -1999,7 +2005,7 @@ export class RentalService {
         sku: v.sku,
         productId: v.product.id,
         productName: v.product.name,
-        imageUrl: v.product.images[0]?.url ?? null,
+        imageUrl: imageUrl(v.product.images),
         rentPricePerDay: v.rentPricePerDay,
         attributes: v.attributes.map((a) => ({
           name: a.value.attribute.name,

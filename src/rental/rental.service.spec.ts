@@ -686,13 +686,14 @@ describe('RentalService', () => {
                 quantity: 2,
                 variant: {
                   id: DRESS,
-                  product: { name: 'Aurora', images: [{ url: 'a.jpg' }] },
+                  product: { name: 'Aurora', images: [{ key: 'products/s/a.jpg' }] },
                 },
               },
             ],
           },
         },
       ]);
+      process.env.S3_PUBLIC_URL = 'https://s3.example.uz/sthm-media';
       const res = await service.findAll({}, makeUser(StaffRole.OWNER));
       expect(res.data[0]).toMatchObject({
         code: RENTAL.slice(0, 6).toUpperCase(),
@@ -701,7 +702,7 @@ describe('RentalService', () => {
           {
             variantId: DRESS,
             productName: 'Aurora',
-            imageUrl: 'a.jpg',
+            imageUrl: 'https://s3.example.uz/sthm-media/products/s/a.jpg',
             quantity: 2,
           },
         ],

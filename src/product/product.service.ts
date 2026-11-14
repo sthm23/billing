@@ -26,6 +26,13 @@ import { UpdateProductVariantPriceDTO } from './dto/update-product.dto';
 import { ProductListParams } from './dto/product-list-params.dto';
 import { LOW_STOCK_THRESHOLD } from './product.constants';
 import { assertWarehouseAccess } from '@shared/helper/warehouse-access.helper';
+import { S3Service } from '@prisma/s3.service';
+import {
+  FileHelper,
+  PRODUCT_IMAGE_MAX_COUNT,
+  PRODUCT_IMAGE_MAX_SIZE,
+  PRODUCT_IMAGE_MIME_TYPES,
+} from '@shared/helper/file.helper';
 
 /** Category label in every language; the client picks one (falls back to `name`, Russian). */
 function categoryI18n(
@@ -45,8 +52,56 @@ export class ProductService {
   constructor(
     private prisma: PrismaService,
     private barcodeService: BarcodeService,
+    private s3Service: S3Service,
     @InjectPinoLogger(ProductService.name) private readonly logger: PinoLogger,
   ) {}
+
+  /**
+   * Client image values (keys, or full URLs under S3_PUBLIC_URL from the legacy web) → object keys.
+   * Each key must be under `products/<storeId>/` and already uploaded (HEAD): image type, ≤ 5 MB.
+   */
+  private async resolveImageKeys(
+    images: string[],
+    storeId: string,
+  ): Promise<string[]> {
+    if (images.length > PRODUCT_IMAGE_MAX_COUNT) {
+      throw new BadRequestException(
+        `At most ${PRODUCT_IMAGE_MAX_COUNT} images per product`,
+      );
+    }
+    const prefix = FileHelper.productImagePrefix(storeId);
+    const keys = images.map((value) => {
+      const key = FileHelper.toKey(value);
+      if (!key || !key.startsWith(prefix) || key.includes('..')) {
+        throw new BadRequestException('Invalid product image');
+      }
+      return key;
+    });
+    if (new Set(keys).size !== keys.length) {
+      throw new BadRequestException('Duplicate product image');
+    }
+    const heads = await Promise.all(
+      keys.map((key) => this.s3Service.headObject(key)),
+    );
+    heads.forEach((head) => {
+      if (!head) throw new BadRequestException('Product image is not uploaded');
+      if (head.size > PRODUCT_IMAGE_MAX_SIZE) {
+        throw new BadRequestException('Image must be 5 MB or smaller');
+      }
+      if (!PRODUCT_IMAGE_MIME_TYPES.includes(head.contentType)) {
+        throw new BadRequestException('Only JPEG, PNG or WebP images are allowed');
+      }
+    });
+    return keys;
+  }
+
+  /** DB image rows (key) → API shape (url) */
+  private toImageResponse(images: { id: string; key: string; isMain: boolean }[]) {
+    return images.map(({ key, ...image }) => ({
+      ...image,
+      url: FileHelper.toPublicUrl(key),
+    }));
+  }
 
   async createProduct(
     dto: CreateProductDto,
@@ -59,6 +114,10 @@ export class ProductService {
     });
     if (!warehouse) throw new NotFoundException('Warehouse not found');
     await this.assertStoreSubcategory(dto.categoryId, warehouse.storeId);
+    const imageKeys = await this.resolveImageKeys(
+      dto.images ?? [],
+      warehouse.storeId,
+    );
     try {
       const product = await this.prisma.product.create({
         data: {
@@ -70,8 +129,9 @@ export class ProductService {
           description: dto.description ?? null,
           images: {
             createMany: {
-              data: dto.images.map((url, index) => ({
-                url,
+              data: imageKeys.map((key, index) => ({
+                key,
+                order: index,
                 isMain: index === 0,
               })),
             },
@@ -349,8 +409,9 @@ export class ProductService {
         },
         include: {
           images: {
+            orderBy: [{ isMain: 'desc' }, { order: 'asc' }],
             select: {
-              url: true,
+              key: true,
               isMain: true,
               id: true,
             },
@@ -405,7 +466,7 @@ export class ProductService {
             })),
             name: product.name,
             id: product.id,
-            images: product.images,
+            images: this.toImageResponse(product.images),
             createdAt: product.createdAt,
             warehouseId: product.warehouseId,
             warehouse: product.warehouse,
@@ -436,8 +497,9 @@ export class ProductService {
         where: { id },
         include: {
           images: {
+            orderBy: [{ isMain: 'desc' }, { order: 'asc' }],
             select: {
-              url: true,
+              key: true,
               isMain: true,
               id: true,
             },
@@ -535,7 +597,7 @@ export class ProductService {
         category: product.category?.name,
         categoryI18n: categoryI18n(product.category),
         description: product.description,
-        images: product.images,
+        images: this.toImageResponse(product.images),
         attributes: product.attributes.map((a) => ({ ...a.attribute })),
         isArchived: product.isArchived,
         createdAt: product.createdAt,

@@ -17,7 +17,7 @@
 - **ORM**: Prisma 6
 - **Database**: PostgreSQL 17
 - **Authentication**: JWT (access + refresh tokens) via Passport
-- **File Storage**: AWS S3 (через LocalStack в dev)
+- **File Storage**: Uztelecom Object Storage (S3-совместимое, с 2026-11-13)
 - **Container**: Docker Compose для PostgreSQL
 
 ### Инструменты разработки
@@ -182,11 +182,14 @@ JWT_ACCESS_EXPIRE=15m
 JWT_REFRESH_SECRET=your-refresh-secret
 JWT_REFRESH_EXPIRE=7d
 
-# AWS S3 (LocalStack in dev)
+# Object Storage (Uztelecom, S3-compatible) — see billing/.env.example
 AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=test
-AWS_SECRET_ACCESS_KEY=test
-AWS_BUCKET=billing-bucket
+AWS_ACCESS_KEY_ID=<storage-access-key>
+AWS_SECRET_ACCESS_KEY=<storage-secret-key>
+AWS_S3_BUCKET_NAME=sthm-media-dev
+AWS_S3_FORCE_PATH_STYLE=true
+S3_ENDPOINT=https://s3.uztelecom.uz
+S3_PUBLIC_URL=https://s3.uztelecom.uz/sthm-media-dev
 
 # Server
 PORT=4000

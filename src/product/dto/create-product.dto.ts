@@ -1,5 +1,7 @@
 import { Type } from 'class-transformer';
+import { PRODUCT_IMAGE_MAX_COUNT } from '@shared/helper/file.helper';
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsBoolean,
@@ -116,9 +118,12 @@ export class CreateProductDto {
   @IsString()
   description?: string;
 
+  /** Object keys from POST /image/upload (a full URL under S3_PUBLIC_URL is accepted too) */
   @IsOptional()
   @IsArray()
-  images!: string[];
+  @ArrayMaxSize(PRODUCT_IMAGE_MAX_COUNT)
+  @IsString({ each: true })
+  images?: string[];
 
   @IsNotEmpty()
   @IsArray()

@@ -4,6 +4,7 @@ import { getLoggerToken } from 'nestjs-pino';
 import { StaffRole, UserRole, UserType } from '@generated/enums';
 import { PrismaService } from '@prisma/prisma.service';
 import { BarcodeService } from '@shared/helper/bar-code.service';
+import { S3Service } from '@prisma/s3.service';
 import type { CurrentUser } from '@auth/models/auth.model';
 import { Prisma } from '@generated/client';
 import {
@@ -54,6 +55,7 @@ describe('ProductService', () => {
     $transaction: jest.fn(),
     stockMovement: { count: jest.fn(), findMany: jest.fn(), create: jest.fn() },
   };
+  const s3 = { headObject: jest.fn() };
   const logger = {
     debug: jest.fn(),
     info: jest.fn(),
@@ -96,6 +98,7 @@ describe('ProductService', () => {
             generateUniqueBarcode: jest.fn().mockResolvedValue('200000000001'),
           },
         },
+        { provide: S3Service, useValue: s3 },
         { provide: getLoggerToken(ProductService.name), useValue: logger },
       ],
     }).compile();
@@ -525,6 +528,76 @@ describe('ProductService', () => {
         await expect(
           service.createProduct(dto, owner()),
         ).rejects.toBeInstanceOf(BadRequestException);
+        expect(prisma.product.create).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('images of a new product', () => {
+      const KEY = `products/${STORE}/1-2.webp`;
+      const make = (images: string[]) =>
+        ({
+          warehouseId: WAREHOUSE,
+          categoryId: 'sub',
+          name: 'Брус 50×50',
+          images,
+          attributeIds: [],
+          tagIds: [],
+        }) as never;
+
+      beforeEach(() => {
+        process.env.S3_PUBLIC_URL = 'https://s3.example.uz/sthm-media/';
+        prisma.warehouse.findFirst.mockResolvedValue({ id: WAREHOUSE });
+        prisma.warehouse.findUnique.mockResolvedValue({
+          id: WAREHOUSE,
+          storeId: STORE,
+        });
+        prisma.category.findFirst.mockResolvedValue({ id: 'sub' });
+        prisma.product.create.mockResolvedValue({ id: 'product' });
+        s3.headObject.mockResolvedValue({ size: 1000, contentType: 'image/webp' });
+      });
+
+      it('stores keys; a full public URL (legacy web) is turned into a key', async () => {
+        await service.createProduct(
+          make([KEY, `https://s3.example.uz/sthm-media/products/${STORE}/3-4.jpg?X-Amz-Signature=x`]),
+          owner(),
+        );
+        expect(
+          prisma.product.create.mock.calls[0][0].data.images.createMany.data,
+        ).toEqual([
+          { key: KEY, order: 0, isMain: true },
+          { key: `products/${STORE}/3-4.jpg`, order: 1, isMain: false },
+        ]);
+      });
+
+      it.each([
+        ['another store prefix', `products/${FOREIGN_STORE}/1-2.webp`],
+        ['a foreign host', `https://evil.example.com/products/${STORE}/1-2.webp`],
+        ['a path outside products', `${STORE}/product/img/1-2.webp`],
+        ['a traversal', `products/${STORE}/../${FOREIGN_STORE}/1.webp`],
+      ])('rejects %s with 400', async (_name, value) => {
+        await expect(
+          service.createProduct(make([value]), owner()),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(prisma.product.create).not.toHaveBeenCalled();
+      });
+
+      it('rejects more than 5 images and duplicates', async () => {
+        const six = Array.from({ length: 6 }, (_, i) => `products/${STORE}/${i}.webp`);
+        await expect(service.createProduct(make(six), owner())).rejects.toBeInstanceOf(BadRequestException);
+        await expect(service.createProduct(make([KEY, KEY]), owner())).rejects.toBeInstanceOf(BadRequestException);
+        expect(s3.headObject).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['not uploaded', null],
+        ['larger than 5 MB', { size: 5 * 1024 * 1024 + 1, contentType: 'image/webp' }],
+        ['not an image', { size: 10, contentType: 'text/html' }],
+      ])('rejects a file that is %s', async (_name, head) => {
+        s3.headObject.mockResolvedValue(head);
+        await expect(
+          service.createProduct(make([KEY]), owner()),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(s3.headObject).toHaveBeenCalledWith(KEY);
         expect(prisma.product.create).not.toHaveBeenCalled();
       });
     });
