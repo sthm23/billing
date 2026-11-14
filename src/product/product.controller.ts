@@ -30,8 +30,9 @@ import { ProductListParams } from './dto/product-list-params.dto';
 export class ProductController {
   constructor(private readonly productService: ProductService) {}
 
+  /** Store owner (User.role OWNER or staff OWNER) and ADMIN only; a manager edits / adds variants */
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OWNER, StaffRole.MANAGER)
+  @Roles(UserRole.OWNER, StaffRole.OWNER)
   @Post()
   create(
     @Body() createProductDto: CreateProductDto,

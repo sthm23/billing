@@ -36,6 +36,9 @@ export type CategoryRow = Prisma.CategoryGetPayload<{
   select: typeof CATEGORY_SELECT;
 }>;
 
+/** Max length of an attribute value («XL», «Чёрный», «11×25»). */
+export const ATTRIBUTE_VALUE_MAX = 50;
+
 /** Trim and collapse inner whitespace. */
 function normalizeName(value: string): string {
   return value.trim().replace(/\s+/g, ' ');
@@ -420,41 +423,80 @@ export class CategoryAttributesService {
       throw new BadRequestException(error.response || error.message);
     }
   }
-  async createAttributeValue(dto: CreateAttributeValueDto) {
-    try {
-      let valueType = dto.value.trim().toLocaleLowerCase();
-      if (valueType === 'true' || valueType === 'false') {
-        valueType = 'boolean';
-      } else if (!isNaN(Number(valueType))) {
-        valueType = 'number';
-      } else {
-        valueType = 'string';
-      }
+  /**
+   * Find or create a value of an attribute (store OWNER for an attribute of
+   * their store, or ADMIN). The value is stored by the attribute type
+   * (STRING «42» stays a string); the same value (case-insensitive) returns the
+   * existing row. Response keeps `attributeName` (= value) for the web.
+   */
+  async createAttributeValue(dto: CreateAttributeValueDto, user: CurrentUser) {
+    const raw = normalizeName(dto.value ?? '');
+    if (!raw) throw new BadRequestException('Value is required');
+    if (raw.length > ATTRIBUTE_VALUE_MAX) {
+      throw new BadRequestException(
+        `Value must be at most ${ATTRIBUTE_VALUE_MAX} characters`,
+      );
+    }
+    const attribute = await this.prisma.attribute.findUnique({
+      where: { id: dto.attributeId },
+      include: { store: { where: { storeId: user.staff?.storeId ?? '' } } },
+    });
+    if (!attribute) throw new NotFoundException('Attribute not found');
+    if (user.role !== UserRole.ADMIN && !attribute.store?.length) {
+      throw new ForbiddenException('The attribute is not used by your store');
+    }
 
-      const result = await this.prisma.attributeValue.create({
-        data: {
-          attributeId: dto.attributeId,
-          valueString: valueType === 'string' ? dto.value : null,
-          valueBool: valueType === 'boolean' ? dto.value === 'true' : null,
-          valueNumber: valueType === 'number' ? Number(dto.value) : null,
+    const number = Number(raw.replace(',', '.'));
+    const isNumber = raw !== '' && Number.isFinite(number);
+    const lower = raw.toLocaleLowerCase();
+    const isBool = lower === 'true' || lower === 'false';
+    let data: Prisma.AttributeValueUncheckedCreateInput;
+    switch (attribute.type) {
+      case AttributeType.NUMBER:
+        if (!isNumber) throw new BadRequestException('Value must be a number');
+        data = { attributeId: attribute.id, valueNumber: number };
+        break;
+      case AttributeType.BOOLEAN:
+        if (!isBool)
+          throw new BadRequestException('Value must be true or false');
+        data = { attributeId: attribute.id, valueBool: lower === 'true' };
+        break;
+      default:
+        data = { attributeId: attribute.id, valueString: raw };
+    }
+
+    try {
+      // Also match legacy rows stored in another column («42» saved as a number)
+      const existing = await this.prisma.attributeValue.findFirst({
+        where: {
+          attributeId: attribute.id,
+          OR: [
+            { valueString: { equals: raw, mode: 'insensitive' } },
+            ...(isNumber ? [{ valueNumber: number }] : []),
+            ...(isBool ? [{ valueBool: lower === 'true' }] : []),
+          ],
         },
       });
-      this.logger.info(
-        { attributeValueId: result.id, attributeId: dto.attributeId },
-        'Attribute value created',
-      );
-      return Promise.resolve({
+      const result =
+        existing ?? (await this.prisma.attributeValue.create({ data }));
+      if (!existing) {
+        this.logger.info(
+          { attributeValueId: result.id, attributeId: attribute.id },
+          'Attribute value created',
+        );
+      }
+      const value =
+        result.valueString ??
+        (result.valueNumber !== null
+          ? Number(result.valueNumber)
+          : Boolean(result.valueBool));
+      return {
         id: result.id,
         attributeId: result.attributeId,
-        attributeName:
-          valueType === 'string'
-            ? result.valueString
-            : valueType === 'boolean'
-              ? Boolean(result.valueBool)
-              : valueType === 'number'
-                ? Number(result.valueNumber)
-                : null,
-      });
+        value,
+        attributeName: value,
+        created: !existing,
+      };
     } catch (error: any) {
       this.logger.error(
         { attributeId: dto.attributeId, err: error.message },

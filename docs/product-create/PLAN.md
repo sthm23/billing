@@ -1,112 +1,85 @@
 # Product create / edit on mobile — plan
 
-> Created 2026-11-14. Design: claude.ai artifact LBqDuZU3wDgKNJXJBfrAYb, page «Товары» — artboards
-> `ProductNew` (step 1, card), `ProductVariants` (step 2, variants), `ProductScan` (barcode scanner).
-> Affected: `billing` (backend), `billing-mobile`. Web (`billing_ui`) keeps working unchanged.
+> Created 2026-11-14, all decisions final. Design: claude.ai artifact LBqDuZU3wDgKNJXJBfrAYb, page «Товары» —
+> artboards `ProductNew` (step 1, card), `ProductVariants` (step 2, variants), `ProductScan` (scanner).
+> Affected: `billing` (backend), `billing-mobile`. Web (`billing_ui`) keeps working (except manager create).
 
 ## Decisions (user, 2026-11-14)
 
 1. **Two requests, like the web.** «Далее: варианты» on step 1 sends `POST /product` (card is created);
    step 2 sends `POST /product/variants`.
-2. **Draft = a product card without variants.** Opening such a product goes straight to step 2.
-3. **Brand is required** (the design's «Без бренда» is a mistake).
-4. **Manual barcode.** A variant may get the product's own (factory) barcode, typed or scanned, if it is
-   free; empty → auto-generated as today. Uniqueness becomes **per store** (`@@unique([storeId, barCode])`)
-   so two stores can sell the same EAN product. Docs rule "barcode is global and never set manually" changes.
-5. **Attribute values** («+ размер», «+ значение») can be created by the **store OWNER and ADMIN**
-   (find-or-create in the shared dictionary). Attributes themselves stay ADMIN-only. MANAGER creates
-   products but does not see the «+» for values.
-6. **Tags** will be reworked like categories — separate discussion, not in this task.
-7. **No colour swatches** — values are shown as plain words («Белый»).
-8. **Photos follow the backend**: max 5 photos, 5 MB per file after compression (design's «6 / 4 МБ» is wrong).
+2. **Draft = product card without variants.** List shows a «Черновик» badge; tapping opens step 2.
+   Drafts are visible to OWNER/MANAGER/ADMIN only (hidden from sellers) and excluded from the «Мало» filter.
+   Delete a draft = existing archive. Unsaved step-2 input is not stored locally.
+3. **Brand is required** (design's «Без бренда» is a mistake).
+4. **Manual barcode.** A variant may get its own (factory) barcode, typed or scanned, if free in the store;
+   empty → auto-generated as today. Uniqueness becomes **per store** (`@@unique([storeId, barCode])`).
+5. **Attribute values** («+ значение») are created by the **store OWNER and ADMIN** (find-or-create in the
+   shared dictionary). Attributes themselves stay ADMIN-only.
+6. **Tags**: until the tags rework (separate discussion, «like categories») step 1 shows existing tag values
+   as flat chips, optional, «+ Новый тег» hidden. No tag model/API changes.
+7. **No colour swatches** — values are plain words.
+8. **Photos follow the backend**: max 5, 5 MB per file after compression.
 9. **Variant rules on save:**
-   - qty, cost and sale price all empty → the variant is not in stock → **dropped** from the request;
-   - cost + sale price filled, qty 0 → **created** (future goods; stock comes later via «Приход»);
+   - qty, cost, sale price all empty → variant not in stock → **dropped** from the request;
+   - partially filled (e.g. price without cost) → inline error on the variant, save blocked;
+   - cost + sale price, qty 0 → **created** (future goods): Inventory 0, **no StockMovement**, the entered
+     cost is not stored — it is recorded at the first «Приход» (receipt requires cost);
    - cost + sale price + qty > 0 → created with stock (Inventory + StockMovement PURCHASE, as today).
-10. **Rental**: not on this form. Variants are created with defaults (`canSell = true`, `canRent = false`);
-    rent settings are made in the existing rental product card (`RentalProductForm`).
-11. **Edit** of the product card is done in this task as a **separate stage**.
-12. **Who** (2026-11-14): **create a product** (`POST /product`) — store OWNER and ADMIN only (MANAGER
-    removed). MANAGER may **edit** an existing product card and **add variants** to it. Variant count
-    decrease — see open question Q1.
-13. P1, P3, P5, P6 confirmed. P4 changed: a qty-0 variant **does** get a StockMovement (see P4).
-
-## Open questions
-
-- **Q1.** «Менеджер может добавить/уменьшить кол-во вариантов» — means removing variants, or changing stock
-  of variants (already done via «Приход / Списание»)? Variant removal does not exist today; a variant with
-  sales/returns/rentals cannot be hard-deleted (FK + history) → would need an archive flag on ProductVariant.
-
-## Proposed (P1, P3, P5, P6 confirmed; P2 pending)
-
-- **P1. Draft in the UI.** Product list shows a «Черновик» badge on products with 0 variants; tapping opens
-  step 2. Drafts are visible to OWNER/MANAGER only (sellers can't do anything with them) and are excluded
-  from the «Мало» filter. Deleting a draft = the existing archive. Step-2 input that was not saved is not
-  kept (no local storage) — the card is already on the server, that is enough.
-- **P2. Tags until the rework.** Step 1 shows existing tag values as a flat chip list (`tagIds` may be empty);
-  «+ Новый тег» is hidden. No tag model/API changes now.
-- **P3. Partially filled variant** (e.g. sale price without cost, or qty without prices) → inline error on
-  that variant, save disabled. Not dropped silently.
-- **P4. qty 0 variant** (decided): Inventory row with 0 **and** a StockMovement IN/PURCHASE with
-  `quantity = 0` and the entered `unitCost` — the cost is kept. Consequences: sums of qty / qty×cost are
-  unaffected; reports that count receipt operations or average `unitCost` without weighting must filter
-  `quantity > 0`; stock history shows this row as «Создан без остатка · приход X» (not «+0 шт»);
-  `costAtSale` (latest IN with cost) is unaffected because a sale needs stock, i.e. a later real receipt.
-  Manual receipts (`POST /warehouse/stock-in`, `@Min(1)`) stay ≥ 1.
-- **P5. «Изменить» on step 2 / back from step 2** opens step 1 in edit mode (`PATCH /product/:id`) —
-  available once stage 4 is done; until then the step-2 header card has no «Изменить».
-- **P6. Attributes after variants exist** cannot be changed (they define the variants); in edit mode the
-  attribute chips are read-only when the product has variants.
+10. **Rental** not on this form: defaults `canSell = true`, `canRent = false`; rent is set in the existing
+    rental product card.
+11. **Roles:**
+    - create product — store OWNER + ADMIN (MANAGER removed);
+    - edit product card, add variants — OWNER + MANAGER (own warehouses) + ADMIN;
+    - decrease stock — existing «Списание» (manager already allowed). No variant deletion.
+12. **Attributes are locked once the product has variants.**
+13. **«Изменить» on step 2** opens step 1 in edit mode — available after the edit stage (stage 4).
+14. Edit of the product card is part of this task, as a separate stage.
 
 ## Stages
 
-### Stage 1 — backend
-- `ProductVariant`: migration `@@unique([barCode])` → `@@unique([storeId, barCode])`.
-- `ProductVariantDto.barCode?` (optional): trimmed, digits only, length 8–14 (EAN-8/UPC/EAN-13/ITF-14);
-  taken in the store → 409 with the barcode in the message; duplicate inside one request → 400;
-  empty → `BarcodeService` as today. Generated codes (2000…) cannot clash with a stored manual code
-  in the same store → check generated code against the store too.
-- `POST /product/variants` validation: every `attributeValueId` belongs to one of the product's attributes;
-  no two variants (incl. already existing ones) with the same value set; `quantity` integer ≥ 0;
-  qty 0 → StockMovement with quantity 0 and unitCost (P4).
-- `POST /product`: `@Roles(OWNER)` (ADMIN passes RolesGuard) — MANAGER removed. `POST /product/variants`
-  stays OWNER + MANAGER (manager adds variants to existing products). Web «create product» for managers
-  stops working — acceptable (web is being replaced).
-- `POST /category/attribute/value`: AdminGuard → ADMIN or store OWNER, **find-or-create**
-  (same value returns the existing row, 200), value trimmed, attribute must be on the owner's store
-  (`AttributeOnStore`).
-- `GET /product` list: `variantCount` (or `isDraft`) in the item for the badge; drafts hidden from sellers
-  and from the «Мало» filter (P1).
-- Specs for the above; `brandId` stays required.
+### Stage 1 — backend: create — DONE 2026-11-14
+> Migration `20261114120000_barcode_per_store` (not applied to dev DB yet). Response of `POST /category/attribute/value` gains `value` and `created`; list items gain `isDraft`. Admin creating variants with qty > 0 → 400 (receipt needs a staff account). SKU now uses attribute values from the DB.
+- Migration: `ProductVariant` `@@unique([barCode])` → `@@unique([storeId, barCode])`.
+- `ProductVariantDto.barCode?`: trimmed, digits only, length 8–14; taken in the store → 409 (message names
+  the code); duplicate within the request → 400; empty → `BarcodeService` (generated code also checked
+  against the store).
+- `POST /product/variants`: every `attributeValueId` belongs to one of the product's attributes; no two
+  variants (incl. existing ones) with the same value set; `quantity` integer ≥ 0; qty 0 → Inventory 0,
+  no StockMovement.
+- `POST /product`: roles OWNER (+ ADMIN via RolesGuard), MANAGER removed. `brandId` stays required.
+- `POST /category/attribute/value`: AdminGuard → ADMIN or store OWNER; find-or-create (existing → 200);
+  value trimmed; for an OWNER the attribute must be on their store (`AttributeOnStore`).
+- `GET /product` list: `variantCount` (or `isDraft`) per item; drafts hidden from sellers and from «Мало».
+- Specs for all of the above.
 
-### Stage 2 — mobile, step 1 «Карточка» (`ProductCreateScreen`)
+### Stage 2 — mobile, step 1 «Карточка»
 - Form store (zustand) shared by both steps.
 - Warehouse banner = current working warehouse.
-- Photos: gallery/camera, compression (≤ 5 MB), `POST /image/upload` → presigned PUT with progress,
-  first = «Главное», remove; max 5.
-- Name, description, `CategorySheet` (exists), new `BrandSheet` (store brands), attribute chips
-  (store attributes), tag chips (P2).
-- Validation: name, category, brand. «Далее» → `POST /product` → step 2 with the product id.
+- Photos: gallery/camera, compression, `POST /image/upload` → presigned PUT with progress, first =
+  «Главное», remove; max 5.
+- Name, description, `CategorySheet` (exists), new `BrandSheet` (store brands), attribute chips (store
+  attributes), tag chips (decision 6).
+- Validation: name, category, brand. «Далее» → `POST /product` → step 2.
+- «+ Новый товар» in the product list — OWNER/ADMIN only.
 
-### Stage 3 — mobile, step 2 «Варианты» (`ProductVariantsScreen`)
-- Values per selected attribute (`GET /category/attributes/items`): chips; NUMBER attribute → number input;
-  «+» sheet for OWNER → find-or-create value.
-- Variants = all combinations of chosen values minus removed ones; no attributes → one variant.
+### Stage 3 — mobile, step 2 «Варианты»
+- Values per selected attribute: chips; NUMBER attribute → number input; «+» sheet (OWNER/ADMIN) →
+  find-or-create value.
+- Variants = all combinations of chosen values minus removed; no attributes → one variant.
 - «Одинаково для всех» → apply qty/cost/price to all; per-variant card: qty, cost, price, margin badge
-  (display only), remove, barcode input + scanner (reuse the expo-camera scanner).
-- Save: drop empty variants, block on partial ones (P3), `POST /product/variants`; 409 → highlight the
-  variant with that barcode. Success → product detail, toast, invalidate product queries.
-- Entry points: «+» in the product list (OWNER/ADMIN only); draft products open step 2 for OWNER and
-  MANAGER (P1).
-- Stock history: qty-0 creation row rendered as «Создан без остатка» (P4).
+  (display only), remove, barcode input + scanner (reuse expo-camera scanner).
+- Save per decision 9; 409 → highlight the variant with that barcode. Success → product detail, toast,
+  invalidate product queries.
+- Drafts: «Черновик» badge in the list, tap → step 2 (OWNER/MANAGER/ADMIN).
 
-### Stage 4 — edit the product card
-- Backend: `PATCH /product/:id` (name, description, category, brand, tags, images add/remove/order/main;
-  attributes only while there are no variants — P6), OWNER + MANAGER (manager: own warehouses) + ADMIN.
-- Mobile: step 1 in edit mode (from product detail and from step 2 «Изменить»); adding variants to an
-  existing product = step 2 with existing variants shown read-only.
+### Stage 4 — edit
+- Backend: `PATCH /product/:id` — name, description, category, brand, tags, images (add/remove/order/main);
+  attributes only while there are no variants. OWNER + MANAGER (own warehouses) + ADMIN.
+- Mobile: step 1 in edit mode (from product detail and «Изменить» on step 2); add variants to an existing
+  product = step 2 with existing variants shown read-only.
 
 ### Stage 5 — finish
 - i18n ru/uz/en, dark theme, loading/error/empty states, `tsc`, backend tests, device QA.
-- `docs-updater`: `docs/features/products.md` (barcode rules, drafts, variant rules), `docs/api-map.md`,
-  `billing/docs/DATABASE.md`.
+- `docs-updater`: `docs/features/products.md` (barcode per store + manual, drafts, variant rules, roles),
+  `docs/api-map.md`, `billing/docs/DATABASE.md`, legacy `billing/docs/CLAUDE.md` barcode line.

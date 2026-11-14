@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { PRODUCT_IMAGE_MAX_COUNT } from '@shared/helper/file.helper';
 import {
   ArrayMaxSize,
@@ -11,11 +11,16 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   Max,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { MAX_CLEANING_DAYS } from '../../rental/dto/rental-lifecycle.dto';
+
+/** Manual barcode: EAN-8 / UPC-A / EAN-13 / ITF-14 — digits only */
+export const BARCODE_PATTERN = /^\d{8,14}$/;
 export class AttributeValueDto {
   @IsUUID('4')
   @IsNotEmpty()
@@ -61,11 +66,19 @@ export class ProductVariantDto {
   @Max(MAX_CLEANING_DAYS)
   defaultCleaningDays?: number;
 
-  @IsNumber()
+  /** 0 = future goods: Inventory 0, no StockMovement (stock comes with a later receipt) */
+  @IsInt()
   @Type(() => Number)
   @Min(0)
   @IsNotEmpty()
   quantity: number = 0;
+
+  /** Own (factory) barcode, digits 8–14, must be free in the store; omitted/empty → generated */
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @ValidateIf((_, value) => value !== '' && value != null)
+  @Matches(BARCODE_PATTERN, { message: 'Barcode must be 8–14 digits' })
+  barCode?: string;
 
   @IsArray()
   @ValidateNested({ each: true })

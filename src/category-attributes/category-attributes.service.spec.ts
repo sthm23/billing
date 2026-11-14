@@ -281,3 +281,128 @@ describe('CategoryAttributesService — subcategories', () => {
     });
   });
 });
+
+describe('CategoryAttributesService — attribute values', () => {
+  let service: CategoryAttributesService;
+  const ATTR = '44444444-4444-4444-8444-444444444444';
+  const prisma = {
+    attribute: { findUnique: jest.fn() },
+    attributeValue: { findFirst: jest.fn(), create: jest.fn() },
+  };
+  const logger = {
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  };
+  const attribute = (type: string, onStore = true) => ({
+    id: ATTR,
+    name: 'Размер',
+    type,
+    unit: null,
+    store: onStore ? [{ storeId: STORE, attributeId: ATTR }] : [],
+  });
+  const row = (over: Record<string, unknown>) => ({
+    id: 'value',
+    attributeId: ATTR,
+    valueString: null,
+    valueNumber: null,
+    valueBool: null,
+    ...over,
+  });
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        CategoryAttributesService,
+        { provide: PrismaService, useValue: prisma },
+        {
+          provide: getLoggerToken(CategoryAttributesService.name),
+          useValue: logger,
+        },
+      ],
+    }).compile();
+    service = module.get(CategoryAttributesService);
+    prisma.attributeValue.findFirst.mockResolvedValue(null);
+    prisma.attributeValue.create.mockImplementation(
+      (args: { data: Record<string, unknown> }) =>
+        Promise.resolve(row(args.data)),
+    );
+  });
+
+  it('lets a store owner create a value of a store attribute; STRING «42» stays a string', async () => {
+    prisma.attribute.findUnique.mockResolvedValue(attribute('STRING'));
+    const res = await service.createAttributeValue(
+      { attributeId: ATTR, value: '  42 ' },
+      owner(),
+    );
+    expect(prisma.attributeValue.create.mock.calls[0][0].data).toEqual({
+      attributeId: ATTR,
+      valueString: '42',
+    });
+    expect(res).toMatchObject({
+      value: '42',
+      attributeName: '42',
+      created: true,
+    });
+  });
+
+  it('returns the existing value (case-insensitive) instead of a duplicate', async () => {
+    prisma.attribute.findUnique.mockResolvedValue(attribute('STRING'));
+    prisma.attributeValue.findFirst.mockResolvedValue(
+      row({ id: 'xl', valueString: 'XL' }),
+    );
+    const res = await service.createAttributeValue(
+      { attributeId: ATTR, value: 'xl' },
+      owner(),
+    );
+    expect(prisma.attributeValue.create).not.toHaveBeenCalled();
+    expect(res).toMatchObject({ id: 'xl', value: 'XL', created: false });
+  });
+
+  it('stores a NUMBER value as a number and rejects text', async () => {
+    prisma.attribute.findUnique.mockResolvedValue(attribute('NUMBER'));
+    await service.createAttributeValue(
+      { attributeId: ATTR, value: '6,5' },
+      owner(),
+    );
+    expect(prisma.attributeValue.create.mock.calls[0][0].data).toEqual({
+      attributeId: ATTR,
+      valueNumber: 6.5,
+    });
+    await expect(
+      service.createAttributeValue(
+        { attributeId: ATTR, value: 'шесть' },
+        owner(),
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects an owner when the attribute is not on their store', async () => {
+    prisma.attribute.findUnique.mockResolvedValue(attribute('STRING', false));
+    await expect(
+      service.createAttributeValue({ attributeId: ATTR, value: 'M' }, owner()),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('lets an admin add a value to any attribute', async () => {
+    prisma.attribute.findUnique.mockResolvedValue(attribute('STRING', false));
+    await expect(
+      service.createAttributeValue({ attributeId: ATTR, value: 'M' }, admin()),
+    ).resolves.toMatchObject({ value: 'M' });
+  });
+
+  it('rejects an empty value and an unknown attribute', async () => {
+    await expect(
+      service.createAttributeValue(
+        { attributeId: ATTR, value: '   ' },
+        owner(),
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    prisma.attribute.findUnique.mockResolvedValue(null);
+    await expect(
+      service.createAttributeValue({ attributeId: ATTR, value: 'M' }, owner()),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});

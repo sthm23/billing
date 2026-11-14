@@ -29,7 +29,9 @@ import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { AdminGuard } from '@shared/guards/admin.guard';
 import { CurrentUser } from '@shared/decorators/user.decorator';
 import { type CurrentUser as CurrentUserType } from '@auth/models/auth.model';
-import { UserRole } from '@generated/enums';
+import { StaffRole, UserRole } from '@generated/enums';
+import { Roles } from '@shared/decorators/role.decorator';
+import { RolesGuard } from '@shared/guards/role.guard';
 
 @UseGuards(AuthJWTGuard)
 @Controller('category')
@@ -102,13 +104,18 @@ export class CategoryAttributesController {
     );
   }
 
-  @UseGuards(AdminGuard)
+  /** Find or create a value: store OWNER (attribute of their store) or ADMIN. Always 200. */
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OWNER, StaffRole.OWNER)
   @Post('attribute/value')
+  @HttpCode(HttpStatus.OK)
   createAttributeValue(
     @Body() createCategoryAttributeDto: CreateAttributeValueDto,
+    @CurrentUser() user: CurrentUserType,
   ) {
     return this.categoryAttributesService.createAttributeValue(
       createCategoryAttributeDto,
+      user,
     );
   }
 

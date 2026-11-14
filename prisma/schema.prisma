@@ -273,6 +273,7 @@ model ProductVariant {
   id                  String                  @id @default(uuid())
   productId           String
   sku                 String // ску будет уникален в пределах магазина
+  /// Generated (BarcodeSequence) or entered manually (factory code, digits 8–14); unique per store
   barCode             String?
   price               Decimal // sale price
   /// Variant can be sold (existing order flow rejects it otherwise)
@@ -293,7 +294,8 @@ model ProductVariant {
   rentalCleanings     RentalCleaning[]
 
   @@unique([storeId, sku])
-  @@unique([barCode])
+  /// Barcode is unique per store: a factory (EAN) code may be entered manually if free in the store; empty → generated
+  @@unique([storeId, barCode])
   @@index([productId])
   @@map("product_variants")
 }

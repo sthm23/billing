@@ -1,4 +1,8 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getLoggerToken } from 'nestjs-pino';
 import { StaffRole, UserRole, UserType } from '@generated/enums';
@@ -46,9 +50,11 @@ describe('ProductService', () => {
       count: jest.fn(),
       findMany: jest.fn(),
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
     },
+    attributeValue: { findMany: jest.fn() },
     warehouse: { findUnique: jest.fn(), findFirst: jest.fn() },
     inventory: { create: jest.fn() },
     variantAttributeValue: { createMany: jest.fn() },
@@ -118,7 +124,8 @@ describe('ProductService', () => {
           args.select
             ? Promise.resolve([
                 stockRow('low', [2, 3]),
-                stockRow('empty', []),
+                stockRow('draft', []),
+                stockRow('zero', [0]),
                 stockRow('ok', [4, 9]),
               ])
             : Promise.resolve([]),
@@ -137,8 +144,8 @@ describe('ProductService', () => {
       );
       expect(JSON.stringify(where.AND)).toContain('брус');
       expect(res).toMatchObject({
-        total: 3,
-        counts: { all: 3, lowStock: 2 },
+        total: 4,
+        counts: { all: 4, lowStock: 2 },
         lowStockThreshold: 5,
       });
     });
@@ -146,7 +153,8 @@ describe('ProductService', () => {
     it('returns only products with total stock ≤ 5 when lowStock is set', async () => {
       const res = await service.findAll({ lowStock: true }, makeUser());
       const where = prisma.product.findMany.mock.calls[1][0].where;
-      expect(where.AND).toContainEqual({ id: { in: ['low', 'empty'] } });
+      // a draft (no variants) is not low stock; a variant with 0 left is
+      expect(where.AND).toContainEqual({ id: { in: ['low', 'zero'] } });
       expect(res.total).toBe(2);
     });
 
@@ -174,6 +182,47 @@ describe('ProductService', () => {
       const where = prisma.product.findMany.mock.calls[1][0].where;
       expect(where.AND).toContainEqual({ storeId: STORE });
       expect(JSON.stringify(where.AND)).not.toContain('warehouseId');
+      expect(where.AND).not.toContainEqual({ variants: { some: {} } });
+    });
+
+    it('hides drafts (no variants) from a seller but not from a manager', async () => {
+      await service.findAll({}, makeUser());
+      expect(prisma.product.findMany.mock.calls[1][0].where.AND).toContainEqual(
+        { variants: { some: {} } },
+      );
+      prisma.product.findMany.mockClear();
+      await service.findAll(
+        {},
+        makeUser({
+          staff: {
+            id: 'm',
+            storeId: STORE,
+            role: StaffRole.MANAGER,
+            warehouse: [{ warehouseId: WAREHOUSE }],
+          },
+        } as never),
+      );
+      expect(
+        prisma.product.findMany.mock.calls[1][0].where.AND,
+      ).not.toContainEqual({ variants: { some: {} } });
+    });
+
+    it('marks a product without variants as a draft', async () => {
+      const row = {
+        id: 'p',
+        name: 'Рубашка',
+        images: [],
+        category: null,
+        brand: null,
+        warehouse: null,
+        tags: [],
+        variants: [],
+      };
+      prisma.product.findMany.mockImplementation((args: { select?: unknown }) =>
+        Promise.resolve(args.select ? [stockRow('p', [])] : [row]),
+      );
+      const res = await service.findAll({}, makeUser({ role: UserRole.OWNER }));
+      expect(res.data[0].isDraft).toBe(true);
     });
   });
 
@@ -356,6 +405,9 @@ describe('ProductService', () => {
         storeId: STORE,
       });
       prisma.productVariant.create.mockResolvedValue({ id: 'variant' });
+      prisma.productVariant.findMany.mockResolvedValue([]);
+      prisma.productVariant.findFirst.mockResolvedValue(null);
+      prisma.attributeValue.findMany.mockResolvedValue([]);
     });
 
     it('builds the SKU from the category name in the DB, not the client string', async () => {
@@ -445,6 +497,204 @@ describe('ProductService', () => {
         ),
       ).rejects.toThrow('rent price per day');
       expect(prisma.productVariant.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('creating variants (mobile product form)', () => {
+    const SIZE = 'attr-size';
+    const COLOR = 'attr-color';
+    const owner = () =>
+      makeUser({
+        role: UserRole.OWNER,
+        staff: {
+          id: 'staff',
+          storeId: STORE,
+          role: StaffRole.OWNER,
+          warehouse: [{ warehouseId: WAREHOUSE }],
+        },
+      } as unknown as Partial<CurrentUser>);
+    const variant = (over: Partial<ProductVariantDto> = {}) =>
+      ({
+        retailPrice: 180000,
+        costPrice: 120000,
+        quantity: 10,
+        attributes: [],
+        ...over,
+      }) as ProductVariantDto;
+    const dto = (variants: ProductVariantDto[]) =>
+      ({
+        storeId: STORE,
+        warehouseId: WAREHOUSE,
+        productId: 'product',
+        variants,
+      }) as CreateProductVariantDto;
+    const attrs = (...ids: string[]) =>
+      ids.map((id) => ({ attributeValueId: id, value: 'client' }));
+    const value = (id: string, attributeId: string, valueString: string) => ({
+      id,
+      attributeId,
+      valueString,
+      valueNumber: null,
+      valueBool: null,
+    });
+
+    beforeEach(() => {
+      prisma.$transaction.mockImplementation(
+        (cb: (tx: typeof prisma) => unknown) => cb(prisma),
+      );
+      prisma.product.findUnique.mockResolvedValue({
+        id: 'product',
+        name: 'Oxford',
+        storeId: STORE,
+        warehouseId: WAREHOUSE,
+        category: { name: 'Рубашки' },
+        attributes: [{ attributeId: SIZE }, { attributeId: COLOR }],
+      });
+      prisma.warehouse.findUnique.mockResolvedValue({
+        id: WAREHOUSE,
+        storeId: STORE,
+      });
+      prisma.productVariant.create.mockResolvedValue({ id: 'variant' });
+      prisma.productVariant.findMany.mockResolvedValue([]);
+      prisma.productVariant.findFirst.mockResolvedValue(null);
+      prisma.attributeValue.findMany.mockResolvedValue([
+        value('m', SIZE, 'M'),
+        value('l', SIZE, 'L'),
+        value('white', COLOR, 'Белый'),
+        value('len', 'attr-length', '6'),
+      ]);
+    });
+
+    it('creates a qty-0 variant (future goods) without a stock movement', async () => {
+      await service.createProductVariant(
+        dto([variant({ quantity: 0, attributes: attrs('m', 'white') })]),
+        owner(),
+      );
+      expect(prisma.inventory.create.mock.calls[0][0].data.quantity).toBe(0);
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    });
+
+    it('records a purchase movement with the cost when qty > 0', async () => {
+      await service.createProductVariant(
+        dto([variant({ quantity: 3, attributes: attrs('m', 'white') })]),
+        owner(),
+      );
+      const data = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(data).toMatchObject({ quantity: 3, createdById: 'staff' });
+      expect(Number(data.unitCost)).toBe(120000);
+    });
+
+    it('builds the SKU from DB values, not the client value strings', async () => {
+      await service.createProductVariant(
+        dto([variant({ attributes: attrs('m', 'white') })]),
+        owner(),
+      );
+      const sku = prisma.productVariant.create.mock.calls[0][0].data.sku;
+      expect(sku).toContain('M');
+      expect(sku).not.toContain('CLIENT');
+    });
+
+    it('rejects a value of an attribute the product does not have', async () => {
+      await expect(
+        service.createProductVariant(
+          dto([variant({ attributes: attrs('m', 'len') })]),
+          owner(),
+        ),
+      ).rejects.toThrow('does not belong');
+      expect(prisma.productVariant.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects two values of one attribute in a variant', async () => {
+      await expect(
+        service.createProductVariant(
+          dto([variant({ attributes: attrs('m', 'l') })]),
+          owner(),
+        ),
+      ).rejects.toThrow('one value per attribute');
+    });
+
+    it('rejects duplicate combinations in the request and against existing variants', async () => {
+      await expect(
+        service.createProductVariant(
+          dto([
+            variant({ attributes: attrs('m', 'white') }),
+            variant({ attributes: attrs('white', 'm') }),
+          ]),
+          owner(),
+        ),
+      ).rejects.toThrow('same attribute values');
+      prisma.productVariant.findMany.mockResolvedValue([
+        {
+          attributes: [
+            { attributeValueId: 'white' },
+            { attributeValueId: 'm' },
+          ],
+        },
+      ]);
+      await expect(
+        service.createProductVariant(
+          dto([variant({ attributes: attrs('m', 'white') })]),
+          owner(),
+        ),
+      ).rejects.toThrow('same attribute values');
+      expect(prisma.productVariant.create).not.toHaveBeenCalled();
+    });
+
+    it('uses a free manual barcode and generates one for an empty field', async () => {
+      await service.createProductVariant(
+        dto([
+          variant({
+            attributes: attrs('m', 'white'),
+            barCode: '4780012345671',
+          }),
+          variant({ attributes: attrs('l', 'white'), barCode: '' }),
+        ]),
+        owner(),
+      );
+      expect(prisma.productVariant.findFirst.mock.calls[0][0].where).toEqual({
+        storeId: STORE,
+        barCode: { in: ['4780012345671'] },
+      });
+      const codes = prisma.productVariant.create.mock.calls.map(
+        (c: [{ data: { barCode: string } }]) => c[0].data.barCode,
+      );
+      expect(codes).toEqual(['4780012345671', '200000000001']);
+    });
+
+    it('rejects a barcode taken in the store with 409', async () => {
+      prisma.productVariant.findFirst.mockResolvedValueOnce({
+        barCode: '4780012345671',
+      });
+      await expect(
+        service.createProductVariant(
+          dto([variant({ attributes: attrs('m'), barCode: '4780012345671' })]),
+          owner(),
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.productVariant.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects the same barcode on two variants', async () => {
+      await expect(
+        service.createProductVariant(
+          dto([
+            variant({ attributes: attrs('m'), barCode: '4780012345671' }),
+            variant({ attributes: attrs('l'), barCode: '4780012345671' }),
+          ]),
+          owner(),
+        ),
+      ).rejects.toThrow('two variants');
+    });
+
+    it('skips a generated code that is already taken in the store', async () => {
+      prisma.productVariant.findFirst
+        .mockResolvedValueOnce({ id: 'manual' })
+        .mockResolvedValueOnce(null);
+      await service.createProductVariant(
+        dto([variant({ attributes: attrs('m') })]),
+        owner(),
+      );
+      expect(prisma.productVariant.findFirst).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -553,12 +803,18 @@ describe('ProductService', () => {
         });
         prisma.category.findFirst.mockResolvedValue({ id: 'sub' });
         prisma.product.create.mockResolvedValue({ id: 'product' });
-        s3.headObject.mockResolvedValue({ size: 1000, contentType: 'image/webp' });
+        s3.headObject.mockResolvedValue({
+          size: 1000,
+          contentType: 'image/webp',
+        });
       });
 
       it('stores keys; a full public URL (legacy web) is turned into a key', async () => {
         await service.createProduct(
-          make([KEY, `https://s3.example.uz/sthm-media/products/${STORE}/3-4.jpg?X-Amz-Signature=x`]),
+          make([
+            KEY,
+            `https://s3.example.uz/sthm-media/products/${STORE}/3-4.jpg?X-Amz-Signature=x`,
+          ]),
           owner(),
         );
         expect(
@@ -571,7 +827,10 @@ describe('ProductService', () => {
 
       it.each([
         ['another store prefix', `products/${FOREIGN_STORE}/1-2.webp`],
-        ['a foreign host', `https://evil.example.com/products/${STORE}/1-2.webp`],
+        [
+          'a foreign host',
+          `https://evil.example.com/products/${STORE}/1-2.webp`,
+        ],
         ['a path outside products', `${STORE}/product/img/1-2.webp`],
         ['a traversal', `products/${STORE}/../${FOREIGN_STORE}/1.webp`],
       ])('rejects %s with 400', async (_name, value) => {
@@ -582,15 +841,25 @@ describe('ProductService', () => {
       });
 
       it('rejects more than 5 images and duplicates', async () => {
-        const six = Array.from({ length: 6 }, (_, i) => `products/${STORE}/${i}.webp`);
-        await expect(service.createProduct(make(six), owner())).rejects.toBeInstanceOf(BadRequestException);
-        await expect(service.createProduct(make([KEY, KEY]), owner())).rejects.toBeInstanceOf(BadRequestException);
+        const six = Array.from(
+          { length: 6 },
+          (_, i) => `products/${STORE}/${i}.webp`,
+        );
+        await expect(
+          service.createProduct(make(six), owner()),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        await expect(
+          service.createProduct(make([KEY, KEY]), owner()),
+        ).rejects.toBeInstanceOf(BadRequestException);
         expect(s3.headObject).not.toHaveBeenCalled();
       });
 
       it.each([
         ['not uploaded', null],
-        ['larger than 5 MB', { size: 5 * 1024 * 1024 + 1, contentType: 'image/webp' }],
+        [
+          'larger than 5 MB',
+          { size: 5 * 1024 * 1024 + 1, contentType: 'image/webp' },
+        ],
         ['not an image', { size: 10, contentType: 'text/html' }],
       ])('rejects a file that is %s', async (_name, head) => {
         s3.headObject.mockResolvedValue(head);
