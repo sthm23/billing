@@ -669,6 +669,8 @@ if (type === INCOME) {
 - `GET /debt/debtors` — DEBT-заказы с клиентом (остаток = totalAmount − returnedAmount − paidAmount) + ACTIVE CustomerDebt (totalAmount − paidAmount), сгруппированные по клиенту; `summary`: `total`, `customers`, `over30` (долги, чья дата старше 30 дней), `paidInPeriod`
 - «Погашено за месяц» (`paidInPeriod`) = Σ CashTransaction INCOME с категорией DEBT_PAYMENT в периоде `[from, to)` (по умолчанию — текущий месяц сервера)
 - `GET /debt/debtors/:customerId` — открытые долги клиента (`kind: ORDER | MANUAL`), самые старые первыми, с платежами
+- `dueAt` / `overdue` (2026-11-14): у должника — ближайший `returnedAt` открытых ручных долгов (или `null`) и `dueAt < now`; у долга в карточке — `returnedAt` для MANUAL, `null` для ORDER
+- `GET /users/customers` возвращает `debtTotal` — открытый долг клиента в магазине пользователя (`null` для ADMIN)
 
 ### Создание старого долга
 **Endpoint**: `POST /debt`
@@ -681,12 +683,12 @@ CustomerDebt {
   totalAmount: dto.amount,
   paidAmount: 0,
   status: ACTIVE,
-  createdAt: dto.createdAt ?? now,   // Можно указать прошлую дату
-  returnedAt: dto.returnedAt ?? now  // Дата возврата (по умолчанию сейчас)
+  createdAt: dto.createdAt ?? now,   // Можно указать прошлую дату, не в будущем (допуск 5 мин)
+  returnedAt: dto.returnedAt ?? null // Срок возврата; не указан = без срока (до 2026-11-14 было «сейчас»)
 }
 ```
 
-Доступ: только JWT, проверки роли нет (любая роль). Сотрудник обязан передать свой `storeId` (иначе 400 `Wrong StoreId given!`); admin может указать любой магазин. Поля DTO: `storeId`, `customerId`, `amount` (≥ 1), `description?`, `createdAt?`, `returnedAt?`.
+Доступ (с 2026-11-14): только OWNER и MANAGER (`RolesGuard`; ADMIN проходит). Сотрудник: магазин берется из токена, чужой `storeId` → 400 `Wrong StoreId given!`; admin обязан передать `storeId` (иначе 400 `storeId is required`). Поля DTO: `storeId?`, `customerId`, `amount` (≥ 1), `description?` (≤ 500, trim, пусто → null), `createdAt?`, `returnedAt?`. Ошибки: дата создания в будущем → 400 `Дата создания долга не может быть в будущем`; `returnedAt` < `createdAt` → 400 `Дата возврата не может быть раньше даты создания`; клиент не найден → 400 `Клиент не найден`. В одной транзакции создается долг и клиент привязывается к магазину (`customer.stores connect`). Кассовых операций нет.
 
 ### Оплата старого долга
 **Endpoint**: `POST /debt/payment`

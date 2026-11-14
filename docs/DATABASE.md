@@ -1033,7 +1033,7 @@ model CustomerDebt {
   paidAmount  Decimal    @default(0)
   status      DebtStatus  // ACTIVE | PAID
   createdAt   DateTime   @default(now())
-  returnedAt  DateTime?   // Дата возникновения долга (можно указать прошлую)
+  returnedAt  DateTime?   // Срок возврата (после createdAt); null = без срока. createdAt — когда возник долг (можно прошлую)
   
   customer Customer      @relation(fields: [customerId], references: [id])
   store    Store         @relation(fields: [storeId], references: [id])
@@ -1049,7 +1049,7 @@ model CustomerDebt {
 - `DebtStatus`: ACTIVE, PAID
 
 **Логика**:
-- Создается вручную (`POST /debt`)
+- Создается вручную (`POST /debt`, только OWNER/MANAGER); `returnedAt` не указан → `null`
 - Используется для переноса старых долгов при миграции на систему
 
 ---

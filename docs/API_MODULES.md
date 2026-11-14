@@ -1287,21 +1287,23 @@ Authorization: Bearer <access_token>
 ## 6. Debt Module (`/api/debt`)
 
 ### POST /debt
-**Требует JWT** (guard-а ролей нет — доступно любой роли). Сотрудник магазина обязан передать свой `storeId`, иначе `400 Wrong StoreId given!`; admin (без staff) может указать любой магазин.
+**Требует JWT + роль OWNER или MANAGER** (`RolesGuard`, с 2026-11-14; ADMIN проходит). Сотрудник: магазин из токена, чужой `storeId` → `400 Wrong StoreId given!`; admin (без staff) обязан передать `storeId` → иначе `400 storeId is required`.
 
 Создание старого долга (не связанного с заказом).
 
 **Request**:
 ```json
 {
-  "storeId": "uuid",
+  "storeId": "uuid",                    // Опционально для сотрудника; обязателен для admin
   "customerId": "uuid",
   "amount": 5000.00,                    // >= 1
-  "description": "Долг за товары 2024 года",  // Опционально
-  "createdAt": "2024-01-15T10:00:00Z",  // Опционально, по умолчанию сейчас
-  "returnedAt": "2024-12-31T10:00:00Z"  // Опционально, по умолчанию сейчас
+  "description": "Долг за товары 2024 года",  // Опционально, <= 500, trim; пусто -> null
+  "createdAt": "2024-01-15T10:00:00Z",  // Опционально, по умолчанию сейчас; не в будущем (400)
+  "returnedAt": "2024-12-31T10:00:00Z"  // Опционально; не указан/null = без срока; раньше createdAt -> 400
 }
 ```
+
+Клиент не найден → `400 Клиент не найден`. Долг и привязка клиента к магазину создаются в одной транзакции.
 
 **Response**:
 ```json
@@ -1314,7 +1316,7 @@ Authorization: Bearer <access_token>
   "status": "ACTIVE",
   "description": "Долг за товары 2024 года",
   "createdAt": "2024-01-15T10:00:00Z",
-  "returnedAt": "2024-12-31T10:00:00Z"
+  "returnedAt": "2024-12-31T10:00:00Z"  // или null — без срока
 }
 ```
 
@@ -1432,7 +1434,9 @@ Authorization: Bearer <access_token>
       "total": 5000.00, "ordersCount": 2, "debtsCount": 1,
       "lastPaymentAt": "ISO | null",
       "since": "ISO",          // самый старый открытый долг: soldAt ?? createdAt заказа / createdAt долга
-      "ageDays": 42
+      "ageDays": 42,
+      "dueAt": "ISO | null",   // ближайший returnedAt открытых ручных долгов
+      "overdue": false         // dueAt < now
     }
   ]
 }
@@ -1458,6 +1462,8 @@ Authorization: Bearer <access_token>
       "description": "string | null",
       "warehouse": { "id": "uuid", "name": "string" } | null,
       "total": 3000.00, "paid": 1000.00, "remaining": 2000.00,
+      "dueAt": "ISO | null",      // MANUAL: returnedAt; ORDER: null
+      "overdue": false,
       "payments": [
         { "id": "uuid", "amount": 1000.00, "type": "CASH", "createdAt": "ISO", "createdBy": "ФИО" }
       ]
@@ -1498,7 +1504,7 @@ Authorization: Bearer <access_token>
 ### GET /users/customers · POST /users/customers · PUT /users/customers/set-to-order
 **Требует JWT**
 
-- `GET /users/customers` — поиск клиентов (`?search=`); фильтр по наличию записи `Customer` (`customer: { isNot: null }`), а не по `type: CUSTOMER` — сотрудник тоже может быть клиентом. Видимость и правила поиска — `docs/api-map.md`.
+- `GET /users/customers` — поиск клиентов (`?search=`); фильтр по наличию записи `Customer` (`customer: { isNot: null }`), а не по `type: CUSTOMER` — сотрудник тоже может быть клиентом. Видимость и правила поиска — `docs/api-map.md`. Каждая строка содержит `debtTotal` (2026-11-14) — открытый долг клиента в магазине пользователя (`null` для ADMIN).
 - `POST /users/customers` — если телефон уже принадлежит клиенту → `409`; если телефон принадлежит существующему пользователю БЕЗ записи `Customer` (например, сотруднику) — для этого же пользователя создается `Customer` (новый User не создается, `fullName` пользователя сохраняется) и привязывается к магазину. Схема не менялась.
 - `PUT /users/customers/set-to-order` — заказ должен быть из магазина пользователя (403).
 

@@ -26,8 +26,18 @@
 10. **Rental**: not on this form. Variants are created with defaults (`canSell = true`, `canRent = false`);
     rent settings are made in the existing rental product card (`RentalProductForm`).
 11. **Edit** of the product card is done in this task as a **separate stage**.
+12. **Who** (2026-11-14): **create a product** (`POST /product`) — store OWNER and ADMIN only (MANAGER
+    removed). MANAGER may **edit** an existing product card and **add variants** to it. Variant count
+    decrease — see open question Q1.
+13. P1, P3, P5, P6 confirmed. P4 changed: a qty-0 variant **does** get a StockMovement (see P4).
 
-## Proposed (to confirm)
+## Open questions
+
+- **Q1.** «Менеджер может добавить/уменьшить кол-во вариантов» — means removing variants, or changing stock
+  of variants (already done via «Приход / Списание»)? Variant removal does not exist today; a variant with
+  sales/returns/rentals cannot be hard-deleted (FK + history) → would need an archive flag on ProductVariant.
+
+## Proposed (P1, P3, P5, P6 confirmed; P2 pending)
 
 - **P1. Draft in the UI.** Product list shows a «Черновик» badge on products with 0 variants; tapping opens
   step 2. Drafts are visible to OWNER/MANAGER only (sellers can't do anything with them) and are excluded
@@ -37,8 +47,12 @@
   «+ Новый тег» is hidden. No tag model/API changes now.
 - **P3. Partially filled variant** (e.g. sale price without cost, or qty without prices) → inline error on
   that variant, save disabled. Not dropped silently.
-- **P4. qty 0 variant**: Inventory row with 0, **no** StockMovement (a 0-unit movement is noise); the cost
-  entered is not stored — the cost is recorded at the first «Приход» (receipt requires cost already).
+- **P4. qty 0 variant** (decided): Inventory row with 0 **and** a StockMovement IN/PURCHASE with
+  `quantity = 0` and the entered `unitCost` — the cost is kept. Consequences: sums of qty / qty×cost are
+  unaffected; reports that count receipt operations or average `unitCost` without weighting must filter
+  `quantity > 0`; stock history shows this row as «Создан без остатка · приход X» (not «+0 шт»);
+  `costAtSale` (latest IN with cost) is unaffected because a sale needs stock, i.e. a later real receipt.
+  Manual receipts (`POST /warehouse/stock-in`, `@Min(1)`) stay ≥ 1.
 - **P5. «Изменить» on step 2 / back from step 2** opens step 1 in edit mode (`PATCH /product/:id`) —
   available once stage 4 is done; until then the step-2 header card has no «Изменить».
 - **P6. Attributes after variants exist** cannot be changed (they define the variants); in edit mode the
@@ -54,7 +68,10 @@
   in the same store → check generated code against the store too.
 - `POST /product/variants` validation: every `attributeValueId` belongs to one of the product's attributes;
   no two variants (incl. already existing ones) with the same value set; `quantity` integer ≥ 0;
-  qty 0 → no StockMovement (P4).
+  qty 0 → StockMovement with quantity 0 and unitCost (P4).
+- `POST /product`: `@Roles(OWNER)` (ADMIN passes RolesGuard) — MANAGER removed. `POST /product/variants`
+  stays OWNER + MANAGER (manager adds variants to existing products). Web «create product» for managers
+  stops working — acceptable (web is being replaced).
 - `POST /category/attribute/value`: AdminGuard → ADMIN or store OWNER, **find-or-create**
   (same value returns the existing row, 200), value trimmed, attribute must be on the owner's store
   (`AttributeOnStore`).
@@ -79,11 +96,13 @@
   (display only), remove, barcode input + scanner (reuse the expo-camera scanner).
 - Save: drop empty variants, block on partial ones (P3), `POST /product/variants`; 409 → highlight the
   variant with that barcode. Success → product detail, toast, invalidate product queries.
-- Entry points: «+» in the product list (OWNER/MANAGER); draft products open step 2 (P1).
+- Entry points: «+» in the product list (OWNER/ADMIN only); draft products open step 2 for OWNER and
+  MANAGER (P1).
+- Stock history: qty-0 creation row rendered as «Создан без остатка» (P4).
 
 ### Stage 4 — edit the product card
 - Backend: `PATCH /product/:id` (name, description, category, brand, tags, images add/remove/order/main;
-  attributes only while there are no variants — P6), same access rules as create.
+  attributes only while there are no variants — P6), OWNER + MANAGER (manager: own warehouses) + ADMIN.
 - Mobile: step 1 in edit mode (from product detail and from step 2 «Изменить»); adding variants to an
   existing product = step 2 with existing variants shown read-only.
 
