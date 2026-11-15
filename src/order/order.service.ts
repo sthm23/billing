@@ -34,6 +34,8 @@ import {
   assertReturnAccess,
   canSeeCost,
   canOpenCashbox,
+  isStoreOwner,
+  staffWarehouseIds,
 } from '@shared/helper/role.helper';
 import { resolvePaymentCashbox } from '../cashbox/payment-cashbox';
 import { SOLD_ORDER_FILTER } from './entities/sold-order.filter';
@@ -901,6 +903,12 @@ export class OrderService {
       if (!user.staff || order.storeId !== user.staff.storeId) {
         throw new ForbiddenException('No access to this order');
       }
+      // Any employee may take the payment of a colleague's order — of their
+      // own warehouses (the owner: any)
+      const payWarehouses = staffWarehouseIds(user);
+      if (payWarehouses && !payWarehouses.includes(order.warehouseId)) {
+        throw new ForbiddenException('No access to this warehouse');
+      }
       // Paying a rental order here would deduct its items from stock
       this.assertNotRental(order);
       this.assertCanSell(
@@ -1477,8 +1485,16 @@ export class OrderService {
       if (storeId) {
         params['storeId'] = storeId;
       }
-      if (user.type === UserType.STAFF && user.role !== UserRole.OWNER) {
-        params['cashierId'] = user.staff.id;
+      // Owner — any order; manager — orders of their warehouses; others —
+      // only orders they created
+      if (user.type === UserType.STAFF && !isStoreOwner(user)) {
+        if (user.staff.role === StaffRole.MANAGER) {
+          params['warehouseId'] = {
+            in: user.staff.warehouse.map((w) => w.warehouseId),
+          };
+        } else {
+          params['cashierId'] = user.staff.id;
+        }
       }
       const order = await this.prisma.order.findUnique({
         where: {

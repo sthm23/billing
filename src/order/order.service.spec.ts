@@ -454,6 +454,32 @@ describe('OrderService', () => {
       );
     });
 
+    it("lets a seller take the payment of a colleague's order of their warehouse", async () => {
+      prisma.order.findUnique.mockResolvedValue(
+        makeOrder({ cashierId: 'colleague' }),
+      );
+      await service.createPayment(
+        ORDER,
+        payDto(100000),
+        makeUser(StaffRole.SELLER),
+      );
+      expect(prisma.payment.createMany).toHaveBeenCalled();
+    });
+
+    it('rejects paying an order of a warehouse the employee has no access to', async () => {
+      prisma.order.findUnique.mockResolvedValue(
+        makeOrder({ warehouseId: 'other-warehouse' }),
+      );
+      await expect(
+        service.createPayment(
+          ORDER,
+          payDto(100000),
+          makeUser(StaffRole.SELLER),
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.payment.createMany).not.toHaveBeenCalled();
+    });
+
     it('rejects a payment when the seller has no open cashbox and chose none', async () => {
       prisma.cashbox.findMany.mockResolvedValue([]);
       await expect(
@@ -1104,6 +1130,23 @@ describe('OrderService', () => {
           where: expect.objectContaining({ id: ORDER, storeId: STORE }),
         }),
       );
+    });
+
+    it('lets a manager cancel any order of their warehouses, a seller only own ones', async () => {
+      prisma.order.findUnique.mockResolvedValue(null);
+      await expect(
+        service.remove(ORDER, makeUser(StaffRole.MANAGER)),
+      ).rejects.toThrow('Order not found');
+      const managerWhere = prisma.order.findUnique.mock.calls[0][0].where;
+      expect(managerWhere).toMatchObject({ warehouseId: { in: [WAREHOUSE] } });
+      expect(managerWhere).not.toHaveProperty('cashierId');
+
+      await expect(
+        service.remove(ORDER, makeUser(StaffRole.SELLER)),
+      ).rejects.toThrow('Order not found');
+      expect(prisma.order.findUnique.mock.calls[1][0].where).toMatchObject({
+        cashierId: 'seller-staff',
+      });
     });
   });
 
