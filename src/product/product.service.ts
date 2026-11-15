@@ -23,7 +23,10 @@ import { buildSku } from '@shared/helper/sku-generator.helper';
 import { CurrentUser } from '@auth/models/auth.model';
 import { BarcodeService } from '@shared/helper/bar-code.service';
 import { canSeeCost } from '@shared/helper/role.helper';
-import { UpdateProductVariantPriceDTO } from './dto/update-product.dto';
+import {
+  UpdateProductDto,
+  UpdateProductVariantPriceDTO,
+} from './dto/update-product.dto';
 import { ProductListParams } from './dto/product-list-params.dto';
 import { LOW_STOCK_THRESHOLD } from './product.constants';
 import { assertWarehouseAccess } from '@shared/helper/warehouse-access.helper';
@@ -767,6 +770,9 @@ export class ProductService {
         id: product.id,
         name: product.name,
         brand: product.brand?.name,
+        /** Ids for the edit form (mobile «Изменить карточку») */
+        brandId: product.brandId,
+        categoryId: product.categoryId,
         category: product.category?.name,
         categoryI18n: categoryI18n(product.category),
         description: product.description,
@@ -1012,6 +1018,108 @@ export class ProductService {
       if (error instanceof ForbiddenException) throw error;
       throw new BadRequestException(error.response || error.message);
     }
+  }
+
+  /**
+   * Edit the product card. Attributes define the variants, so they can change
+   * only while the product has none. Tags and images are replaced by the new
+   * lists (images: first = main). Returns the product card (`findOne`).
+   */
+  async updateProduct(id: string, dto: UpdateProductDto, user: CurrentUser) {
+    const product = await this.prisma.product.findUnique({
+      where: { id },
+      include: {
+        attributes: { select: { attributeId: true } },
+        _count: { select: { variants: true } },
+      },
+    });
+    if (!product) throw new NotFoundException('Product not found');
+    this.assertWarehouseAccess(product.storeId, product.warehouseId, user);
+    if (product.isArchived) {
+      throw new BadRequestException('An archived product cannot be edited');
+    }
+
+    const name = dto.name?.trim();
+    if (dto.name !== undefined && !name) {
+      throw new BadRequestException('Product name is required');
+    }
+    if (dto.categoryId) {
+      await this.assertStoreSubcategory(dto.categoryId, product.storeId);
+    }
+    const attributeIds = dto.attributeIds
+      ? [...new Set(dto.attributeIds)]
+      : undefined;
+    if (attributeIds) {
+      const current = new Set(product.attributes.map((a) => a.attributeId));
+      const changed =
+        current.size !== attributeIds.length ||
+        attributeIds.some((a) => !current.has(a));
+      if (changed && product._count.variants > 0) {
+        throw new BadRequestException(
+          'Attributes cannot be changed once the product has variants',
+        );
+      }
+    }
+    const imageKeys = dto.images
+      ? await this.resolveImageKeys(dto.images, product.storeId)
+      : undefined;
+
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.product.update({
+          where: { id },
+          data: {
+            ...(name !== undefined ? { name } : {}),
+            ...(dto.description !== undefined
+              ? { description: dto.description.trim() || null }
+              : {}),
+            ...(dto.categoryId ? { categoryId: dto.categoryId } : {}),
+            ...(dto.brandId ? { brandId: dto.brandId } : {}),
+          },
+        });
+        if (attributeIds) {
+          await tx.productAttribute.deleteMany({ where: { productId: id } });
+          await tx.productAttribute.createMany({
+            data: attributeIds.map((attributeId) => ({
+              productId: id,
+              attributeId,
+            })),
+          });
+        }
+        if (dto.tagIds) {
+          await tx.productTagValue.deleteMany({ where: { productId: id } });
+          await tx.productTagValue.createMany({
+            data: [...new Set(dto.tagIds)].map((tagValueId) => ({
+              productId: id,
+              tagValueId,
+            })),
+          });
+        }
+        if (imageKeys) {
+          await tx.productImage.deleteMany({ where: { productId: id } });
+          await tx.productImage.createMany({
+            data: imageKeys.map((key, index) => ({
+              productId: id,
+              key,
+              order: index,
+              isMain: index === 0,
+            })),
+          });
+        }
+      });
+      this.logger.info(
+        { productId: id, fields: Object.keys(dto) },
+        'Product updated',
+      );
+    } catch (error: any) {
+      this.logger.error(
+        { productId: id, err: error.message },
+        'Failed to update product',
+      );
+      throw new BadRequestException(error.response || error.message);
+    }
+
+    return this.findOne(id, user);
   }
 
   async remove(id: string, user: CurrentUser) {

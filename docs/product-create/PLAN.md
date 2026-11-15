@@ -53,8 +53,12 @@
 - `GET /product` list: `variantCount` (or `isDraft`) per item; drafts hidden from sellers and from «Мало».
 - Specs for all of the above.
 
-### Stage 2 — mobile, step 1 «Карточка»
-- Form store (zustand) shared by both steps.
+### Stage 2 — mobile, step 1 «Карточка» — DONE 2026-11-14
+> No shared form store: step 1 creates the card on the server, step 2 loads it by id (`GET /product/:id`) —
+> the same path opens a draft. New deps `expo-image-picker` + `expo-image-manipulator` (config plugin in
+> `app.json`) → **new dev build needed**. Screen `screens/product/form/ProductCardFormScreen.tsx`, photos
+> `use-product-photos.ts` + `libs/product-image.ts`, `components/product/BrandSheet.tsx`, i18n `productForm.*`.
+> Tap a photo = make it main. Step 2 route `variants/[id]` is a ComingSoon placeholder until stage 3.
 - Warehouse banner = current working warehouse.
 - Photos: gallery/camera, compression, `POST /image/upload` → presigned PUT with progress, first =
   «Главное», remove; max 5.
@@ -63,7 +67,13 @@
 - Validation: name, category, brand. «Далее» → `POST /product` → step 2.
 - «+ Новый товар» in the product list — OWNER/ADMIN only.
 
-### Stage 3 — mobile, step 2 «Варианты»
+### Stage 3 — mobile, step 2 «Варианты» — DONE 2026-11-14
+> `screens/product/form/ProductVariantsScreen.tsx` (+ `variant-builder.ts`: combos, fill rules),
+> `components/product/BarcodeScanModal.tsx`, i18n `productVariants.*` (no plural forms — neutral «Вариантов: N»).
+> Same screen adds variants to an existing product («+» in the product card staff panel, owner/manager):
+> existing combinations are skipped; a product without attributes that has its variant shows «уже есть».
+> Draft rows: badge «Черновик» (warn), no price/stock; tap → step 2 for owner/manager.
+> «Добавить варианты позже» on a draft → product list.
 - Values per selected attribute: chips; NUMBER attribute → number input; «+» sheet (OWNER/ADMIN) →
   find-or-create value.
 - Variants = all combinations of chosen values minus removed; no attributes → one variant.
@@ -73,7 +83,14 @@
   invalidate product queries.
 - Drafts: «Черновик» badge in the list, tap → step 2 (OWNER/MANAGER/ADMIN).
 
-### Stage 4 — edit
+### Stage 4 — edit — DONE 2026-11-14
+> Backend `PATCH /product/:id` (`UpdateProductDto`, `updateProduct`): OWNER / staff OWNER / MANAGER (own
+> warehouse) / ADMIN; archived → 400; attributes only while no variants; tags and images replaced (images:
+> keys or public URLs, first = main, HEAD-checked); returns `findOne`. `GET /product/:id` gains `brandId`,
+> `categoryId`. Removed photos are dropped from the DB only — S3 objects are not deleted (cleanup later).
+> Mobile: route `(products)/edit/[id]` → `ProductCardFormScreen productId` (prefilled, attributes locked when
+> variants exist, «Сохранить» → back). Entry: product card pencil (was «Цена и аренда» in renting stores —
+> that stays reachable from the rental card) and «Изменить» on step 2.
 - Backend: `PATCH /product/:id` — name, description, category, brand, tags, images (add/remove/order/main);
   attributes only while there are no variants. OWNER + MANAGER (own warehouses) + ADMIN.
 - Mobile: step 1 in edit mode (from product detail and «Изменить» on step 2); add variants to an existing

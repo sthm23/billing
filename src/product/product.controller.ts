@@ -8,6 +8,7 @@ import {
   Query,
   ParseUUIDPipe,
   Delete,
+  Patch,
   Put,
 } from '@nestjs/common';
 import { ProductService } from './product.service';
@@ -22,7 +23,10 @@ import { CurrentUser } from '@shared/decorators/user.decorator';
 import { PaginationParams } from '@shared/dto/pagination-params.dto';
 import { StaffRole, UserRole } from '@generated/enums';
 import { type CurrentUser as CurrentUserType } from '@auth/models/auth.model';
-import { UpdateProductVariantPriceDTO } from './dto/update-product.dto';
+import {
+  UpdateProductDto,
+  UpdateProductVariantPriceDTO,
+} from './dto/update-product.dto';
 import { ProductListParams } from './dto/product-list-params.dto';
 
 @UseGuards(AuthJWTGuard)
@@ -114,6 +118,18 @@ export class ProductController {
     @CurrentUser() user: CurrentUserType,
   ) {
     return this.productService.findOne(id, user);
+  }
+
+  /** Edit the product card: owner, manager (own warehouses), admin */
+  @Patch(':id')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OWNER, StaffRole.OWNER, StaffRole.MANAGER)
+  update(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateProductDto,
+    @CurrentUser() user: CurrentUserType,
+  ) {
+    return this.productService.updateProduct(id, dto, user);
   }
 
   @Delete(':id')

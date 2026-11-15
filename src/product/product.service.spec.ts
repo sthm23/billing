@@ -55,6 +55,9 @@ describe('ProductService', () => {
       update: jest.fn(),
     },
     attributeValue: { findMany: jest.fn() },
+    productAttribute: { deleteMany: jest.fn(), createMany: jest.fn() },
+    productTagValue: { deleteMany: jest.fn(), createMany: jest.fn() },
+    productImage: { deleteMany: jest.fn(), createMany: jest.fn() },
     warehouse: { findUnique: jest.fn(), findFirst: jest.fn() },
     inventory: { create: jest.fn() },
     variantAttributeValue: { createMany: jest.fn() },
@@ -695,6 +698,119 @@ describe('ProductService', () => {
         owner(),
       );
       expect(prisma.productVariant.findFirst).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('updateProduct (edit the card)', () => {
+    const manager = () =>
+      makeUser({
+        staff: {
+          id: 'staff',
+          storeId: STORE,
+          role: StaffRole.MANAGER,
+          warehouse: [{ warehouseId: WAREHOUSE }],
+        },
+      } as unknown as Partial<CurrentUser>);
+    const stored = (over: Record<string, unknown> = {}) => ({
+      id: 'product',
+      storeId: STORE,
+      warehouseId: WAREHOUSE,
+      isArchived: false,
+      attributes: [{ attributeId: 'size' }],
+      _count: { variants: 0 },
+      ...over,
+    });
+
+    beforeEach(() => {
+      prisma.$transaction.mockImplementation(
+        (cb: (tx: typeof prisma) => unknown) => cb(prisma),
+      );
+      prisma.product.findUnique.mockResolvedValue(stored());
+      jest
+        .spyOn(service, 'findOne')
+        .mockResolvedValue({ id: 'product' } as never);
+    });
+
+    it('lets a manager of the warehouse rename the product and clear the description', async () => {
+      await service.updateProduct(
+        'product',
+        { name: '  Рубашка  ', description: '' },
+        manager(),
+      );
+      expect(prisma.product.update.mock.calls[0][0].data).toEqual({
+        name: 'Рубашка',
+        description: null,
+      });
+      expect(prisma.productTagValue.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.productImage.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects a manager of another warehouse', async () => {
+      prisma.product.findUnique.mockResolvedValue(
+        stored({ warehouseId: FOREIGN_WAREHOUSE }),
+      );
+      await expect(
+        service.updateProduct('product', { name: 'X' }, manager()),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('changes attributes only while there are no variants', async () => {
+      await service.updateProduct(
+        'product',
+        { attributeIds: ['size', 'color'] },
+        manager(),
+      );
+      expect(prisma.productAttribute.createMany).toHaveBeenCalled();
+
+      prisma.product.findUnique.mockResolvedValue(
+        stored({ _count: { variants: 2 } }),
+      );
+      await expect(
+        service.updateProduct(
+          'product',
+          { attributeIds: ['size', 'color'] },
+          manager(),
+        ),
+      ).rejects.toThrow('once the product has variants');
+      // the same set is not a change
+      await expect(
+        service.updateProduct('product', { attributeIds: ['size'] }, manager()),
+      ).resolves.toBeDefined();
+    });
+
+    it('replaces tags and images (first image = main)', async () => {
+      s3.headObject.mockResolvedValue({
+        size: 1000,
+        contentType: 'image/jpeg',
+      });
+      const prefix = `products/${STORE}/`;
+      await service.updateProduct(
+        'product',
+        { tagIds: ['t1'], images: [`${prefix}b.jpg`, `${prefix}a.jpg`] },
+        manager(),
+      );
+      expect(prisma.productTagValue.createMany.mock.calls[0][0].data).toEqual([
+        { productId: 'product', tagValueId: 't1' },
+      ]);
+      expect(prisma.productImage.createMany.mock.calls[0][0].data).toEqual([
+        { productId: 'product', key: `${prefix}b.jpg`, order: 0, isMain: true },
+        {
+          productId: 'product',
+          key: `${prefix}a.jpg`,
+          order: 1,
+          isMain: false,
+        },
+      ]);
+    });
+
+    it('rejects an archived product and an empty name', async () => {
+      await expect(
+        service.updateProduct('product', { name: '   ' }, manager()),
+      ).rejects.toThrow('name is required');
+      prisma.product.findUnique.mockResolvedValue(stored({ isArchived: true }));
+      await expect(
+        service.updateProduct('product', { name: 'X' }, manager()),
+      ).rejects.toThrow('archived');
     });
   });
 
