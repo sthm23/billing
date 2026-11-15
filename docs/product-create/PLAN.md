@@ -100,3 +100,8 @@
 - i18n ru/uz/en, dark theme, loading/error/empty states, `tsc`, backend tests, device QA.
 - `docs-updater`: `docs/features/products.md` (barcode per store + manual, drafts, variant rules, roles),
   `docs/api-map.md`, `billing/docs/DATABASE.md`, legacy `billing/docs/CLAUDE.md` barcode line.
+> Docs — DONE 2026-11-15: `docs/features/products.md` (new «Creating and Editing Products»), `docs/api-map.md`
+> (`PATCH /product/:id`, `POST /category/attribute/value`, roles, mobile consumers), `docs/security.md`,
+> `docs/features/authentication.md`, `docs/business-domain.md`, `docs/workflows/inventory.md`,
+> `billing/docs/DATABASE.md`, `billing/docs/CLAUDE.md`, `billing/AGENTS.md`, `billing-mobile/AGENTS.md`.
+> **Open**: device QA (new dev build; migration `20261114120000_barcode_per_store` still to apply).

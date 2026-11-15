@@ -176,7 +176,7 @@ CREATED → HOLD → [DEBT | COMPLETED] → [REFUNDED | CANCELLED]
 4. Enum imports: только из `@generated/enums`
 5. Проверяй права: staff.storeId, staff.warehouse
 6. Логируй всё: StockMovement, CashTransaction
-7. Barcode уникален глобально, SKU — в рамках магазина
+7. Barcode и SKU уникальны в рамках магазина (barcode — с 2026-11-14, `@@unique([storeId, barCode])`; можно задать заводской код)
 
 ---
 
@@ -188,6 +188,6 @@ CREATED → HOLD → [DEBT | COMPLETED] → [REFUNDED | CANCELLED]
 
 ---
 
-**Последнее обновление**: 2026-08-15  
+**Последнее обновление**: 2026-11-15 (строка про barcode)  
 **Версия системы**: 1.0  
 **Автор документации**: AI Assistant (Claude)

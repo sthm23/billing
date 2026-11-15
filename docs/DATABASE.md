@@ -361,7 +361,7 @@ model ProductVariant {
   id             String                  @id @default(uuid())
   productId      String
   sku            String  // Уникален в пределах магазина
-  barCode        String? // Уникален глобально
+  barCode        String? // Уникален в пределах магазина (с 2026-11-14)
   price          Decimal // Цена продажи
   canSell        Boolean  @default(true)  // Можно продавать
   canRent        Boolean  @default(false) // Можно сдавать в аренду
@@ -378,18 +378,18 @@ model ProductVariant {
   attributes     VariantAttributeValue[]
   
   @@unique([storeId, sku])
-  @@unique([barCode])
+  @@unique([storeId, barCode])
   @@index([productId])
 }
 ```
 
 **Уникальность**:
 - `[storeId, sku]` — SKU уникален в рамках магазина
-- `barCode` — уникален глобально
+- `[storeId, barCode]` — баркод уникален в рамках магазина (2026-11-14, миграция `20261114120000_barcode_per_store`: индекс `product_variants_barCode_key` → `product_variants_storeId_barCode_key`; раньше — глобально)
 
 **Логика**:
 - `sku` генерируется автоматически: `buildSku(productName, category, attributes)`
-- `barCode` генерируется через `BarcodeSequence` (автоинкремент с 200000000000)
+- `barCode` — собственный (заводской) код из `POST /product/variants` (`variants[].barCode`, 8–14 цифр, свободен в магазине, иначе 409) или генерируется через `BarcodeSequence` (12-значный счётчик с 200000000000 + контрольная цифра EAN-13; занятый в магазине код пропускается)
 - `storeId` и `warehouseId` берутся из `product`
 - `canSell = false` — вариант нельзя добавить/оплатить в обычном заказе
 - `canRent = true` требует `rentPricePerDay > 0`; подробнее — [docs/features/rental.md](../../docs/features/rental.md)
@@ -414,7 +414,7 @@ model ProductImage {
 ```
 
 **Логика**:
-- Первая картинка помечается `isMain: true`, `order` = позиция в `images` запроса `POST /product`
+- Первая картинка помечается `isMain: true`, `order` = позиция в `images` запроса `POST /product` / `PATCH /product/:id` (PATCH заменяет все строки товара; объекты в хранилище при этом не удаляются)
 - Хранится **ключ**, не URL (2026-11-13, миграция `20261113150000_product_image_key`: колонка `url` → `key`, все старые строки с AWS-URL удалены). Публичный URL строит backend: `S3_PUBLIC_URL/<key>`; API по-прежнему отдаёт `images: [{ id, isMain, url }]`
 - Файлы лежат в Uztelecom Object Storage (S3-совместимое); правила загрузки — [docs/security.md → File Uploads and S3](../../docs/security.md#file-uploads-and-s3)
 
@@ -434,7 +434,7 @@ model BarcodeSequence {
 **Логика**:
 - Инициализируется с `200000000000`
 - При каждом создании варианта инкрементируется
-- Используется `BarcodeService.generateUniqueBarcode()`
+- Используется `BarcodeService.generateUniqueBarcode()` — счётчик глобальный, но уникальность баркода проверяется в рамках магазина (`ProductService.generateStoreBarcode`, до 10 попыток)
 
 ---
 
@@ -1468,7 +1468,7 @@ UNIQUE (userId), UNIQUE (login)
 
 -- ProductVariant
 UNIQUE ([storeId, sku])  -- SKU уникален в рамках магазина
-UNIQUE (barCode)         -- Barcode уникален глобально
+UNIQUE ([storeId, barCode])  -- Barcode уникален в рамках магазина (2026-11-14)
 
 -- Inventory
 UNIQUE ([warehouseId, variantId])  -- Один вариант на одном складе
@@ -1625,5 +1625,5 @@ ORDER BY sm.created_at DESC;
 
 ---
 
-**Последнее обновление**: 2026-11-13  
+**Последнее обновление**: 2026-11-15  
 **Версия схемы**: Prisma 6 / PostgreSQL 17

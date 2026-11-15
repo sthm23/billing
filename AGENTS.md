@@ -317,8 +317,15 @@ await this.prisma.$transaction(async (tx) => {
 ### SKU & Barcode
 
 1. ✅ **SKU is unique per store** (`@@unique([storeId, sku])`)
-2. ✅ **Barcode is globally unique** (`@@unique([barCode])`)
-3. ✅ **Barcode is auto-generated** via `BarcodeSequence` table (200000000001, 200000000002, ...)
+2. ✅ **Barcode is unique per store** (`@@unique([storeId, barCode])`, 2026-11-14 — was global)
+3. ✅ **Barcode is manual or auto-generated**: an optional own (factory) code in `POST /product/variants` (`variants[].barCode`, 8–14 digits, `BARCODE_PATTERN`; taken in the store → 409), otherwise `BarcodeService` (global `BarcodeSequence` counter + EAN-13 check digit), re-drawn while taken in the store (`ProductService.generateStoreBarcode`)
+
+### Products (2026-11-14, `billing/docs/product-create/PLAN.md`)
+
+1. ✅ **`POST /product` — store OWNER + ADMIN only**; MANAGER edits the card (`PATCH /product/:id`) and adds variants
+2. ✅ **A product without variants is a draft** (`isDraft` in `GET /product`), hidden from non-managers and from «Мало»
+3. ✅ **Variant `quantity = 0` → Inventory 0, no StockMovement**; `> 0` → StockMovement PURCHASE
+4. ✅ **Attributes cannot change once the product has variants**; attribute values are find-or-create by store OWNER / ADMIN
 
 ### Multi-Tenancy
 
