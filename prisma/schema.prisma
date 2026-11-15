@@ -476,6 +476,8 @@ model Order {
   createdAt   DateTime     @default(now())
   /// Set once when the order becomes COMPLETED or DEBT (the sale)
   soldAt      DateTime?
+  /// Optional term for the debt left on the order ("вернуть до"), set when the sale leaves a debt
+  debtDueAt   DateTime?
 
   isReturned     Boolean             @default(false)
   returnedAt     DateTime?
@@ -673,6 +675,9 @@ model ReturnedOrder {
   createdBy   String
   status      ReturnOrderStatus
   totalAmount Decimal           @default(0)
+  /// Why the customer returned the goods — information only
+  reason      ReturnReason      @default(OTHER)
+  comment     String?
   items       ReturnItem[]
   payments    ReturnPayment[]
   order       Order             @relation(fields: [orderId], references: [id])
@@ -852,6 +857,7 @@ enum CashTransactionCategory {
   OTHER
   RENTAL // income of a rental order; not to be confused with RENT (premises rent expense)
   DRY_CLEANING // planned dry cleaning of a rental item (EXPENSE; INCOME when cancelled)
+  DEFECT_COMPENSATION // money given for a defective item the shop does not take back (manual EXPENSE, no stock movement)
 }
 
 enum RentalStatus {
@@ -943,6 +949,13 @@ enum ReturnOrderStatus {
   DEBT
   CREDIT
   COMPLETED
+}
+
+enum ReturnReason {
+  DEFECT
+  NOT_FIT
+  EXTRA
+  OTHER
 }
 
 enum PaymentType {

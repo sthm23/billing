@@ -19,6 +19,7 @@ import {
   OrderStatus,
   PaymentType,
   ReturnOrderStatus,
+  ReturnReason,
   StaffRole,
   StockMovementReason,
   StockMovementType,
@@ -29,7 +30,8 @@ import { OrderItem, Prisma } from '@generated/client';
 import { CreateReturnOrderDto, ReturnItemDto } from './dto/create-return.dto';
 import { OrderQueryParams, OrderSummaryParams } from './entities/order.entity';
 import { DateRangeParams, resolveDateRange } from '@shared/dto/date-range.dto';
-import { canSeeCost } from '@shared/helper/role.helper';
+import { assertReturnAccess, canSeeCost } from '@shared/helper/role.helper';
+import { resolvePaymentCashbox } from '../cashbox/payment-cashbox';
 import { SOLD_ORDER_FILTER } from './entities/sold-order.filter';
 import { assertWarehouseAccess } from '@shared/helper/warehouse-access.helper';
 
@@ -310,6 +312,8 @@ export class OrderService {
     if (!user.staff || order.storeId !== user.staff.storeId) {
       throw new ForbiddenException('No access to this order');
     }
+    // Store owner, or a manager of the order's warehouse
+    assertReturnAccess(user, order.warehouseId);
     this.assertNotRental(order);
 
     if (order.isReturned) {
@@ -352,20 +356,15 @@ export class OrderService {
       customerPayments,
     );
 
-    const cashBox = await this.prisma.cashbox.findFirst({
-      where: {
-        storeId: order.storeId,
-        warehouseId: order.warehouseId,
-        sellerId: user.staff.id,
-        status: CashStatus.OPEN,
-      },
-    });
-
-    if (!cashBox) {
-      throw new BadRequestException(
-        'Open cashbox not found for the order store and warehouse',
-      );
-    }
+    // A cashbox only when money is paid out now: reducing a debt or paying out
+    // later (CREDIT) moves no money. Same rule as a debt repayment.
+    const cashBox =
+      cashierPayments > 0
+        ? await resolvePaymentCashbox(this.prisma, user, {
+            cashboxId: createOrderDto.cashboxId,
+            warehouseId: order.warehouseId,
+          })
+        : null;
     try {
       return await this.prisma.$transaction(async (prisma) => {
         const returnOrder = await prisma.returnedOrder.create({
@@ -374,6 +373,8 @@ export class OrderService {
             createdBy: user.staff.id,
             status: initialReturnStatus,
             totalAmount: refundAmount,
+            reason: createOrderDto.reason ?? ReturnReason.OTHER,
+            comment: createOrderDto.comment ?? null,
           },
         });
 
@@ -434,17 +435,19 @@ export class OrderService {
             createdBy: user.staff.id,
           };
         });
-        await prisma.cashTransaction.createMany({
-          data: createdPayments.map((p) => ({
-            cashboxId: cashBox.id,
-            amount: p.amount,
-            type: CashTransactionType.EXPENSE,
-            createdById: user.staff.id,
-            orderId: order.id,
-            category: CashTransactionCategory.RETURN,
-            paymentType: p.type as PaymentType,
-          })),
-        });
+        if (cashBox) {
+          await prisma.cashTransaction.createMany({
+            data: createdPayments.map((p) => ({
+              cashboxId: cashBox.id,
+              amount: p.amount,
+              type: CashTransactionType.EXPENSE,
+              createdById: user.staff.id,
+              orderId: order.id,
+              category: CashTransactionCategory.RETURN,
+              paymentType: p.type as PaymentType,
+            })),
+          });
+        }
 
         const returnStatus = this.validateReturnPayments(
           order.status, // статус заказа
@@ -479,12 +482,14 @@ export class OrderService {
           },
         });
 
-        await prisma.cashbox.update({
-          where: { id: cashBox.id },
-          data: {
-            balance: { increment: new Prisma.Decimal(-cashierPayments) },
-          },
-        });
+        if (cashBox) {
+          await prisma.cashbox.update({
+            where: { id: cashBox.id },
+            data: {
+              balance: { increment: new Prisma.Decimal(-cashierPayments) },
+            },
+          });
+        }
 
         this.logger.info(
           {
@@ -495,7 +500,14 @@ export class OrderService {
           },
           'Order return completed',
         );
-        return Promise.resolve({ message: 'Order returned successfully' });
+        return {
+          message: 'Order returned successfully',
+          returnId: returnOrder.id,
+          status: returnStatus,
+          totalAmount: refundAmount,
+          paidOut: cashierPayments,
+          cashboxId: cashBox?.id ?? null,
+        };
       });
     } catch (error: any) {
       this.logger.error(
@@ -889,6 +901,12 @@ export class OrderService {
           'A customer is required to leave part of the order as debt',
         );
       }
+      const leavesDebt = totalPaid < +order.totalAmount;
+      const debtDueAt =
+        leavesDebt && dto.debtDueAt ? new Date(dto.debtDueAt) : null;
+      if (debtDueAt && debtDueAt.getTime() < Date.now()) {
+        throw new BadRequestException('Debt due date cannot be in the past');
+      }
       const cashBox = await this.prisma.cashbox.findFirst({
         where: {
           storeId: order.storeId,
@@ -993,6 +1011,7 @@ export class OrderService {
             customerId: customer?.id ?? null,
             paidAmount:
               status === OrderStatus.COMPLETED ? +order.totalAmount : totalPaid,
+            debtDueAt,
             // The sale moment; a later debt payment keeps it
             ...(order.soldAt ? {} : { soldAt: new Date() }),
           },
@@ -1082,6 +1101,8 @@ export class OrderService {
           warehouse: true,
           // Clients open a rental order in the rental screens, not in the cart
           rental: { select: { id: true, status: true } },
+          // «Должны клиенту» badge: a return whose refund is not paid out yet
+          returns: { select: { status: true } },
         },
         skip: skip,
         take: +pageSize,
@@ -1107,6 +1128,9 @@ export class OrderService {
           paidAmount: order.paidAmount,
           createdAt: order.createdAt,
           rental: order.rental,
+          isReturned: order.isReturned,
+          returnedAmount: order.returnedAmount,
+          returnStatus: order.returns?.status ?? null,
         })),
       };
     } catch (error: any) {
@@ -1115,7 +1139,8 @@ export class OrderService {
   }
 
   /**
-   * Orders sold in `[from, to)`: COMPLETED or DEBT with `soldAt` in the period.
+   * Orders sold in `[from, to)`: COMPLETED, DEBT or REFUNDED with `soldAt` in
+   * the period; `total` is net of returns, `debt` what DEBT orders still owe.
    * A rental counts from its issue (`soldAt`) even while the order is still HOLD.
    * Owner/admin — the whole store; manager — their warehouses; seller/cashier — own sales.
    */
@@ -1155,20 +1180,46 @@ export class OrderService {
     // Narrows the role scope to one warehouse (access checked above)
     if (range.warehouseId) where.warehouseId = range.warehouseId;
     try {
-      const result = await this.prisma.order.aggregate({
-        where,
-        _count: { _all: true },
-        _sum: { totalAmount: true, paidAmount: true },
-      });
-      const total = Number(result._sum.totalAmount ?? 0);
-      const paid = Number(result._sum.paidAmount ?? 0);
+      const [result, debtOrders] = await Promise.all([
+        this.prisma.order.aggregate({
+          where,
+          _count: { _all: true },
+          _sum: { totalAmount: true, returnedAmount: true },
+        }),
+        // Still owed on the period's sales (after their returns): DEBT orders
+        // and active rentals (HOLD) not fully paid yet
+        this.prisma.order.aggregate({
+          where: {
+            AND: [
+              where,
+              {
+                OR: [
+                  { status: OrderStatus.DEBT },
+                  { status: OrderStatus.HOLD, rental: { isNot: null } },
+                ],
+              },
+            ],
+          },
+          _sum: { totalAmount: true, returnedAmount: true, paidAmount: true },
+        }),
+      ]);
+      // Net sales: returned goods are not sold
+      const total =
+        Number(result._sum.totalAmount ?? 0) -
+        Number(result._sum.returnedAmount ?? 0);
+      const debt = Math.max(
+        0,
+        Number(debtOrders._sum.totalAmount ?? 0) -
+          Number(debtOrders._sum.returnedAmount ?? 0) -
+          Number(debtOrders._sum.paidAmount ?? 0),
+      );
       return {
         from,
         to,
         count: result._count._all,
         total,
-        paid,
-        debt: total - paid,
+        paid: total - debt,
+        debt,
       };
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message);
@@ -1263,8 +1314,27 @@ export class OrderService {
             },
           },
           warehouse: { select: { id: true, name: true } },
-          payments: true,
+          cashier: {
+            select: { id: true, user: { select: { fullName: true } } },
+          },
+          payments: {
+            include: {
+              cashier: { select: { user: { select: { fullName: true } } } },
+            },
+            orderBy: { createdAt: 'asc' },
+          },
           services: true,
+          returns: {
+            include: {
+              items: { select: { itemId: true, quantity: true } },
+              payments: {
+                include: {
+                  cashier: { select: { user: { select: { fullName: true } } } },
+                },
+                orderBy: { createdAt: 'asc' },
+              },
+            },
+          },
         },
       });
       if (!order) {
@@ -1272,10 +1342,33 @@ export class OrderService {
       }
       this.logger.debug({ orderId: id, order }, 'Order found');
       const showCost = canSeeCost(user);
+      // Settlement after the return, computed here so clients only display it
+      const customerPaid = order.payments.reduce(
+        (sum, p) => sum + +p.amount,
+        0,
+      );
+      const netTotal = +order.totalAmount - +order.returnedAmount;
+      const refundedOut = (order.returns?.payments ?? []).reduce(
+        (sum, p) => sum + +p.amount,
+        0,
+      );
+      const settlement = {
+        /** What the customer still owes on this order */
+        debt: Math.max(0, netTotal - customerPaid),
+        /** What the store still owes the customer after a return (CREDIT) */
+        owedToCustomer: Math.max(0, customerPaid - netTotal - refundedOut),
+        /** Refund already paid out */
+        refundedOut,
+      };
       return Promise.resolve({
         ...order,
+        settlement,
         items: order.items.map(({ costAtSale, ...item }) => ({
           ...item,
+          // Units of this line taken back by the order's return
+          returnedQuantity:
+            order.returns?.items.find((r) => r.itemId === item.id)?.quantity ??
+            0,
           // Purchase cost only for those who enter it (owner/manager)
           ...(showCost ? { costAtSale } : {}),
           variant: {

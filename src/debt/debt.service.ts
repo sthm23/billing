@@ -281,6 +281,7 @@ export class DebtService {
             returnedAmount: true,
             soldAt: true,
             createdAt: true,
+            debtDueAt: true,
             customer: {
               select: { user: { select: { fullName: true, phone: true } } },
             },
@@ -401,6 +402,7 @@ export class DebtService {
           o.soldAt ?? o.createdAt,
           o.payments[0]?.createdAt,
           'order',
+          o.debtDueAt ?? null,
         );
       }
       for (const d of debts) {
@@ -532,8 +534,8 @@ export class DebtService {
             total,
             paid: +o.paidAmount,
             remaining: total - +o.paidAmount,
-            dueAt: null,
-            overdue: false,
+            dueAt: o.debtDueAt ?? null,
+            overdue: !!o.debtDueAt && o.debtDueAt.getTime() < Date.now(),
             payments: o.payments.map(toPayment),
           };
         }),

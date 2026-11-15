@@ -129,4 +129,9 @@ export class CreateOrderPaymentDto {
   @ValidateNested({ each: true })
   @Type(() => OrderPaymentDto)
   payments: OrderPaymentDto[] = [];
+
+  /** Optional term of the debt left by this payment («вернуть до»); ignored when the order is paid in full */
+  @IsOptional()
+  @IsDateString()
+  debtDueAt?: string;
 }

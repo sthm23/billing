@@ -1,5 +1,5 @@
-import { OrderChannel, PaymentType } from '@generated/enums';
-import { Type } from 'class-transformer';
+import { PaymentType, ReturnReason } from '@generated/enums';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
@@ -9,6 +9,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -49,4 +50,22 @@ export class CreateReturnOrderDto {
   @ValidateNested({ each: true })
   @Type(() => ReturnOrderPaymentDto)
   returnPayments: ReturnOrderPaymentDto[] = [];
+
+  /** Why the goods are returned — information only */
+  @IsOptional()
+  @IsEnum(ReturnReason)
+  reason?: ReturnReason;
+
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim() || undefined : value,
+  )
+  @IsString()
+  @MaxLength(500)
+  comment?: string;
+
+  /** Open cashbox of the store to pay out from; default — the employee's own open cashbox. Used only with a payout */
+  @IsOptional()
+  @IsUUID('4')
+  cashboxId?: string;
 }

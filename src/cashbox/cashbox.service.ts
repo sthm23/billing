@@ -13,6 +13,7 @@ import { assertWarehouseAccess } from '@shared/helper/warehouse-access.helper';
 import { PrismaService } from '@prisma/prisma.service';
 import {
   CashStatus,
+  CashTransactionCategory,
   CashTransactionType,
   PaymentType,
   StaffRole,
@@ -203,6 +204,25 @@ export class CashboxService {
         throw new BadRequestException(
           'Cannot add transaction to a cashbox that is not OPEN',
         );
+      }
+      // Compensation for a defective item is money given out, never received
+      if (
+        dto.category === CashTransactionCategory.DEFECT_COMPENSATION &&
+        dto.type !== CashTransactionType.EXPENSE
+      ) {
+        throw new BadRequestException(
+          'Defect compensation can only be an expense',
+        );
+      }
+      // A linked order must be of the cashbox's store
+      if (dto.orderId) {
+        const order = await this.prisma.order.findFirst({
+          where: { id: dto.orderId, storeId: cashBox.storeId },
+          select: { id: true },
+        });
+        if (!order) {
+          throw new BadRequestException('Order not found in this store');
+        }
       }
       await this.prisma.$transaction(async (prisma) => {
         await prisma.cashTransaction.create({

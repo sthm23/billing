@@ -1,3 +1,4 @@
+import { ForbiddenException } from '@nestjs/common';
 import { CurrentUser } from '@auth/models/auth.model';
 import { StaffRole, UserRole } from '@generated/enums';
 
@@ -12,4 +13,36 @@ export function canSeeCost(user: CurrentUser): boolean {
     user.staff?.role === StaffRole.OWNER ||
     user.staff?.role === StaffRole.MANAGER
   );
+}
+
+/** Store owner or manager — may process returns and pay out refunds. */
+export function canProcessReturns(user: CurrentUser): boolean {
+  return (
+    user.role === UserRole.OWNER ||
+    user.staff?.role === StaffRole.OWNER ||
+    user.staff?.role === StaffRole.MANAGER
+  );
+}
+
+/**
+ * Returns and refund payouts: store owner (any warehouse) or a manager of the
+ * order's warehouse. The store itself is checked by the caller.
+ */
+export function assertReturnAccess(
+  user: CurrentUser,
+  warehouseId: string,
+): void {
+  if (!user.staff || !canProcessReturns(user)) {
+    throw new ForbiddenException(
+      'Only the owner or a manager can process returns',
+    );
+  }
+  const isOwner =
+    user.role === UserRole.OWNER || user.staff.role === StaffRole.OWNER;
+  if (
+    !isOwner &&
+    !user.staff.warehouse.some((w) => w.warehouseId === warehouseId)
+  ) {
+    throw new ForbiddenException('No access to this warehouse');
+  }
 }

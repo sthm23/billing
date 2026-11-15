@@ -97,7 +97,7 @@ describe('OrderService', () => {
       update: jest.fn(),
       deleteMany: jest.fn(),
     },
-    cashbox: { findFirst: jest.fn(), update: jest.fn() },
+    cashbox: { findFirst: jest.fn(), findMany: jest.fn(), update: jest.fn() },
     payment: { createMany: jest.fn() },
     cashTransaction: { createMany: jest.fn() },
     stockMovement: { createMany: jest.fn(), findMany: jest.fn() },
@@ -133,6 +133,9 @@ describe('OrderService', () => {
     ]);
     prisma.inventory.updateMany.mockResolvedValue({ count: 1 });
     prisma.cashbox.findFirst.mockResolvedValue({ id: 'cashbox' });
+    prisma.cashbox.findMany.mockResolvedValue([
+      { id: 'cashbox', warehouseId: WAREHOUSE },
+    ]);
     prisma.customer.findUnique.mockResolvedValue({ id: CUSTOMER });
     prisma.stockMovement.findMany.mockResolvedValue([
       { variantId: VARIANT, unitCost: 55000 },
@@ -455,6 +458,39 @@ describe('OrderService', () => {
       );
     });
 
+    it('keeps the debt due date when a debt is left', async () => {
+      const due = new Date(Date.now() + 7 * 86400000).toISOString();
+      await service.createPayment(
+        ORDER,
+        { ...payDto(40000, CUSTOMER), debtDueAt: due },
+        makeUser(StaffRole.SELLER),
+      );
+      expect(prisma.order.update.mock.calls[0][0].data.debtDueAt).toEqual(
+        new Date(due),
+      );
+    });
+
+    it('ignores the due date of a fully paid order', async () => {
+      const due = new Date(Date.now() + 7 * 86400000).toISOString();
+      await service.createPayment(
+        ORDER,
+        { ...payDto(100000), debtDueAt: due },
+        makeUser(StaffRole.SELLER),
+      );
+      expect(prisma.order.update.mock.calls[0][0].data.debtDueAt).toBeNull();
+    });
+
+    it('rejects a due date in the past', async () => {
+      await expect(
+        service.createPayment(
+          ORDER,
+          { ...payDto(40000, CUSTOMER), debtDueAt: '2020-01-01T00:00:00.000Z' },
+          makeUser(StaffRole.SELLER),
+        ),
+      ).rejects.toThrow('Debt due date cannot be in the past');
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
     it('sells fully on debt without zero payment records', async () => {
       prisma.order.findUnique.mockResolvedValue(
         makeOrder({
@@ -544,7 +580,7 @@ describe('OrderService', () => {
     it('puts the goods back on the order warehouse', async () => {
       await service.createReturn(
         returnDto(2, 80000),
-        makeUser(StaffRole.SELLER),
+        makeUser(StaffRole.MANAGER),
       );
       expect(prisma.inventory.upsert).toHaveBeenCalledWith({
         where: {
@@ -561,7 +597,7 @@ describe('OrderService', () => {
     it('returns a fully paid order in full', async () => {
       await service.createReturn(
         returnDto(2, 80000),
-        makeUser(StaffRole.SELLER),
+        makeUser(StaffRole.MANAGER),
       );
       expect(prisma.returnedOrder.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -582,7 +618,7 @@ describe('OrderService', () => {
       await expect(
         service.createReturn(
           returnDto(1, 90000, { retailPrice: 90000, sale: 0 }),
-          makeUser(StaffRole.SELLER),
+          makeUser(StaffRole.MANAGER),
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
       // 50000 - 10000 from the order line, not 90000 from the request
@@ -597,7 +633,7 @@ describe('OrderService', () => {
       );
       await service.createReturn(
         returnDto(2, 30000),
-        makeUser(StaffRole.SELLER),
+        makeUser(StaffRole.MANAGER),
       );
       expect(prisma.returnedOrder.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -611,7 +647,7 @@ describe('OrderService', () => {
         paidOrder({ storeId: FOREIGN_STORE }),
       );
       await expect(
-        service.createReturn(returnDto(1), makeUser(StaffRole.SELLER)),
+        service.createReturn(returnDto(1), makeUser(StaffRole.MANAGER)),
       ).rejects.toBeInstanceOf(ForbiddenException);
     });
 
@@ -619,8 +655,123 @@ describe('OrderService', () => {
       const dto = returnDto(1);
       dto.items.push({ itemId: ITEM, quantity: 1 });
       await expect(
-        service.createReturn(dto, makeUser(StaffRole.SELLER)),
+        service.createReturn(dto, makeUser(StaffRole.MANAGER)),
       ).rejects.toThrow('Duplicate return item');
+    });
+
+    it('lets only the owner or a manager of the warehouse return', async () => {
+      await expect(
+        service.createReturn(returnDto(1), makeUser(StaffRole.SELLER)),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(
+        service.createReturn(returnDto(1), makeUser(StaffRole.CASHIER)),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      const otherManager = makeUser(StaffRole.MANAGER);
+      otherManager.staff.warehouse = [
+        { warehouseId: 'other-warehouse' },
+      ] as never;
+      await expect(
+        service.createReturn(returnDto(1), otherManager),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.returnedOrder.create).not.toHaveBeenCalled();
+      // The owner — any warehouse of the store
+      const owner = makeUser(StaffRole.OWNER);
+      owner.staff.warehouse = [] as never;
+      await service.createReturn(returnDto(2, 80000), owner);
+      expect(prisma.returnedOrder.create).toHaveBeenCalled();
+    });
+
+    it('saves the reason and comment and answers with the return', async () => {
+      const dto = returnDto(2, 80000);
+      dto.reason = 'DEFECT' as never;
+      dto.comment = 'Трещина';
+      const res = await service.createReturn(dto, makeUser(StaffRole.MANAGER));
+      expect(prisma.returnedOrder.create.mock.calls[0][0].data).toMatchObject({
+        reason: 'DEFECT',
+        comment: 'Трещина',
+      });
+      expect(res).toMatchObject({
+        returnId: 'return',
+        status: ReturnOrderStatus.COMPLETED,
+        totalAmount: 80000,
+        paidOut: 80000,
+        cashboxId: 'cashbox',
+      });
+    });
+
+    it('defaults the reason to OTHER', async () => {
+      await service.createReturn(
+        returnDto(2, 80000),
+        makeUser(StaffRole.MANAGER),
+      );
+      expect(prisma.returnedOrder.create.mock.calls[0][0].data).toMatchObject({
+        reason: 'OTHER',
+        comment: null,
+      });
+    });
+
+    it('pays out later (CREDIT) without a cashbox', async () => {
+      prisma.cashbox.findMany.mockResolvedValue([]);
+      const res = await service.createReturn(
+        returnDto(1),
+        makeUser(StaffRole.MANAGER),
+      );
+      expect(res).toMatchObject({
+        status: ReturnOrderStatus.CREDIT,
+        paidOut: 0,
+        cashboxId: null,
+      });
+      expect(prisma.cashbox.findMany).not.toHaveBeenCalled();
+      expect(prisma.cashTransaction.createMany).not.toHaveBeenCalled();
+      expect(prisma.cashbox.update).not.toHaveBeenCalled();
+      expect(prisma.inventory.upsert).toHaveBeenCalled();
+    });
+
+    it('reduces a debt without a cashbox', async () => {
+      prisma.order.findUnique.mockResolvedValue(
+        paidOrder({ status: OrderStatus.DEBT, payments: [{ amount: 30000 }] }),
+      );
+      const res = await service.createReturn(
+        returnDto(1),
+        makeUser(StaffRole.MANAGER),
+      );
+      // debt 50000, return 40000 → still owes 10000
+      expect(res).toMatchObject({ status: ReturnOrderStatus.DEBT });
+      expect(prisma.order.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: OrderStatus.DEBT }),
+        }),
+      );
+      expect(prisma.cashbox.findMany).not.toHaveBeenCalled();
+      expect(prisma.cashbox.update).not.toHaveBeenCalled();
+    });
+
+    it('pays out from a chosen open cashbox of the store', async () => {
+      prisma.cashbox.findFirst.mockResolvedValue({ id: 'chosen' });
+      const dto = returnDto(2, 80000);
+      dto.cashboxId = 'chosen';
+      await service.createReturn(dto, makeUser(StaffRole.MANAGER));
+      expect(prisma.cashbox.findFirst).toHaveBeenCalledWith({
+        where: { id: 'chosen', storeId: STORE, status: 'OPEN' },
+      });
+      expect(
+        prisma.cashTransaction.createMany.mock.calls[0][0].data[0],
+      ).toMatchObject({
+        cashboxId: 'chosen',
+        category: 'RETURN',
+        amount: 80000,
+      });
+      expect(prisma.cashbox.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'chosen' } }),
+      );
+    });
+
+    it('rejects a payout when no cashbox is open', async () => {
+      prisma.cashbox.findMany.mockResolvedValue([]);
+      await expect(
+        service.createReturn(returnDto(2, 80000), makeUser(StaffRole.MANAGER)),
+      ).rejects.toThrow('No open cashbox');
+      expect(prisma.returnedOrder.create).not.toHaveBeenCalled();
     });
   });
 
@@ -628,6 +779,7 @@ describe('OrderService', () => {
     beforeEach(() => {
       prisma.order.findUnique.mockResolvedValue(
         makeOrder({
+          returnedAmount: 0,
           items: [
             {
               id: ITEM,
@@ -643,6 +795,55 @@ describe('OrderService', () => {
       const order = await service.findOne(ORDER, makeUser(StaffRole.SELLER));
       expect(order.items[0]).not.toHaveProperty('costAtSale');
       expect(order.items[0].variant.quantity).toBe(4);
+    });
+
+    it('reports returned units and what the store owes after a return', async () => {
+      prisma.order.findUnique.mockResolvedValue(
+        makeOrder({
+          status: OrderStatus.REFUNDED,
+          totalAmount: 100000,
+          returnedAmount: 40000,
+          items: [
+            {
+              id: ITEM,
+              costAtSale: 55000,
+              variant: { id: VARIANT, inventory: [] },
+            },
+          ],
+          payments: [{ amount: 100000 }],
+          returns: {
+            status: ReturnOrderStatus.CREDIT,
+            items: [{ itemId: ITEM, quantity: 1 }],
+            payments: [{ amount: 15000 }],
+          },
+        }),
+      );
+      const order = await service.findOne(ORDER, makeUser(StaffRole.MANAGER));
+      expect(order.items[0].returnedQuantity).toBe(1);
+      expect(order.settlement).toEqual({
+        debt: 0,
+        owedToCustomer: 25000,
+        refundedOut: 15000,
+      });
+    });
+
+    it('reports the debt left on a debt order', async () => {
+      prisma.order.findUnique.mockResolvedValue(
+        makeOrder({
+          status: OrderStatus.DEBT,
+          totalAmount: 100000,
+          returnedAmount: 0,
+          items: [],
+          payments: [{ amount: 30000 }],
+          returns: null,
+        }),
+      );
+      const order = await service.findOne(ORDER, makeUser(StaffRole.SELLER));
+      expect(order.settlement).toEqual({
+        debt: 70000,
+        owedToCustomer: 0,
+        refundedOut: 0,
+      });
     });
 
     it('shows the purchase cost to a manager', async () => {
@@ -705,29 +906,59 @@ describe('OrderService', () => {
     };
 
     beforeEach(() => {
-      prisma.order.aggregate.mockResolvedValue({
-        _count: { _all: 3 },
-        _sum: { totalAmount: '300000', paidAmount: '220000' },
-      });
+      // 1st call — all sold orders, 2nd — the ones still owing
+      prisma.order.aggregate
+        .mockResolvedValueOnce({
+          _count: { _all: 3 },
+          _sum: { totalAmount: '300000', returnedAmount: '40000' },
+        })
+        .mockResolvedValueOnce({
+          _sum: {
+            totalAmount: '120000',
+            returnedAmount: '10000',
+            paidAmount: '30000',
+          },
+        })
+        .mockResolvedValue({ _count: { _all: 0 }, _sum: {} });
     });
 
-    it('sums orders sold in the period and derives the debt', async () => {
+    it('sums net sales of the period and the debt still owed', async () => {
       const res = await service.getSummary(range, makeUser(StaffRole.OWNER));
       const where = prisma.order.aggregate.mock.calls[0][0].where;
       expect(where).toEqual({
         soldAt: { gte: new Date(range.from), lt: new Date(range.to) },
         OR: [
-          { status: { in: [OrderStatus.COMPLETED, OrderStatus.DEBT] } },
+          {
+            status: {
+              in: [
+                OrderStatus.COMPLETED,
+                OrderStatus.DEBT,
+                OrderStatus.REFUNDED,
+              ],
+            },
+          },
           // An issued rental counts from soldAt while still HOLD (R6)
           { status: OrderStatus.HOLD, rental: { isNot: null } },
         ],
         storeId: STORE,
       });
+      // A return is not a sale: 300000 − 40000
       expect(res).toMatchObject({
         count: 3,
-        total: 300000,
-        paid: 220000,
+        total: 260000,
+        paid: 180000,
         debt: 80000,
+      });
+      expect(prisma.order.aggregate.mock.calls[1][0].where).toEqual({
+        AND: [
+          where,
+          {
+            OR: [
+              { status: OrderStatus.DEBT },
+              { status: OrderStatus.HOLD, rental: { isNot: null } },
+            ],
+          },
+        ],
       });
     });
 
@@ -737,10 +968,10 @@ describe('OrderService', () => {
         warehouseId: { in: [WAREHOUSE] },
       });
       await service.getSummary(range, makeUser(StaffRole.SELLER));
-      expect(prisma.order.aggregate.mock.calls[1][0].where).toMatchObject({
+      expect(prisma.order.aggregate.mock.calls[2][0].where).toMatchObject({
         cashierId: 'seller-staff',
       });
-      expect(prisma.order.aggregate.mock.calls[1][0].where).not.toHaveProperty(
+      expect(prisma.order.aggregate.mock.calls[2][0].where).not.toHaveProperty(
         'warehouseId',
       );
     });

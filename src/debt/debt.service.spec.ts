@@ -379,5 +379,35 @@ describe('DebtService', () => {
         createdBy: 'Кассир',
       });
     });
+
+    it('shows the due date of an order debt and flags it overdue', async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: 'c2',
+        user: { fullName: 'Алиев Камол', phone: '+998905556677' },
+      });
+      const past = new Date(Date.now() - DAY);
+      prisma.order.findMany.mockResolvedValue([
+        {
+          id: 'o1',
+          totalAmount: 3000000,
+          returnedAmount: 1000000,
+          paidAmount: 0,
+          soldAt: new Date('2026-10-10'),
+          createdAt: new Date('2026-10-10'),
+          debtDueAt: past,
+          warehouse: { id: 'w', name: 'Склад 1' },
+          payments: [],
+        },
+      ]);
+      prisma.customerDebt.findMany.mockResolvedValue([]);
+
+      const res = await service.getDebtor('c2', cashier);
+      expect(res.debts[0]).toMatchObject({
+        kind: 'ORDER',
+        remaining: 2000000,
+        dueAt: past,
+        overdue: true,
+      });
+    });
   });
 });

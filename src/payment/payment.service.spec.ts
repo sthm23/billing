@@ -37,6 +37,10 @@ const seller = {
     warehouse: [{ warehouseId: WAREHOUSE }],
   },
 } as unknown as CurrentUser;
+const manager = {
+  ...seller,
+  staff: { ...seller.staff, role: StaffRole.MANAGER },
+} as unknown as CurrentUser;
 
 function debtOrder(overrides: Record<string, unknown> = {}) {
   return {
@@ -206,7 +210,7 @@ describe('PaymentService', () => {
       await service.createPaymentForReturnOrder(
         RETURN,
         payoutDto(10000),
-        seller,
+        manager,
       );
       expect(
         prisma.cashTransaction.createMany.mock.calls[0][0].data[0],
@@ -223,7 +227,7 @@ describe('PaymentService', () => {
 
     it('rejects paying out more than the customer is owed', async () => {
       await expect(
-        service.createPaymentForReturnOrder(RETURN, payoutDto(20000), seller),
+        service.createPaymentForReturnOrder(RETURN, payoutDto(20000), manager),
       ).rejects.toThrow('exceeds the amount owed');
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
@@ -233,8 +237,26 @@ describe('PaymentService', () => {
         creditReturn({ order: debtOrder({ storeId: 'other-store' }) }),
       );
       await expect(
+        service.createPaymentForReturnOrder(RETURN, payoutDto(10000), manager),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('lets only the owner or a manager of the warehouse pay out', async () => {
+      await expect(
         service.createPaymentForReturnOrder(RETURN, payoutDto(10000), seller),
       ).rejects.toBeInstanceOf(ForbiddenException);
+      const otherManager = {
+        ...manager,
+        staff: { ...manager.staff, warehouse: [{ warehouseId: 'other' }] },
+      } as unknown as CurrentUser;
+      await expect(
+        service.createPaymentForReturnOrder(
+          RETURN,
+          payoutDto(10000),
+          otherManager,
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
   });
 });

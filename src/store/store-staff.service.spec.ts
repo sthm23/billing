@@ -94,7 +94,7 @@ describe('StoreStaffService', () => {
     prisma.user.findFirst.mockResolvedValue(null);
     prisma.order.aggregate.mockResolvedValue({
       _count: { _all: 64 },
-      _sum: { totalAmount: '18400000' },
+      _sum: { totalAmount: '18900000', returnedAmount: '500000' },
     });
     prisma.$transaction.mockImplementation(
       (cb: (tx: typeof prisma) => unknown) => cb(prisma),

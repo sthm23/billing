@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getLoggerToken } from 'nestjs-pino';
 import {
   CashStatus,
+  CashTransactionCategory,
   CashTransactionType,
   PaymentType,
   StaffRole,
@@ -34,8 +35,11 @@ function makeUser(staffRole: StaffRole): CurrentUser {
 describe('CashboxService', () => {
   let service: CashboxService;
   const prisma = {
+    $transaction: jest.fn(),
     warehouse: { findFirst: jest.fn() },
+    order: { findFirst: jest.fn() },
     cashbox: {
+      findUnique: jest.fn(),
       create: jest.fn(),
       count: jest.fn(),
       findMany: jest.fn(),
@@ -43,7 +47,7 @@ describe('CashboxService', () => {
       aggregate: jest.fn(),
       update: jest.fn(),
     },
-    cashTransaction: { groupBy: jest.fn() },
+    cashTransaction: { groupBy: jest.fn(), create: jest.fn() },
   };
   const logger = {
     debug: jest.fn(),
@@ -61,6 +65,9 @@ describe('CashboxService', () => {
       _sum: { balance: '18056319' },
     });
     prisma.cashTransaction.groupBy.mockResolvedValue([]);
+    prisma.$transaction.mockImplementation(
+      (cb: (tx: typeof prisma) => unknown) => cb(prisma),
+    );
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -312,6 +319,71 @@ describe('CashboxService', () => {
         where: { id: CASHBOX },
         data: { status: CashStatus.CLOSED, closedAt: expect.any(Date) },
       });
+    });
+  });
+
+  describe('createCashTransaction', () => {
+    const ORDER = '44444444-4444-4444-8444-444444444444';
+    const expense = (extra: Record<string, unknown> = {}) =>
+      ({
+        type: CashTransactionType.EXPENSE,
+        category: CashTransactionCategory.DEFECT_COMPENSATION,
+        paymentType: PaymentType.CASH,
+        amount: 20000,
+        comment: 'Брак, товар у клиента',
+        orderId: ORDER,
+        ...extra,
+      }) as never;
+
+    beforeEach(() => {
+      prisma.cashbox.findUnique.mockResolvedValue({
+        id: CASHBOX,
+        storeId: STORE,
+        status: CashStatus.OPEN,
+      });
+      prisma.order.findFirst.mockResolvedValue({ id: ORDER });
+    });
+
+    it('books a defect compensation linked to an order of the store', async () => {
+      await service.createCashTransaction(
+        CASHBOX,
+        expense(),
+        makeUser(StaffRole.OWNER),
+      );
+      expect(prisma.order.findFirst).toHaveBeenCalledWith({
+        where: { id: ORDER, storeId: STORE },
+        select: { id: true },
+      });
+      expect(prisma.cashTransaction.create.mock.calls[0][0].data).toMatchObject(
+        {
+          category: CashTransactionCategory.DEFECT_COMPENSATION,
+          type: CashTransactionType.EXPENSE,
+          orderId: ORDER,
+        },
+      );
+    });
+
+    it('rejects a defect compensation booked as income', async () => {
+      await expect(
+        service.createCashTransaction(
+          CASHBOX,
+          expense({ type: CashTransactionType.INCOME }),
+          makeUser(StaffRole.OWNER),
+        ),
+      ).rejects.toThrow('Defect compensation can only be an expense');
+      expect(prisma.cashTransaction.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects an order of another store', async () => {
+      prisma.order.findFirst.mockResolvedValue(null);
+      await expect(
+        service.createCashTransaction(
+          CASHBOX,
+          expense(),
+          makeUser(StaffRole.OWNER),
+        ),
+      ).rejects.toThrow('Order not found in this store');
+      expect(prisma.cashTransaction.create).not.toHaveBeenCalled();
     });
   });
 });

@@ -205,7 +205,7 @@ export class StoreStaffService {
             ...SOLD_ORDER_FILTER,
           },
           _count: { _all: true },
-          _sum: { totalAmount: true },
+          _sum: { totalAmount: true, returnedAmount: true },
         }),
         row.deactivatedById
           ? this.prisma.user.findUnique({
@@ -223,7 +223,10 @@ export class StoreStaffService {
         stats: {
           from,
           to,
-          salesTotal: Number(sales._sum.totalAmount ?? 0),
+          // Net of returns
+          salesTotal:
+            Number(sales._sum.totalAmount ?? 0) -
+            Number(sales._sum.returnedAmount ?? 0),
           ordersCount: sales._count._all,
         },
       };

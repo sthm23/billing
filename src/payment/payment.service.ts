@@ -10,6 +10,7 @@ import {
   CreateReturnPaymentDto,
 } from './dto/create-payment.dto';
 import { PrismaService } from '@prisma/prisma.service';
+import { assertReturnAccess } from '@shared/helper/role.helper';
 import { CurrentUser } from '@auth/models/auth.model';
 import {
   CashTransactionCategory,
@@ -176,6 +177,8 @@ export class PaymentService {
       if (!user.staff || returnOrder.order.storeId !== user.staff.storeId) {
         throw new ForbiddenException('No access to this returned order');
       }
+      // Refund payouts: store owner, or a manager of the order's warehouse
+      assertReturnAccess(user, returnOrder.order.warehouseId);
       if (returnOrder.status !== ReturnOrderStatus.CREDIT) {
         throw new BadRequestException(
           'Cannot add payment to a returned order that is not in CREDIT status',
