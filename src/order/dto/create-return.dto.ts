@@ -51,6 +51,15 @@ export class CreateReturnOrderDto {
   @Type(() => ReturnOrderPaymentDto)
   returnPayments: ReturnOrderPaymentDto[] = [];
 
+  /**
+   * Pay out now by this method: the backend computes the amount (the whole
+   * refund, or the part above the debt of a DEBT order). Do not combine with
+   * `returnPayments`. Omitted with empty `returnPayments` = pay out later.
+   */
+  @IsOptional()
+  @IsEnum(PaymentType)
+  payoutMethod?: PaymentType;
+
   /** Why the goods are returned — information only */
   @IsOptional()
   @IsEnum(ReturnReason)

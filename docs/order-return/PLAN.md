@@ -73,7 +73,17 @@
 - Specs: roles, reason/comment, no-cashbox return, payout with picked cashbox, CREDIT then pay later,
   net sales summary, debtDueAt, transaction order check.
 
-### Stage 2 — mobile: order screen
+### Stage 2 — mobile: order screen — DONE 2026-11-15
+> `OrderDetailScreen` → cart (CREATED/HOLD) or `screens/order/view/OrderViewScreen.tsx` (sold / cancelled).
+> Payout: `view/RefundPayoutSheet.tsx` (`usePayoutReturn`). Compensation: `AddTransactionSheet` /
+> `TransactionForm` got `defaultCategory`, `lockCategory`, `orderId`, `title`, `note`; cashbox = own open one,
+> else `CashboxPickerSheet` (a non-owner can only write to their own cashbox — backend rule). Routes
+> `(orders)/debt-pay` (reuses `DebtPayScreen`, kind ORDER) and `(orders)/return/[id]` (ComingSoon until
+> stage 3). Badges / `№` in `order-status.ts` (`orderBadges`, `orderNo`); the «Завершённые» tab now includes
+> REFUNDED (returned orders used to vanish). Pay screen «Вернуть до» (`libs/due-date.ts`, shared with
+> «Новый долг»). Debtors screens needed no change (they already show `dueAt`). Hooks `useReturnOrder` /
+> `usePayoutReturn`; `useCreateOrderPayment` now also refreshes debtors. Toast after a return → stage 3.
+> i18n `orderView.*`, `sale.pay.due*`, `payment.category.DEFECT_COMPENSATION`. `tsc` 0 errors, android export OK.
 - Rework `OrderDetailScreen` (COMPLETED / DEBT / REFUNDED) per `OrderDone*`: header `№A1B2C3` + badges,
   hero (total, struck old total after return, «Оплачено» / «Долг» / «Возвращено» pills), info card
   (customer, phone, warehouse, seller), items with «вернули N шт» / «8 из 10», «Оплата и возвраты» history
@@ -85,7 +95,14 @@
 - Pay screen: optional «Вернуть до» when debt remains.
 - Debtors list / debtor screen: due date for order debts, overdue tone.
 
-### Stage 3 — mobile: return screen
+### Stage 3 — mobile: return screen — DONE 2026-11-15
+> `screens/order/return/OrderReturnScreen.tsx`, route `(orders)/return/[id]`. Backend addition:
+> `POST /orders/return` takes optional `payoutMethod` — the backend pays out the whole amount owed (refund, or
+> the part above the debt of a DEBT order) by that method; not combined with `returnPayments` (400). Mobile
+> sends `returnPayments: []` + `payoutMethod` («Выдать сейчас») or nothing («Выдать позже» / debt only), so the
+> client never computes money it sends. Hero sums are a preview. Uzbek dates are built by hand in
+> `rental-format.ts` (Hermes has no `uz` locale data); `DateRangeSheet` uses the shared formatters.
+> Specs: 4 new `payoutMethod` tests, order.service 65 passing.
 - Route `(orders)/return/[id]`, `screens/order/return/OrderReturnScreen.tsx`.
 - Per-line stepper (0…quantity), «выбрано N шт», reason chips, comment input.
 - Hero: «Вернуть клиенту» / «Долг уменьшится на (было → станет)» / both (decision 8). Display-only sums from

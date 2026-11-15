@@ -143,6 +143,31 @@ export class OrderService {
     }
   }
 
+  /**
+   * Money given to the customer now. `payoutMethod` — the backend pays out
+   * the whole amount owed by that method: the refund, or for a DEBT order the
+   * part of the refund above the debt (nothing when the debt absorbs it).
+   * Otherwise the client's `returnPayments` (web); empty = pay out later.
+   */
+  private resolveReturnPayments(
+    dto: CreateReturnOrderDto,
+    orderStatus: OrderStatus,
+    refundAmount: number,
+    debt: number,
+  ): { type: PaymentType; amount: number }[] {
+    if (!dto.payoutMethod) return dto.returnPayments;
+    if (dto.returnPayments.length > 0) {
+      throw new BadRequestException(
+        'Send either payoutMethod or returnPayments, not both',
+      );
+    }
+    const owed =
+      orderStatus === OrderStatus.DEBT
+        ? Math.max(0, refundAmount - Math.max(0, debt))
+        : refundAmount;
+    return owed > 0 ? [{ type: dto.payoutMethod, amount: owed }] : [];
+  }
+
   private validateReturnPayments(
     orderStatus: OrderStatus,
     refundAmount: number, // полная сумма возврата
@@ -340,7 +365,13 @@ export class OrderService {
       const orderItem = orderItemsById.get(item.itemId)!;
       return sum + (+orderItem.retailPrice - +orderItem.sale) * item.quantity;
     }, 0);
-    const cashierPayments = createOrderDto.returnPayments.reduce(
+    const returnPayments = this.resolveReturnPayments(
+      createOrderDto,
+      order.status,
+      refundAmount,
+      +order.totalAmount - customerPayments,
+    );
+    const cashierPayments = returnPayments.reduce(
       (sum, p) => sum + +p.amount,
       0,
     );
@@ -427,7 +458,7 @@ export class OrderService {
           });
         }
 
-        const createdPayments = createOrderDto.returnPayments.map((payment) => {
+        const createdPayments = returnPayments.map((payment) => {
           return {
             returnOrderId: returnOrder.id,
             type: payment.type,

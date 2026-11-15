@@ -766,6 +766,53 @@ describe('OrderService', () => {
       );
     });
 
+    it('pays out the whole refund by payoutMethod', async () => {
+      const dto = returnDto(1);
+      dto.payoutMethod = 'CARD' as never;
+      const res = await service.createReturn(dto, makeUser(StaffRole.MANAGER));
+      expect(
+        prisma.cashTransaction.createMany.mock.calls[0][0].data[0],
+      ).toMatchObject({ amount: 40000, paymentType: 'CARD' });
+      expect(res).toMatchObject({
+        status: ReturnOrderStatus.COMPLETED,
+        paidOut: 40000,
+      });
+    });
+
+    it('pays out only the part above the debt by payoutMethod', async () => {
+      // total 80000, paid 30000 → debt 50000; full return 80000 → 30000 out
+      prisma.order.findUnique.mockResolvedValue(
+        paidOrder({ status: OrderStatus.DEBT, payments: [{ amount: 30000 }] }),
+      );
+      const dto = returnDto(2);
+      dto.payoutMethod = 'CASH' as never;
+      const res = await service.createReturn(dto, makeUser(StaffRole.MANAGER));
+      expect(res).toMatchObject({
+        status: ReturnOrderStatus.COMPLETED,
+        paidOut: 30000,
+      });
+    });
+
+    it('pays nothing by payoutMethod when the debt absorbs the return', async () => {
+      prisma.order.findUnique.mockResolvedValue(
+        paidOrder({ status: OrderStatus.DEBT, payments: [{ amount: 30000 }] }),
+      );
+      const dto = returnDto(1);
+      dto.payoutMethod = 'CASH' as never;
+      const res = await service.createReturn(dto, makeUser(StaffRole.MANAGER));
+      expect(res).toMatchObject({ status: ReturnOrderStatus.DEBT, paidOut: 0 });
+      expect(prisma.cashbox.findMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects payoutMethod together with returnPayments', async () => {
+      const dto = returnDto(1, 40000);
+      dto.payoutMethod = 'CASH' as never;
+      await expect(
+        service.createReturn(dto, makeUser(StaffRole.MANAGER)),
+      ).rejects.toThrow('Send either payoutMethod or returnPayments');
+      expect(prisma.returnedOrder.create).not.toHaveBeenCalled();
+    });
+
     it('rejects a payout when no cashbox is open', async () => {
       prisma.cashbox.findMany.mockResolvedValue([]);
       await expect(
