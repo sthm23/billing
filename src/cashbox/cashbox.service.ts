@@ -80,7 +80,7 @@ export class CashboxService {
     if (!user.staff) throw new ForbiddenException('Staff only');
     if (!canOpenCashbox(user)) {
       throw new ForbiddenException(
-        'A seller cannot open a cashbox: use an open cashbox of your warehouse',
+        'Only the owner, a manager or a cashier can open a cashbox: use an open cashbox of your warehouse',
       );
     }
     const storeId = user.staff.storeId;
@@ -166,7 +166,7 @@ export class CashboxService {
       });
       if (!existingCashBox) {
         throw new BadRequestException(
-          'No OPEN cashbox found for this store and warehouse',
+          'Open cashbox not found, or it is not yours to close',
         );
       }
       const closed = await this.prisma.cashbox.update({

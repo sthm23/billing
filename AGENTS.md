@@ -322,10 +322,13 @@ await this.prisma.$transaction(async (tx) => {
 
 ### CashBox
 
-1. ✅ **Each seller has their own cashbox** (per warehouse + store)
-2. ✅ **Multiple cashboxes can be open simultaneously** (different sellers)
-3. ✅ **Cannot add transactions to closed cashbox**
-4. ✅ **Balance = INCOME - EXPENSE** (calculated automatically)
+1. ✅ **Only OWNER, MANAGER, CASHIER have their own cashbox** (per warehouse + store; `canOpenCashbox` in `src/shared/helper/role.helper.ts`). A SELLER / WAREHOUSE cannot open one (`POST /cashbox` → 403) and gets none on `POST /orders` (2026-11-15)
+2. ✅ **Multiple cashboxes can be open simultaneously** (different employees)
+3. ✅ **Payment money → `resolvePaymentCashbox`** (`src/cashbox/payment-cashbox.ts`; sale payment, debt repayment, return payout, rental): chosen `cashboxId` = an OPEN cashbox on one of the employee's warehouses (owner: any), else own open cashbox; no money moved → no cashbox
+4. ✅ **Visibility** (`cashboxScope`): owner — store; manager — their warehouses; others — own + OPEN cashboxes of their warehouses. `GET /cashbox/open`: owner — store, others — their warehouses
+5. ✅ **Manual transaction**: any cashbox of the store on the employee's warehouses (owner: any); EXPENSE into someone else's cashbox — owner / MANAGER only (403). **Close**: own cashbox or the store owner
+6. ✅ **Cannot add transactions to closed cashbox**
+7. ✅ **Balance = INCOME - EXPENSE** (calculated automatically)
 
 ### SKU & Barcode
 

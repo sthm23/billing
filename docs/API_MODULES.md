@@ -616,7 +616,7 @@ Authorization: Bearer <access_token>
 **Доступ**: касса должна быть OPEN и принадлежать магазину пользователя. OWNER/ADMIN (user.role) закрывают любую кассу магазина, остальные — только свою (`sellerId = staff.id`) на своем складе.
 
 **Errors**:
-- `400 Bad Request` — касса не найдена, уже закрыта или чужая (`No OPEN cashbox found for this store and warehouse`)
+- `400 Bad Request` — касса не найдена, уже закрыта или чужая (`Open cashbox not found, or it is not yours to close`)
 
 ---
 
