@@ -145,11 +145,16 @@ describe('PaymentService', () => {
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
-    it('takes the money into the chosen open cashbox of the store', async () => {
+    it('takes the money into the chosen open cashbox of the seller warehouse', async () => {
       prisma.cashbox.findFirst.mockResolvedValue({ id: OTHER_CASHBOX });
       await service.create(payDto(20000, { cashboxId: OTHER_CASHBOX }), seller);
       expect(prisma.cashbox.findFirst).toHaveBeenCalledWith({
-        where: { id: OTHER_CASHBOX, storeId: STORE, status: CashStatus.OPEN },
+        where: {
+          id: OTHER_CASHBOX,
+          storeId: STORE,
+          status: CashStatus.OPEN,
+          warehouseId: { in: [WAREHOUSE] },
+        },
       });
       expect(prisma.cashbox.update.mock.calls[0][0].where).toEqual({
         id: OTHER_CASHBOX,

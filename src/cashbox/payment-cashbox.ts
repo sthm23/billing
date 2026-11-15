@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { CashStatus } from '@generated/enums';
 import { Cashbox, Prisma } from '@generated/client';
 import { CurrentUser } from '@auth/models/auth.model';
+import { staffWarehouseIds } from '@shared/helper/role.helper';
 
 type CashboxClient = Pick<Prisma.TransactionClient, 'cashbox'>;
 
@@ -9,9 +10,10 @@ export const NO_OPEN_CASHBOX =
   'No open cashbox: open one or choose an open cashbox of the store';
 
 /**
- * Cashbox that receives a debt repayment. Any employee of the store may take
- * the money: into `cashboxId` (any OPEN cashbox of the store), otherwise into
- * their own open cashbox — preferably on `warehouseId`.
+ * Cashbox for money of a sale, debt repayment, return or rental. Any employee
+ * may use `cashboxId` — an OPEN cashbox of the store on one of their
+ * warehouses (the owner: any warehouse); otherwise their own open cashbox,
+ * preferably on `warehouseId`. A seller has no own cashbox and always picks one.
  */
 export async function resolvePaymentCashbox(
   prisma: CashboxClient,
@@ -22,12 +24,18 @@ export async function resolvePaymentCashbox(
   const storeId = user.staff.storeId;
 
   if (cashboxId) {
+    const warehouses = staffWarehouseIds(user);
     const chosen = await prisma.cashbox.findFirst({
-      where: { id: cashboxId, storeId, status: CashStatus.OPEN },
+      where: {
+        id: cashboxId,
+        storeId,
+        status: CashStatus.OPEN,
+        ...(warehouses ? { warehouseId: { in: warehouses } } : {}),
+      },
     });
     if (!chosen) {
       throw new BadRequestException(
-        'The chosen cashbox is not open or not in your store',
+        'The chosen cashbox is not open or not on your warehouse',
       );
     }
     return chosen;

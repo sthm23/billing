@@ -116,4 +116,5 @@
 - i18n (ru/uz/en), `tsc`, backend + mobile tests.
 - `docs-updater`: `docs/features/returns.md`, `docs/workflows/returns.md`, `docs/features/orders.md`,
   `docs/features/debt.md`, `docs/features/cashbox.md`, `docs/api-map.md`, `billing/docs/DATABASE.md`.
+  **Docs done 2026-11-15** (also `billing/AGENTS.md`, `billing-mobile/AGENTS.md`).
 - Device QA (light/dark).

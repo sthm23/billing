@@ -84,7 +84,12 @@ describe('OrderService', () => {
   let service: OrderService;
   const prisma = {
     $transaction: jest.fn(),
-    order: { findUnique: jest.fn(), update: jest.fn(), aggregate: jest.fn() },
+    order: {
+      findUnique: jest.fn(),
+      update: jest.fn(),
+      aggregate: jest.fn(),
+      create: jest.fn(),
+    },
     productVariant: { findMany: jest.fn() },
     inventory: {
       findMany: jest.fn(),
@@ -97,7 +102,12 @@ describe('OrderService', () => {
       update: jest.fn(),
       deleteMany: jest.fn(),
     },
-    cashbox: { findFirst: jest.fn(), findMany: jest.fn(), update: jest.fn() },
+    cashbox: {
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      update: jest.fn(),
+      create: jest.fn(),
+    },
     payment: { createMany: jest.fn() },
     cashTransaction: { createMany: jest.fn() },
     stockMovement: { createMany: jest.fn(), findMany: jest.fn() },
@@ -370,6 +380,35 @@ describe('OrderService', () => {
     });
   });
 
+  describe('create', () => {
+    const createDto = {
+      storeId: STORE,
+      warehouseId: WAREHOUSE,
+      channel: 'POS',
+    } as never;
+
+    beforeEach(() => {
+      prisma.cashbox.findFirst.mockResolvedValue(null);
+      prisma.order.create.mockResolvedValue({ id: ORDER, storeId: STORE });
+    });
+
+    it('does not open a cashbox for a seller', async () => {
+      await service.create(createDto, makeUser(StaffRole.SELLER));
+      expect(prisma.cashbox.create).not.toHaveBeenCalled();
+      expect(prisma.order.create).toHaveBeenCalled();
+    });
+
+    it('opens the cashier own cashbox on the first order', async () => {
+      await service.create(createDto, makeUser(StaffRole.CASHIER));
+      expect(prisma.cashbox.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          sellerId: 'seller-staff',
+          warehouseId: WAREHOUSE,
+        }),
+      });
+    });
+  });
+
   describe('createPayment', () => {
     const payDto = (amount: number, customerId?: string) =>
       ({
@@ -377,6 +416,53 @@ describe('OrderService', () => {
         customerId,
         payments: [{ type: 'CASH', amount, paidAt: null }],
       }) as CreateOrderPaymentDto;
+
+    it('takes a seller payment into the chosen open cashbox of the warehouse', async () => {
+      prisma.cashbox.findMany.mockResolvedValue([]);
+      prisma.cashbox.findFirst.mockResolvedValue({ id: 'chosen' });
+      const dto = payDto(100000);
+      dto.cashboxId = 'chosen';
+      await service.createPayment(ORDER, dto, makeUser(StaffRole.SELLER));
+      expect(prisma.cashbox.findFirst).toHaveBeenCalledWith({
+        where: {
+          id: 'chosen',
+          storeId: STORE,
+          status: 'OPEN',
+          warehouseId: { in: [WAREHOUSE] },
+        },
+      });
+      expect(
+        prisma.cashTransaction.createMany.mock.calls[0][0].data[0].cashboxId,
+      ).toBe('chosen');
+    });
+
+    it('sells fully on debt without a cashbox', async () => {
+      prisma.cashbox.findMany.mockResolvedValue([]);
+      await service.createPayment(
+        ORDER,
+        payDto(0, CUSTOMER),
+        makeUser(StaffRole.SELLER),
+      );
+      expect(prisma.cashbox.findMany).not.toHaveBeenCalled();
+      expect(prisma.cashbox.update).not.toHaveBeenCalled();
+      expect(prisma.order.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: OrderStatus.DEBT }),
+        }),
+      );
+    });
+
+    it('rejects a payment when the seller has no open cashbox and chose none', async () => {
+      prisma.cashbox.findMany.mockResolvedValue([]);
+      await expect(
+        service.createPayment(
+          ORDER,
+          payDto(100000),
+          makeUser(StaffRole.SELLER),
+        ),
+      ).rejects.toThrow('No open cashbox');
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
 
     it('completes a fully paid order without a customer', async () => {
       await service.createPayment(
@@ -752,7 +838,12 @@ describe('OrderService', () => {
       dto.cashboxId = 'chosen';
       await service.createReturn(dto, makeUser(StaffRole.MANAGER));
       expect(prisma.cashbox.findFirst).toHaveBeenCalledWith({
-        where: { id: 'chosen', storeId: STORE, status: 'OPEN' },
+        where: {
+          id: 'chosen',
+          storeId: STORE,
+          status: 'OPEN',
+          warehouseId: { in: [WAREHOUSE] },
+        },
       });
       expect(
         prisma.cashTransaction.createMany.mock.calls[0][0].data[0],

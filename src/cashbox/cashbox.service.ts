@@ -20,6 +20,11 @@ import {
   UserRole,
 } from '@generated/enums';
 import { CurrentUser } from '@auth/models/auth.model';
+import {
+  canOpenCashbox,
+  isStoreOwner,
+  staffWarehouseIds,
+} from '@shared/helper/role.helper';
 import { Prisma } from '@generated/client';
 import { PaginationParams } from '@shared/dto/pagination-params.dto';
 import { DateRangeParams, resolveDateRange } from '@shared/dto/date-range.dto';
@@ -31,7 +36,11 @@ const PAYMENT_TYPES: PaymentType[] = [
   PaymentType.TRANSFER,
 ];
 
-/** Cashboxes a user may see: owner/admin — the store; manager — their warehouses; others — their own. */
+/**
+ * Cashboxes a user may see: owner/admin — the store; manager — their
+ * warehouses; others — their own plus the open cashboxes of their warehouses
+ * (a seller has no own cashbox and works in an open one).
+ */
 function cashboxScope(user: CurrentUser): Prisma.CashboxWhereInput {
   if (user.role === UserRole.ADMIN) return {};
   if (!user.staff) throw new ForbiddenException('Staff only');
@@ -44,7 +53,16 @@ function cashboxScope(user: CurrentUser): Prisma.CashboxWhereInput {
       warehouseId: { in: user.staff.warehouse.map((w) => w.warehouseId) },
     };
   }
-  return { ...where, sellerId: user.staff.id };
+  return {
+    ...where,
+    OR: [
+      { sellerId: user.staff.id },
+      {
+        status: CashStatus.OPEN,
+        warehouseId: { in: user.staff.warehouse.map((w) => w.warehouseId) },
+      },
+    ],
+  };
 }
 
 @Injectable()
@@ -60,6 +78,11 @@ export class CashboxService {
    */
   async createCashBox(dto: CreateCashBoxDto, user: CurrentUser) {
     if (!user.staff) throw new ForbiddenException('Staff only');
+    if (!canOpenCashbox(user)) {
+      throw new ForbiddenException(
+        'A seller cannot open a cashbox: use an open cashbox of your warehouse',
+      );
+    }
     const storeId = user.staff.storeId;
     this.logger.debug(
       { storeId, warehouseId: dto.warehouseId, sellerId: user.staff.id },
@@ -72,12 +95,8 @@ export class CashboxService {
       if (!warehouse) {
         throw new BadRequestException('Warehouse does not belong to the store');
       }
-      const isOwner =
-        user.role === UserRole.ADMIN ||
-        user.role === UserRole.OWNER ||
-        user.staff.role === StaffRole.OWNER;
       if (
-        !isOwner &&
+        !isStoreOwner(user) &&
         !user.staff.warehouse.some((w) => w.warehouseId === dto.warehouseId)
       ) {
         throw new ForbiddenException('No access to this warehouse');
@@ -137,8 +156,8 @@ export class CashboxService {
         storeId: user.staff.storeId,
       };
 
-      if (user.role !== UserRole.ADMIN && user.role !== UserRole.OWNER) {
-        param['warehouseId'] = user.staff.warehouse[0]?.warehouseId;
+      // Only the cashbox's own employee closes it; the owner closes any
+      if (!isStoreOwner(user)) {
         param['sellerId'] = user.staff.id;
       }
 
@@ -186,19 +205,29 @@ export class CashboxService {
       'Creating cash transaction',
     );
     try {
-      const param = {
-        id: cashBoxId,
-        storeId: user.staff.storeId,
-      };
-      if (user.role !== UserRole.ADMIN && user.role !== UserRole.OWNER) {
-        param['warehouseId'] = user.staff.warehouse[0]?.warehouseId;
-        param['sellerId'] = user.staff.id;
-      }
-      const cashBox = await this.prisma.cashbox.findUnique({
-        where: { ...param },
+      // Any open cashbox of the employee's warehouses (owner: of the store)
+      const warehouses = staffWarehouseIds(user);
+      const cashBox = await this.prisma.cashbox.findFirst({
+        where: {
+          id: cashBoxId,
+          storeId: user.staff.storeId,
+          ...(warehouses ? { warehouseId: { in: warehouses } } : {}),
+        },
       });
       if (!cashBox) {
         throw new BadRequestException('Cashbox not found');
+      }
+      // Someone else's cashbox: a seller / cashier only adds money to it;
+      // taking money out is for the owner and managers
+      if (
+        dto.type === CashTransactionType.EXPENSE &&
+        cashBox.sellerId !== user.staff.id &&
+        !isStoreOwner(user) &&
+        user.staff.role !== StaffRole.MANAGER
+      ) {
+        throw new ForbiddenException(
+          "Only income can be added to another employee's cashbox",
+        );
       }
       if (cashBox.status !== CashStatus.OPEN) {
         throw new BadRequestException(
@@ -258,6 +287,7 @@ export class CashboxService {
         { cashboxId: cashBoxId, err: error.message },
         'Failed to create cash transaction',
       );
+      if (error instanceof ForbiddenException) throw error;
       throw new BadRequestException(error.response || error.message);
     }
   }
@@ -348,12 +378,20 @@ export class CashboxService {
     }
   }
 
-  /** Open cashboxes of the user's store (any employee): where a debt repayment can go. */
+  /**
+   * Open cashboxes the employee may work in (owner: the store, others: their
+   * warehouses) — where a sale, debt repayment or manual income can go.
+   */
   async findOpen(user: CurrentUser) {
     if (!user.staff) throw new ForbiddenException('Staff only');
+    const warehouses = staffWarehouseIds(user);
     try {
       const cashboxes = await this.prisma.cashbox.findMany({
-        where: { storeId: user.staff.storeId, status: CashStatus.OPEN },
+        where: {
+          storeId: user.staff.storeId,
+          status: CashStatus.OPEN,
+          ...(warehouses ? { warehouseId: { in: warehouses } } : {}),
+        },
         orderBy: { createdAt: 'desc' },
         select: {
           id: true,

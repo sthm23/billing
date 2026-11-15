@@ -306,6 +306,19 @@ await this.prisma.$transaction(async (tx) => {
 2. ✅ **Order can have multiple payments** (split payment: 500 cash + 300 card)
 3. ✅ **Every payment creates CashTransaction** and updates Cashbox
 4. ✅ **Payment to CustomerDebt uses DEBT_PAYMENT category** (not SALE)
+5. ✅ **Order debt due date** (`debtDueAt`) — optional, only at `POST /orders/payment/:id` when a debt remains, not in the past, never edited
+
+### Returns (2026-11-15, `docs/order-return/PLAN.md`, rules `../docs/features/returns.md`)
+
+1. ✅ **OWNER (any warehouse) or MANAGER (own warehouses) only** — `assertReturnAccess()` (`src/shared/helper/role.helper.ts`), also for `POST /payment/return/:id`
+2. ✅ **One return per order**; goods always go back to the order's warehouse (no write-off); `reason` / `comment` are information only
+3. ✅ **`payoutMethod`** → the backend computes the payout (full refund for COMPLETED, part above the debt for DEBT); not combined with `returnPayments` (400); nothing → CREDIT, paid later
+4. ✅ **Cashbox only when money is paid out now** — `resolvePaymentCashbox()`; debt reduction / pay later needs none
+5. ✅ **Defect compensation** = manual cashbox EXPENSE `DEFECT_COMPENSATION` linked by `orderId` (order of the cashbox's store), no StockMovement
+
+### Reporting
+
+1. ✅ **Sales are net of returns**: `SOLD_ORDER_FILTER` (`src/order/entities/sold-order.filter.ts`) includes REFUNDED, sums use `totalAmount − returnedAmount` (`GET /orders/summary`, staff card stats) — use it for any new sales report
 
 ### CashBox
 

@@ -30,7 +30,11 @@ import { OrderItem, Prisma } from '@generated/client';
 import { CreateReturnOrderDto, ReturnItemDto } from './dto/create-return.dto';
 import { OrderQueryParams, OrderSummaryParams } from './entities/order.entity';
 import { DateRangeParams, resolveDateRange } from '@shared/dto/date-range.dto';
-import { assertReturnAccess, canSeeCost } from '@shared/helper/role.helper';
+import {
+  assertReturnAccess,
+  canSeeCost,
+  canOpenCashbox,
+} from '@shared/helper/role.helper';
 import { resolvePaymentCashbox } from '../cashbox/payment-cashbox';
 import { SOLD_ORDER_FILTER } from './entities/sold-order.filter';
 import { assertWarehouseAccess } from '@shared/helper/warehouse-access.helper';
@@ -77,7 +81,9 @@ export class OrderService {
         },
       });
       const order = await this.prisma.$transaction(async (prisma) => {
-        if (!cashBox) {
+        // Owner / manager / cashier get their cashbox opened on the first
+        // order; a seller has none and pays into an open cashbox of the warehouse
+        if (!cashBox && canOpenCashbox(user)) {
           await prisma.cashbox.create({
             data: {
               status: CashStatus.OPEN,
@@ -938,20 +944,16 @@ export class OrderService {
       if (debtDueAt && debtDueAt.getTime() < Date.now()) {
         throw new BadRequestException('Debt due date cannot be in the past');
       }
-      const cashBox = await this.prisma.cashbox.findFirst({
-        where: {
-          storeId: order.storeId,
-          warehouseId: order.warehouseId,
-          sellerId: user.staff.id,
-          status: CashStatus.OPEN,
-        },
-      });
-
-      if (!cashBox) {
-        throw new BadRequestException(
-          'Open cashbox not found for the order store and warehouse',
-        );
-      }
+      // Own open cashbox (preferably on the order's warehouse) or the chosen
+      // open cashbox of the employee's warehouse — a seller has no own one.
+      // A sale fully on debt moves no money and needs no cashbox.
+      const cashBox =
+        newPaid > 0
+          ? await resolvePaymentCashbox(this.prisma, user, {
+              cashboxId: dto.cashboxId,
+              warehouseId: order.warehouseId,
+            })
+          : null;
       await this.prisma.$transaction(async (prisma) => {
         // A zero amount (sale fully on debt) leaves no payment or cash record
         const paymentsData = dto.payments
@@ -969,7 +971,7 @@ export class OrderService {
 
         await prisma.cashTransaction.createMany({
           data: paymentsData.map((p) => ({
-            cashboxId: cashBox.id,
+            cashboxId: cashBox!.id,
             amount: p.amount,
             type: CashTransactionType.INCOME,
             createdById: user.staff.id,
@@ -1048,16 +1050,18 @@ export class OrderService {
           },
         });
 
-        await prisma.cashbox.update({
-          where: { id: cashBox.id },
-          data: {
-            balance: { increment: new Prisma.Decimal(newPaid) },
-          },
-        });
+        if (cashBox) {
+          await prisma.cashbox.update({
+            where: { id: cashBox.id },
+            data: {
+              balance: { increment: new Prisma.Decimal(newPaid) },
+            },
+          });
+        }
       });
 
       this.logger.info(
-        { orderId, newPaid, cashboxId: cashBox.id },
+        { orderId, newPaid, cashboxId: cashBox?.id ?? null },
         'Order payment processed',
       );
       return Promise.resolve({ message: 'Payment created successfully' });

@@ -130,6 +130,11 @@ export class CreateOrderPaymentDto {
   @Type(() => OrderPaymentDto)
   payments: OrderPaymentDto[] = [];
 
+  /** Open cashbox to take the money into; default — the employee's own open cashbox (a seller has none) */
+  @IsOptional()
+  @IsUUID('4')
+  cashboxId?: string;
+
   /** Optional term of the debt left by this payment («вернуть до»); ignored when the order is paid in full */
   @IsOptional()
   @IsDateString()

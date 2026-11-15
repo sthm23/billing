@@ -521,6 +521,7 @@ model Order {
   totalAmount Decimal
   paidAmount  Decimal      @default(0)
   soldAt      DateTime?    // момент продажи (COMPLETED/DEBT), ставится один раз
+  debtDueAt   DateTime?    // «вернуть до» для долга по заказу (опционально, 2026-11-15)
   createdAt   DateTime     @default(now())
   
   // Возврат
@@ -568,6 +569,10 @@ CREATED → HOLD → [DEBT | COMPLETED] → [REFUNDED | CANCELLED]
 - `isReturned`: флаг, что заказ возвращен
 - `returnedAt`: дата возврата
 - `returnedAmount`: сумма возвращенных товаров
+
+После возврата статус заказа — REFUNDED (и при частичном возврате) или DEBT, если клиент ещё должен. Сводки продаж (`SOLD_ORDER_FILTER`: COMPLETED, DEBT, REFUNDED) считают нетто `totalAmount − returnedAmount` (с 2026-11-15).
+
+**`debtDueAt`** (миграция `20261115120000_order_return_details`): срок долга по заказу. Ставится только в `POST /orders/payment/:id`, если оплата оставляет долг (не в прошлом); потом не меняется и на логику оплат не влияет. Отдаётся в должниках как `dueAt` / `overdue`.
 
 **Заказ-аренда**: если у заказа есть `rental`, он ведётся только через `/rental` эндпоинты (sale flow его отклоняет). Деньги аренды (позиции, услуги, платежи, `paidAmount`) хранятся в Order; `soldAt` ставится при выдаче.
 
@@ -809,6 +814,8 @@ model ReturnedOrder {
   createdBy   String            // Staff ID
   status      ReturnOrderStatus  // DEBT | CREDIT | COMPLETED
   totalAmount Decimal           @default(0)
+  reason      ReturnReason      @default(OTHER)  // причина возврата — только информация (2026-11-15)
+  comment     String?                            // комментарий, ≤ 500 (валидация DTO)
   
   order       Order             @relation(fields: [orderId], references: [id])
   items       ReturnItem[]
@@ -818,8 +825,11 @@ model ReturnedOrder {
 
 **Enums**:
 - `ReturnOrderStatus`: DEBT (клиент все еще должен), CREDIT (магазин должен клиенту), COMPLETED (расчет завершен)
+- `ReturnReason`: DEFECT (брак), NOT_FIT (не подошёл), EXTRA (лишнее), OTHER (другое; по умолчанию)
 
 **Связь**: один заказ может иметь максимум один возврат (`orderId @unique`)
+
+`reason` и `comment` добавлены миграцией `20261115120000_order_return_details`; на суммы, остатки и статусы не влияют.
 
 ---
 
@@ -942,7 +952,7 @@ model CashTransaction {
   cashboxId   String
   createdById String                  // Staff ID
   type        CashTransactionType     // INCOME | EXPENSE
-  category    CashTransactionCategory // SALE | DEBT_PAYMENT | RENT | DELIVERY | SALARY | PURCHASE | RETURN | OTHER | RENTAL | DRY_CLEANING
+  category    CashTransactionCategory // SALE | DEBT_PAYMENT | RENT | DELIVERY | SALARY | PURCHASE | RETURN | OTHER | RENTAL | DRY_CLEANING | DEFECT_COMPENSATION
   paymentType PaymentType             // CASH | CARD | ONLINE | TRANSFER
   amount      Decimal
   comment     String?
@@ -962,7 +972,7 @@ model CashTransaction {
 
 **Enums**:
 - `CashTransactionType`: INCOME (приход), EXPENSE (расход)
-- `CashTransactionCategory`: SALE, DEBT_PAYMENT, RENT, DELIVERY, SALARY, PURCHASE, RETURN, OTHER, RENTAL, DRY_CLEANING (`RENT` — расход на помещение, `RENTAL` — доход от аренды товаров, `DRY_CLEANING` — запланированная химчистка вне возврата: EXPENSE, при отмене INCOME)
+- `CashTransactionCategory`: SALE, DEBT_PAYMENT, RENT, DELIVERY, SALARY, PURCHASE, RETURN, OTHER, RENTAL, DRY_CLEANING, DEFECT_COMPENSATION (`RENT` — расход на помещение, `RENTAL` — доход от аренды товаров, `DRY_CLEANING` — запланированная химчистка вне возврата: EXPENSE, при отмене INCOME, `DEFECT_COMPENSATION` — компенсация за брак без возврата товара: только EXPENSE, обычно с `orderId` заказа своего магазина; миграция `20261115120000_order_return_details`)
 
 **Логика**:
 
@@ -1357,6 +1367,16 @@ enum ReturnOrderStatus {
 }
 ```
 
+### ReturnReason
+```prisma
+enum ReturnReason {
+  DEFECT  // Брак
+  NOT_FIT // Не подошёл
+  EXTRA   // Лишнее
+  OTHER   // Другое (по умолчанию)
+}
+```
+
 ### PaymentType
 ```prisma
 enum PaymentType {
@@ -1404,6 +1424,7 @@ enum CashTransactionCategory {
   OTHER        // Прочее
   RENTAL       // Доход от аренды товаров (INCOME)
   DRY_CLEANING // Химчистка вне возврата (EXPENSE; INCOME при отмене), R13
+  DEFECT_COMPENSATION // Компенсация за брак: ручной EXPENSE, товар не возвращают, без StockMovement (2026-11-15)
 }
 ```
 
@@ -1625,5 +1646,5 @@ ORDER BY sm.created_at DESC;
 
 ---
 
-**Последнее обновление**: 2026-11-15  
+**Последнее обновление**: 2026-11-15 (возврат: `ReturnedOrder.reason/comment`, `Order.debtDueAt`, `DEFECT_COMPENSATION`)  
 **Версия схемы**: Prisma 6 / PostgreSQL 17

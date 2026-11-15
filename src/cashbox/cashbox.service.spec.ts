@@ -109,7 +109,7 @@ describe('CashboxService', () => {
       });
     });
 
-    it('scopes by role: manager — warehouses, seller — own cashboxes', async () => {
+    it('scopes by role: manager — warehouses, seller — own and open ones of their warehouses', async () => {
       await service.findAll({}, makeUser(StaffRole.MANAGER));
       expect(prisma.cashbox.findMany.mock.calls[0][0].where).toEqual({
         storeId: STORE,
@@ -118,7 +118,10 @@ describe('CashboxService', () => {
       await service.findAll({}, makeUser(StaffRole.SELLER));
       expect(prisma.cashbox.findMany.mock.calls[1][0].where).toEqual({
         storeId: STORE,
-        sellerId: 'staff',
+        OR: [
+          { sellerId: 'staff' },
+          { status: CashStatus.OPEN, warehouseId: { in: [WAREHOUSE] } },
+        ],
       });
     });
 
@@ -129,7 +132,10 @@ describe('CashboxService', () => {
       );
       expect(prisma.cashbox.findMany.mock.calls[0][0].where).toEqual({
         storeId: STORE,
-        sellerId: 'staff',
+        OR: [
+          { sellerId: 'staff' },
+          { status: CashStatus.OPEN, warehouseId: { in: [WAREHOUSE] } },
+        ],
         warehouseId: WAREHOUSE,
       });
     });
@@ -192,7 +198,10 @@ describe('CashboxService', () => {
 
       expect(prisma.cashbox.findFirst.mock.calls[0][0].where).toEqual({
         storeId: STORE,
-        sellerId: 'staff',
+        OR: [
+          { sellerId: 'staff' },
+          { status: CashStatus.OPEN, warehouseId: { in: [WAREHOUSE] } },
+        ],
         id: CASHBOX,
       });
       expect(res.summary).toEqual({
@@ -250,7 +259,19 @@ describe('CashboxService', () => {
       expect(prisma.cashbox.create).not.toHaveBeenCalled();
     });
 
-    it('lets a seller open their own cashbox, one per warehouse', async () => {
+    it('does not let a seller or warehouse staff open a cashbox', async () => {
+      for (const role of [StaffRole.SELLER, StaffRole.WAREHOUSE]) {
+        await expect(
+          service.createCashBox(
+            { warehouseId: WAREHOUSE, balance: 0 },
+            makeUser(role),
+          ),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+      }
+      expect(prisma.cashbox.create).not.toHaveBeenCalled();
+    });
+
+    it('lets a cashier open their own cashbox, one per warehouse', async () => {
       prisma.warehouse.findFirst.mockResolvedValue({
         id: WAREHOUSE,
         storeId: STORE,
@@ -259,7 +280,7 @@ describe('CashboxService', () => {
       await expect(
         service.createCashBox(
           { warehouseId: WAREHOUSE, balance: 0 },
-          makeUser(StaffRole.SELLER),
+          makeUser(StaffRole.CASHIER),
         ),
       ).rejects.toThrow('You already have an open cashbox on this warehouse');
       expect(prisma.cashbox.findFirst).toHaveBeenCalledWith({
@@ -288,7 +309,7 @@ describe('CashboxService', () => {
   });
 
   describe('findOpen', () => {
-    it('lists every open cashbox of the store for any employee', async () => {
+    it('lists the open cashboxes of the employee warehouses', async () => {
       prisma.cashbox.findMany.mockResolvedValue([
         {
           id: CASHBOX,
@@ -302,6 +323,7 @@ describe('CashboxService', () => {
       expect(prisma.cashbox.findMany.mock.calls[0][0].where).toEqual({
         storeId: STORE,
         status: CashStatus.OPEN,
+        warehouseId: { in: [WAREHOUSE] },
       });
       expect(res[0]).toMatchObject({
         balance: 1000,
@@ -311,10 +333,25 @@ describe('CashboxService', () => {
     });
   });
 
+  it('lists every open cashbox of the store for the owner', async () => {
+    await service.findOpen(makeUser(StaffRole.OWNER));
+    expect(prisma.cashbox.findMany.mock.calls[0][0].where).toEqual({
+      storeId: STORE,
+      status: CashStatus.OPEN,
+    });
+  });
+
   describe('closeCashBox', () => {
     it('stamps closedAt', async () => {
       prisma.cashbox.findFirst.mockResolvedValue({ id: CASHBOX });
-      await service.closeCashBox(CASHBOX, makeUser(StaffRole.SELLER));
+      await service.closeCashBox(CASHBOX, makeUser(StaffRole.CASHIER));
+      // Own cashbox on any of the employee's warehouses
+      expect(prisma.cashbox.findFirst.mock.calls[0][0].where).toEqual({
+        id: CASHBOX,
+        status: CashStatus.OPEN,
+        storeId: STORE,
+        sellerId: 'staff',
+      });
       expect(prisma.cashbox.update).toHaveBeenCalledWith({
         where: { id: CASHBOX },
         data: { status: CashStatus.CLOSED, closedAt: expect.any(Date) },
@@ -336,12 +373,91 @@ describe('CashboxService', () => {
       }) as never;
 
     beforeEach(() => {
-      prisma.cashbox.findUnique.mockResolvedValue({
+      prisma.cashbox.findFirst.mockResolvedValue({
         id: CASHBOX,
         storeId: STORE,
+        warehouseId: WAREHOUSE,
+        sellerId: 'other',
         status: CashStatus.OPEN,
       });
       prisma.order.findFirst.mockResolvedValue({ id: ORDER });
+    });
+
+    const income = {
+      type: CashTransactionType.INCOME,
+      category: CashTransactionCategory.OTHER,
+      paymentType: PaymentType.CASH,
+      amount: 50000,
+    } as never;
+
+    it('lets a seller add income to an open cashbox of their warehouse', async () => {
+      await service.createCashTransaction(
+        CASHBOX,
+        income,
+        makeUser(StaffRole.SELLER),
+      );
+      expect(prisma.cashbox.findFirst.mock.calls[0][0].where).toEqual({
+        id: CASHBOX,
+        storeId: STORE,
+        warehouseId: { in: [WAREHOUSE] },
+      });
+      expect(prisma.cashTransaction.create).toHaveBeenCalled();
+    });
+
+    it("rejects an expense from another employee's cashbox for a seller or cashier", async () => {
+      for (const role of [StaffRole.SELLER, StaffRole.CASHIER]) {
+        await expect(
+          service.createCashTransaction(
+            CASHBOX,
+            expense({
+              category: CashTransactionCategory.OTHER,
+              orderId: undefined,
+            }),
+            makeUser(role),
+          ),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+      }
+      expect(prisma.cashTransaction.create).not.toHaveBeenCalled();
+    });
+
+    it("lets a manager take an expense from another employee's cashbox", async () => {
+      await service.createCashTransaction(
+        CASHBOX,
+        expense(),
+        makeUser(StaffRole.MANAGER),
+      );
+      expect(prisma.cashTransaction.create).toHaveBeenCalled();
+    });
+
+    it('lets a cashier take an expense from their own cashbox', async () => {
+      prisma.cashbox.findFirst.mockResolvedValue({
+        id: CASHBOX,
+        storeId: STORE,
+        warehouseId: WAREHOUSE,
+        sellerId: 'staff',
+        status: CashStatus.OPEN,
+      });
+      await service.createCashTransaction(
+        CASHBOX,
+        expense({
+          category: CashTransactionCategory.OTHER,
+          orderId: undefined,
+        }),
+        makeUser(StaffRole.CASHIER),
+      );
+      expect(prisma.cashTransaction.create).toHaveBeenCalled();
+    });
+
+    it('does not find a cashbox outside the employee warehouses', async () => {
+      prisma.cashbox.findFirst.mockResolvedValue(null);
+      await expect(
+        service.createCashTransaction(
+          CASHBOX,
+          income,
+          makeUser(StaffRole.MANAGER),
+        ),
+      ).rejects.toThrow('Cashbox not found');
+      expect(prisma.cashTransaction.create).not.toHaveBeenCalled();
     });
 
     it('books a defect compensation linked to an order of the store', async () => {
