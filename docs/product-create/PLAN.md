@@ -104,4 +104,11 @@
 > (`PATCH /product/:id`, `POST /category/attribute/value`, roles, mobile consumers), `docs/security.md`,
 > `docs/features/authentication.md`, `docs/business-domain.md`, `docs/workflows/inventory.md`,
 > `billing/docs/DATABASE.md`, `billing/docs/CLAUDE.md`, `billing/AGENTS.md`, `billing-mobile/AGENTS.md`.
-> **Open**: device QA (new dev build; migration `20261114120000_barcode_per_store` still to apply).
+> Device QA — DONE 2026-11-15: migration applied, user tested on device, no issues found.
+
+## Follow-ups (later)
+- **Bug fix — store checks on `POST /product` / `PATCH /product/:id`**: `brandId`, `tagIds`, `attributeIds`
+  are not checked to exist / be linked to the store (`BrandsOnStore`, `AttributeOnStore`). Dictionaries are
+  global, so no data leak, but an unknown id likely fails with 500 (FK) instead of 400.
+- **S3 cleanup**: photos removed in `PATCH /product/:id` are dropped from `ProductImage` only; the objects stay in the bucket.
+- **Tags rework** «like categories» (structure, + new tag) — separate discussion; until then flat chips, optional.
