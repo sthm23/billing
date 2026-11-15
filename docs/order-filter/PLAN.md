@@ -28,7 +28,10 @@
 
 ## Stages
 
-### Stage 1 — backend
+### Stage 1 — backend — DONE 2026-11-15
+> `OrderQueryParams` + controller + `findAll`: `customerId`, `dateBy` (`soldAt` / `createdAt`), `owedToCustomer`
+> (`returns: { is: { status: CREDIT } }`), `status` checked by a regex of `OrderStatus` names. `findOne`: seller /
+> cashier / warehouse — `warehouseId in` own warehouses instead of `cashierId`. Specs: order suites 75 passing.
 - `OrderQueryParams`:
   - `customerId?` (UUID) — combined with the store scope, so another store's customer finds nothing;
   - `dateBy?: 'created' | 'sold'` (default `created`) — which date `fromDate`/`toDate` apply to;
@@ -38,7 +41,10 @@
 - Specs: customer, dateBy sold/created, owedToCustomer, bad status → 400, seller opens a colleague's order of
   their warehouse but not of another warehouse.
 
-### Stage 2 — mobile
+### Stage 2 — mobile — DONE 2026-11-15
+> `screens/order/filter/order-filter.ts` (model, `filterParams`, `periodDays`) + `OrderFilterSheet.tsx`;
+> `useOrdersInfinite` (page 20); `CustomerPickerSheet allowCreate={false}`; `OrderPage` filter badge + chips;
+> `OrderDetailScreen` opens someone else's open order read-only for a seller; i18n `orderFilter.*`.
 - `useOrdersInfinite` (like rentals) + «load more» on scroll; query key includes the filters.
 - `OrderFilterSheet` (`screens/order/filter/`): period chips Сегодня / Вчера / 7 дней / 30 дней / Свой период
   (two `DatePickerSheet` fields «С» / «По», local day bounds); customer row → `CustomerPickerSheet` in pick-only
@@ -51,6 +57,8 @@
 - i18n ru/uz/en.
 
 ### Stage 3 — finish
+> Docs done 2026-11-15: `docs/features/orders.md` §15 (+ §6), `docs/api-map.md`, `docs/security.md` (role row, `GET /orders`
+> and `/orders/:id` rows, gap 8), `billing-mobile/AGENTS.md` («Orders list filter»).
 - `tsc`, android export, backend specs.
 - Docs: `docs/features/orders.md`, `docs/api-map.md`, `billing-mobile/AGENTS.md`, `docs/security.md` (seller
   order access).

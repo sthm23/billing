@@ -68,11 +68,25 @@ export class OrderController {
       fromDate,
       toDate,
       warehouseId,
+      dateBy,
+      customerId,
+      owedToCustomer,
     }: OrderQueryParams,
     @CurrentUser() user: CurrentUserType,
   ) {
     return this.orderService.findAll(
-      { pageSize, currentPage, search, status, fromDate, toDate, warehouseId },
+      {
+        pageSize,
+        currentPage,
+        search,
+        status,
+        fromDate,
+        toDate,
+        warehouseId,
+        dateBy,
+        customerId,
+        owedToCustomer,
+      },
       user,
     );
   }

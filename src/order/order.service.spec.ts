@@ -89,6 +89,8 @@ describe('OrderService', () => {
       update: jest.fn(),
       aggregate: jest.fn(),
       create: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
     },
     productVariant: { findMany: jest.fn() },
     inventory: {
@@ -913,6 +915,63 @@ describe('OrderService', () => {
     });
   });
 
+  describe('findAll', () => {
+    const where = () => prisma.order.findMany.mock.calls[0][0].where;
+
+    beforeEach(() => {
+      prisma.order.findMany.mockResolvedValue([]);
+      prisma.order.count.mockResolvedValue(0);
+    });
+
+    it('filters by the customer within the store', async () => {
+      await service.findAll(
+        { customerId: CUSTOMER } as never,
+        makeUser(StaffRole.SELLER),
+      );
+      expect(where()).toMatchObject({ storeId: STORE, customerId: CUSTOMER });
+    });
+
+    it('filters sold orders by the sale date', async () => {
+      await service.findAll(
+        {
+          status: 'COMPLETED,DEBT,REFUNDED',
+          fromDate: '2026-11-01T00:00:00.000Z',
+          toDate: '2026-11-15T23:59:59.999Z',
+          dateBy: 'sold',
+        } as never,
+        makeUser(StaffRole.MANAGER),
+      );
+      expect(where()).toMatchObject({
+        status: { in: ['COMPLETED', 'DEBT', 'REFUNDED'] },
+        soldAt: {
+          gte: new Date('2026-11-01T00:00:00.000Z'),
+          lte: new Date('2026-11-15T23:59:59.999Z'),
+        },
+      });
+      expect(where()).not.toHaveProperty('createdAt');
+    });
+
+    it('filters by the creation date by default', async () => {
+      await service.findAll(
+        { fromDate: '2026-11-01T00:00:00.000Z' } as never,
+        makeUser(StaffRole.MANAGER),
+      );
+      expect(where()).toMatchObject({
+        createdAt: { gte: new Date('2026-11-01T00:00:00.000Z') },
+      });
+    });
+
+    it('finds orders the store owes money to the customer for', async () => {
+      await service.findAll(
+        { owedToCustomer: true } as never,
+        makeUser(StaffRole.MANAGER),
+      );
+      expect(where()).toMatchObject({
+        returns: { is: { status: ReturnOrderStatus.CREDIT } },
+      });
+    });
+  });
+
   describe('findOne', () => {
     beforeEach(() => {
       prisma.order.findUnique.mockResolvedValue(
@@ -927,6 +986,17 @@ describe('OrderService', () => {
           ],
         }),
       );
+    });
+
+    it('lets a seller open any order of their warehouses, not only their own', async () => {
+      await service.findOne(ORDER, makeUser(StaffRole.SELLER));
+      const where = prisma.order.findUnique.mock.calls[0][0].where;
+      expect(where).toMatchObject({
+        id: ORDER,
+        storeId: STORE,
+        warehouseId: { in: [WAREHOUSE] },
+      });
+      expect(where).not.toHaveProperty('cashierId');
     });
 
     it('hides the purchase cost from a seller', async () => {

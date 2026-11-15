@@ -565,7 +565,7 @@ export class OrderService {
     );
   }
 
-  /** Same scope as findOne: own store; sellers and cashiers only their own orders. */
+  /** Write access (items, customer): own store; owner/manager any order, others only orders they created. Viewing (findOne) is wider. */
   private async assertOrderAccess(orderId: string, user: CurrentUser) {
     if (user.role === UserRole.ADMIN) return;
     const order = await this.prisma.order.findUnique({
@@ -1083,6 +1083,9 @@ export class OrderService {
       fromDate,
       toDate,
       warehouseId,
+      dateBy,
+      customerId,
+      owedToCustomer,
     }: OrderQueryParams,
     user: CurrentUser,
   ) {
@@ -1108,13 +1111,22 @@ export class OrderService {
       }
 
       if (fromDate || toDate) {
-        params['createdAt'] = {};
+        // Sold orders by the sale date (as «Продажи сегодня»), others by creation
+        const dateField = dateBy === 'sold' ? 'soldAt' : 'createdAt';
+        params[dateField] = {};
         if (fromDate) {
-          params['createdAt']['gte'] = new Date(fromDate);
+          params[dateField]['gte'] = new Date(fromDate);
         }
         if (toDate) {
-          params['createdAt']['lte'] = new Date(toDate);
+          params[dateField]['lte'] = new Date(toDate);
         }
+      }
+      // Combined with the store scope: another store's customer finds nothing
+      if (customerId) {
+        params['customerId'] = customerId;
+      }
+      if (owedToCustomer) {
+        params['returns'] = { is: { status: ReturnOrderStatus.CREDIT } };
       }
 
       const orders = await this.prisma.order.findMany({
@@ -1312,15 +1324,22 @@ export class OrderService {
 
   async findOne(id: string, user: CurrentUser) {
     try {
+      // Seller / cashier / warehouse staff see (read-only) every order of their
+      // warehouses; editing someone else's order stays with assertOrderAccess
+      const restrictToWarehouses =
+        user.type === UserType.STAFF &&
+        user.staff.role !== StaffRole.OWNER &&
+        user.staff.role !== StaffRole.MANAGER;
       const params = {
         id,
         storeId: user.role !== UserRole.ADMIN ? user.staff.storeId : undefined,
-        cashierId:
-          user.type === UserType.STAFF &&
-          user.staff.role !== StaffRole.OWNER &&
-          user.staff.role !== StaffRole.MANAGER
-            ? user.staff.id
-            : undefined,
+        ...(restrictToWarehouses
+          ? {
+              warehouseId: {
+                in: user.staff.warehouse.map((w) => w.warehouseId),
+              },
+            }
+          : {}),
       } as Prisma.OrderFindUniqueArgs['where'];
       this.logger.debug({ orderId: id, params }, 'Finding order');
       const order = await this.prisma.order.findUnique({
