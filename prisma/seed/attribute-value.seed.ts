@@ -4,9 +4,8 @@ import { AttributeEnum } from "./attribute.seed";
 type AttributeValueData = string | number | boolean;
 export async function seedAttributeValues(prisma: PrismaClient, attrMap: Map<AttributeEnum, string>) {
     await attributeValues(prisma, attrMap.get(AttributeEnum.COLOR)!, [
-        'Red', 'Green', 'Blue', 'Black', 'White', 'Yellow',
-        'Pink', 'Purple', 'Gray', 'Brown', 'Orange', 'Gold',
-        'Silver', 'Bronze', 'Olive', 'Coral'
+        'Чёрный', 'Белый', 'Синий', 'Красный', 'Зелёный', 'Жёлтый',
+        'Серый', 'Коричневый', 'Бежевый', 'Розовый', 'Фиолетовый', 'Золотой', 'Серебряный'
     ]);
     await attributeValues(prisma, attrMap.get(AttributeEnum.SIZE)!, ['S', 'M', 'L', 'XL', 'XXL', 'XXXL']);
     await attributeValues(prisma, attrMap.get(AttributeEnum.NUMBER_SIZE)!, [35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45]);
@@ -22,7 +21,7 @@ export async function seedAttributeValues(prisma: PrismaClient, attrMap: Map<Att
     await attributeValues(prisma, attrMap.get(AttributeEnum.DSP)!, ['Термиз', 'Премиум']);
     await attributeValues(prisma, attrMap.get(AttributeEnum.HARDBOARD)!, ['Стандарт']);
 
-    await attributeValues(prisma, attrMap.get(AttributeEnum.WOOD_SPECIES)!, ['Leaf', 'Pine', 'Spruce', 'Oak', 'Walnut']);
+    await attributeValues(prisma, attrMap.get(AttributeEnum.WOOD_SPECIES)!, ['Лиственница', 'Сосна', 'Ель', 'Дуб', 'Орех']);
     await attributeValues(prisma, attrMap.get(AttributeEnum.LUMBER_SIZE)!, [
         '4x2', '4x4.5',
         '5x5', '5x4',
