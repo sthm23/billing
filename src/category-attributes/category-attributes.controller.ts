@@ -21,6 +21,7 @@ import { CategoryAttributesService } from './category-attributes.service';
 import {
   CreateAttributeDto,
   CreateAttributeValueDto,
+  UpdateAttributeDto,
 } from './dto/create-category-attribute.dto';
 import { PaginationParams } from '@shared/dto/pagination-params.dto';
 import { IdParamDto } from '@shared/dto/id-param.dto';
@@ -102,6 +103,16 @@ export class CategoryAttributesController {
     return this.categoryAttributesService.createAttribute(
       createCategoryAttributeDto,
     );
+  }
+
+  /** ADMIN: rename an attribute / set its uz / en translations (409 if another attribute uses the name). */
+  @UseGuards(AdminGuard)
+  @Patch('attribute/:id')
+  updateAttribute(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: UpdateAttributeDto,
+  ) {
+    return this.categoryAttributesService.updateAttribute(id, dto);
   }
 
   /** Find or create a value: store OWNER (attribute of their store) or ADMIN. Always 200. */

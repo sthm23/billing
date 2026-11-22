@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Prisma } from '@generated/client';
+import { ATTRIBUTE_LABEL_SELECT } from '@shared/helper/attribute.helper';
 import {
   AttributeType,
   StaffRole,
@@ -137,6 +138,8 @@ export type AdminStoreDetails = AdminStoreListItem & {
   attributes: {
     id: string;
     name: string;
+    nameUz: string | null;
+    nameEn: string | null;
     type: AttributeType;
     unit: string | null;
   }[];
@@ -299,7 +302,12 @@ export class AdminStoresService {
         attributes: {
           select: {
             attribute: {
-              select: { id: true, name: true, type: true, unit: true },
+              select: {
+                id: true,
+                ...ATTRIBUTE_LABEL_SELECT,
+                type: true,
+                unit: true,
+              },
             },
           },
         },
@@ -656,10 +664,19 @@ export class AdminStoresService {
     return ids;
   }
 
-  /** Attributes are global: an existing name is reused if its type matches */
+  /**
+   * Attributes are global: an existing one is reused if its name or a translation matches
+   * (case-insensitive) and its type matches. A new one gets the given translations.
+   */
   private async upsertAttributes(
     tx: Prisma.TransactionClient,
-    attrs: { name: string; type: AttributeType; unit?: string }[],
+    attrs: {
+      name: string;
+      nameUz?: string;
+      nameEn?: string;
+      type: AttributeType;
+      unit?: string;
+    }[],
   ): Promise<string[]> {
     const ids: string[] = [];
     const seen = new Set<string>();
@@ -669,7 +686,11 @@ export class AdminStoresService {
       seen.add(key);
 
       const existing = await tx.attribute.findFirst({
-        where: { name: { equals: attr.name, mode: 'insensitive' } },
+        where: {
+          OR: (['name', 'nameUz', 'nameEn'] as const).map((field) => ({
+            [field]: { equals: attr.name, mode: 'insensitive' as const },
+          })),
+        },
         select: { id: true, type: true },
       });
       if (existing) {
@@ -684,6 +705,8 @@ export class AdminStoresService {
       const created = await tx.attribute.create({
         data: {
           name: attr.name,
+          nameUz: attr.nameUz || null,
+          nameEn: attr.nameEn || null,
           type: attr.type,
           unit: attr.type === AttributeType.NUMBER ? (attr.unit ?? null) : null,
         },

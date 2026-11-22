@@ -406,3 +406,143 @@ describe('CategoryAttributesService — attribute values', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 });
+
+describe('CategoryAttributesService — attribute names (ru + uz / en)', () => {
+  let service: CategoryAttributesService;
+  const ATTR = '55555555-5555-4555-8555-555555555555';
+  const prisma = {
+    attribute: {
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
+    attributeValue: { findMany: jest.fn() },
+  };
+  const logger = {
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  };
+  const length = {
+    id: ATTR,
+    name: 'Длина',
+    nameUz: 'Uzunlik',
+    nameEn: 'Length',
+    type: 'NUMBER',
+    unit: 'м',
+  };
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        CategoryAttributesService,
+        { provide: PrismaService, useValue: prisma },
+        {
+          provide: getLoggerToken(CategoryAttributesService.name),
+          useValue: logger,
+        },
+      ],
+    }).compile();
+    service = module.get(CategoryAttributesService);
+    prisma.attribute.findUnique.mockResolvedValue({ id: ATTR });
+    prisma.attribute.findFirst.mockResolvedValue(null);
+    prisma.attribute.update.mockImplementation(
+      ({ data }: { data: Record<string, unknown> }) =>
+        Promise.resolve({ ...length, ...data }),
+    );
+  });
+
+  describe('updateAttribute', () => {
+    it('renames, sets a translation and clears one with an empty string', async () => {
+      await service.updateAttribute(ATTR, {
+        name: ' Длина  бруса ',
+        nameUz: 'Uzunlik',
+        nameEn: '',
+      });
+      expect(prisma.attribute.update.mock.calls[0][0].data).toEqual({
+        name: 'Длина бруса',
+        nameUz: 'Uzunlik',
+        nameEn: null,
+      });
+      expect(prisma.attribute.findFirst.mock.calls[0][0].where.id).toEqual({
+        not: ATTR,
+      });
+    });
+
+    it('rejects a name or translation used by another attribute with 409', async () => {
+      prisma.attribute.findFirst.mockResolvedValue({ name: 'Цвет' });
+      await expect(
+        service.updateAttribute(ATTR, { nameUz: 'rang' }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.attribute.update).not.toHaveBeenCalled();
+    });
+
+    it('maps a concurrent unique violation to 409', async () => {
+      prisma.attribute.update.mockRejectedValue(uniqueViolation());
+      await expect(
+        service.updateAttribute(ATTR, { name: 'Цвет' }),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('rejects an empty body and a too short name with 400', async () => {
+      await expect(service.updateAttribute(ATTR, {})).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      await expect(
+        service.updateAttribute(ATTR, { name: ' a ' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('returns 404 for an unknown attribute', async () => {
+      prisma.attribute.findUnique.mockResolvedValue(null);
+      await expect(
+        service.updateAttribute(ATTR, { name: 'Длина' }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  it('createAttribute stores trimmed translations; empty → null', async () => {
+    prisma.attribute.create.mockImplementation(
+      ({ data }: { data: Record<string, unknown> }) =>
+        Promise.resolve({ id: ATTR, ...data }),
+    );
+    await service.createAttribute({
+      name: ' Порода ',
+      nameUz: " Yog'och turi ",
+      nameEn: ' ',
+      type: 'STRING',
+    } as never);
+    expect(prisma.attribute.create.mock.calls[0][0].data).toEqual({
+      name: 'Порода',
+      nameUz: "Yog'och turi",
+      nameEn: null,
+      type: 'STRING',
+    });
+  });
+
+  it('getAttributeItems returns the attribute name in every language', async () => {
+    prisma.attributeValue.findMany.mockResolvedValue([
+      {
+        id: 'v',
+        attributeId: ATTR,
+        valueString: null,
+        valueNumber: 6,
+        valueBool: null,
+        attribute: length,
+      },
+    ]);
+    await expect(service.getAttributeItems([ATTR])).resolves.toEqual([
+      {
+        id: 'v',
+        attributeId: ATTR,
+        attributeName: 'Длина',
+        attributeNameUz: 'Uzunlik',
+        attributeNameEn: 'Length',
+        value: 6,
+      },
+    ]);
+  });
+});

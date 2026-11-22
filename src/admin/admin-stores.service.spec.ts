@@ -239,6 +239,8 @@ describe('AdminStoresService', () => {
       ]);
       expect(prisma.attribute.create.mock.calls[0][0].data).toEqual({
         name: 'Длина',
+        nameUz: null,
+        nameEn: null,
         type: AttributeType.NUMBER,
         unit: 'м',
       });
@@ -274,6 +276,36 @@ describe('AdminStoresService', () => {
           admin,
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('creates an attribute with translations; finds an existing one by any language', async () => {
+      await service.create(
+        createDto({
+          newAttributes: [
+            {
+              name: 'Длина',
+              nameUz: 'Uzunlik',
+              nameEn: 'Length',
+              type: AttributeType.NUMBER,
+              unit: 'м',
+            },
+          ],
+        }),
+        admin,
+      );
+      expect(prisma.attribute.create.mock.calls[0][0].data).toMatchObject({
+        name: 'Длина',
+        nameUz: 'Uzunlik',
+        nameEn: 'Length',
+      });
+      // looked up by name, nameUz and nameEn, case-insensitive
+      expect(prisma.attribute.findFirst.mock.calls[0][0].where).toEqual({
+        OR: [
+          { name: { equals: 'Длина', mode: 'insensitive' } },
+          { nameUz: { equals: 'Длина', mode: 'insensitive' } },
+          { nameEn: { equals: 'Длина', mode: 'insensitive' } },
+        ],
+      });
     });
 
     it('reuses an existing attribute only with the same type', async () => {
