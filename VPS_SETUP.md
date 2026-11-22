@@ -109,9 +109,9 @@ POSTGRES_PASSWORD=your_secure_password
 POSTGRES_PORT=5432
 POSTGRES_OUTPUT_PORT=5432
 
-# Application Database URL (connect to Docker container)
-# Use 'postgres' as hostname (Docker service name)
-DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+# Application Database URL (the app runs on the host via PM2,
+# so it connects through the published port on localhost)
+DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${POSTGRES_OUTPUT_PORT}/${POSTGRES_DB}
 
 # Other app settings...
 ```
@@ -194,19 +194,7 @@ docker exec -i dev_postgres psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
 
 ## Step 6: Start Your Application
 
-### If Your App is Also Dockerized
-```bash
-# Start all services (app + postgres)
-docker compose up -d
-
-# Check all containers are running
-docker compose ps
-
-# View logs
-docker compose logs -f
-```
-
-### If Your App Runs Directly (Node.js/NestJS)
+The app runs directly on the host (Node.js/NestJS under PM2); only PostgreSQL runs in Docker.
 ```bash
 # Install dependencies
 npm install
@@ -231,9 +219,6 @@ pm2 startup  # Auto-start on server reboot
 ### Check Database Connection
 ```bash
 # From your app logs, verify it connected successfully
-docker compose logs | grep -i "database"
-
-# Or if app runs directly:
 pm2 logs billing-app | grep -i "database"
 ```
 
@@ -280,11 +265,12 @@ crontab -l
 ## Step 9: Secure Your Database (IMPORTANT!)
 
 ### Remove Public Port Exposure
-Edit `docker-compose.yml` and comment out the ports:
+The app connects through the published port, so don't remove it — bind it to localhost instead.
+Edit `docker-compose.yml`:
 ```yaml
 postgres:
-  # ports:
-  #   - "${POSTGRES_OUTPUT_PORT}:${POSTGRES_PORT}"
+  ports:
+    - "127.0.0.1:${POSTGRES_OUTPUT_PORT}:${POSTGRES_PORT}"
 ```
 
 Restart:
@@ -292,7 +278,7 @@ Restart:
 docker compose up -d postgres
 ```
 
-Now PostgreSQL is only accessible from inside Docker network, not from internet.
+Now PostgreSQL is only accessible from the VPS itself, not from internet.
 
 ### Setup Firewall
 ```bash
@@ -363,15 +349,14 @@ docker compose up -d postgres
 
 ### App Can't Connect to Database
 ```bash
-# Check if containers are on same network
-docker network ls
-docker network inspect billing_default
+# Check the container is up and the port is published
+docker compose ps postgres
 
-# Test connection from app container
-docker compose exec your-app-service ping postgres
+# Test the connection from the host
+pg_isready -h localhost -p ${POSTGRES_OUTPUT_PORT}
 
-# Check environment variables
-docker compose exec your-app-service env | grep DATABASE
+# Check DATABASE_URL points to localhost:${POSTGRES_OUTPUT_PORT}
+grep DATABASE_URL .env
 ```
 
 ### Out of Memory

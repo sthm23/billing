@@ -7,7 +7,7 @@ Production: https://your-domain.com/api
 ```
 
 ## Authentication
-Все endpoints (кроме `/login`, `/signup`, `/refresh`) требуют JWT токен в header:
+Все endpoints (кроме `/login`, `/refresh`, `/logout`, `/health*`) требуют JWT токен в header:
 ```
 Authorization: Bearer <access_token>
 ```
@@ -43,32 +43,9 @@ Authorization: Bearer <access_token>
 
 ---
 
-### POST /signup
-**Public endpoint**
+### POST /signup — удалён (2026-11-13)
 
-Регистрация нового пользователя.
-
-**Request**:
-```json
-{
-  "fullName": "string",
-  "phone": "string",
-  "login": "string",
-  "password": "string",
-  "type": "CUSTOMER" | "STAFF"
-}
-```
-
-**Response**:
-```json
-{
-  "id": "uuid",
-  "fullName": "string",
-  "phone": "string",
-  "type": "CUSTOMER" | "STAFF",
-  "createdAt": "2026-08-15T10:00:00Z"
-}
-```
+Маршрут и `AuthService.signUp` удалены: ни один клиент их не использовал. Саморегистрация будет отдельным потоком. См. `docs/security.md`.
 
 ---
 
@@ -144,6 +121,8 @@ Authorization: Bearer <access_token>
 }
 ```
 
+`auth` никогда не содержит `passwordHash` (поле исключено в запросе; так же в `GET /users/:id`, `GET /users/:id/info` и в списке админов).
+
 ---
 
 ## 2. Order Module (`/api/orders`)
@@ -199,8 +178,7 @@ Authorization: Bearer <access_token>
       "variantId": "uuid",
       "quantity": 1,
       "retailPrice": 100.00,
-      "sale": 10.00,                 // Скидка
-      "costAtSale": 50.00            // Себестоимость
+      "sale": 10.00                  // Скидка
     }
   ],
   "additionalServices": [
@@ -225,8 +203,10 @@ Authorization: Bearer <access_token>
 - Order.status → `HOLD`
 - Order.totalAmount пересчитывается
 - Inventory НЕ списывается (только при оплате)
+- `costAtSale` клиентом НЕ передается (значение от старых клиентов игнорируется): бэкенд ставит `unitCost` последнего StockMovement IN с непустым `unitCost` по варианту (любой склад; 0, если прихода нет). Сохраненная позиция сохраняет `costAtSale`, пока не сменился вариант
 
 **Errors**:
+- `403 Forbidden` — заказ не из магазина пользователя, либо продавец/кассир правит чужой заказ
 - `400 Bad Request` — недостаточно товара на складе
 - `400 Bad Request` — товар не принадлежит магазину
 - `400 Bad Request` — заказ не в статусе CREATED/HOLD
@@ -268,6 +248,7 @@ Authorization: Bearer <access_token>
 - Order.status → `COMPLETED` или `DEBT`
 
 **Errors**:
+- `403 Forbidden` — `No access to this order` (заказ не из магазина пользователя)
 - `400 Bad Request` — `Cannot pay an order that is not in HOLD status; repay a debt via POST /payment`
 - `400 Bad Request` — сумма оплаты превышает totalAmount
 - `400 Bad Request` — недостаточно товара на складе
@@ -309,10 +290,55 @@ Authorization: Bearer <access_token>
 
 ---
 
+### POST /payment/return/:id
+**Требует JWT + Staff** (`billing/src/payment/payment.controller.ts` → `PaymentService.createPaymentForReturnOrder()`)
+
+Выплата клиенту по возврату в статусе `CREDIT` (`:id` — `ReturnedOrder.id`). Клиентом (web/mobile) пока не используется.
+
+**Request**:
+```json
+{
+  "cashboxId": "uuid",   // опционально; любая ОТКРЫТАЯ касса магазина
+  "payments": [
+    { "type": "CASH" | "CARD" | "ONLINE" | "TRANSFER", "amount": 10.00, "paidAt": "ISO (опц.)" }
+  ]
+}
+```
+
+**Response**: `{ "message": "Return payment(s) added successfully" }`
+
+**Лимит** — сумма, которую магазин реально должен клиенту: `owed = Σ order.payments − (order.totalAmount − order.returnedAmount)`; прежние ReturnPayment + новые ≤ owed, иначе `400 Payment amount exceeds the amount owed to the customer`. Статус → `COMPLETED`, когда выплачено ровно `owed`.
+
+**Касса**: `resolvePaymentCashbox` (как при погашении долга): `cashboxId`, иначе своя открытая касса сотрудника (предпочтительно на складе заказа); иначе `400 No open cashbox: ...`.
+
+**Что происходит (транзакция)**: ReturnPayment; CashTransaction (EXPENSE, RETURN, `orderId` = id **заказа**); Cashbox.balance уменьшается; статус ReturnedOrder.
+
+**Errors**:
+- `403 Forbidden` — заказ возврата не из магазина сотрудника
+- `400 Bad Request` — возврат не в статусе CREDIT; сумма больше долга магазина клиенту; нет открытой кассы
+
+---
+
+### GET /payment
+**Требует JWT** (`PaymentService.findAll()`)
+
+Список платежей по заказам, `?currentPage=&pageSize=`. Ограничен магазином пользователя через `order.storeId` (у `Payment` нет `storeId`); admin видит все. Клиентом пока не используется.
+
+**Response**: `{ currentPage, pageSize, total, data: Payment[] }`
+
+---
+
+### GET /payment/:id
+**Требует JWT** (`PaymentService.findOne()`)
+
+Платеж с `order` и `cashier` (+ `cashier.user`). `403 No access to this payment`, если заказ платежа не из магазина пользователя (admin — любой). Клиентом пока не используется.
+
+---
+
 ### POST /orders/return
 **Требует JWT + Staff**
 
-Возврат товара (`orderId` — в body).
+Возврат товара (`orderId` — в body). Цены и себестоимость берутся из исходной позиции заказа; в запросе только `itemId` и `quantity`.
 
 **Request**:
 ```json
@@ -320,11 +346,8 @@ Authorization: Bearer <access_token>
   "orderId": "uuid",
   "items": [
     {
-      "itemId": "uuid",           // ID OrderItem
-      "quantity": 1,
-      "retailPrice": 100.00,
-      "sale": 10.00,
-      "costAtSale": 50.00
+      "itemId": "uuid",           // ID OrderItem (один раз на запрос)
+      "quantity": 1
     }
   ],
   "returnPayments": [
@@ -346,17 +369,22 @@ Authorization: Bearer <access_token>
 **Что происходит**:
 - Создается ReturnedOrder
 - Создаются ReturnItem
-- Создаются StockMovement (IN, RETURN)
+- Создаются StockMovement (IN, RETURN, `unitCost` = `orderItem.costAtSale`)
 - Создаются CashTransaction (EXPENSE, RETURN)
 - Создаются ReturnPayment
-- Восстанавливается Inventory
+- Восстанавливается Inventory: `Inventory.quantity` += количество на складе заказа (upsert по варианту, в той же транзакции)
+- Сумма возврата = Σ (orderItem.retailPrice − orderItem.sale) × quantity (из заказа, не из запроса)
 - Обновляется Cashbox.balance
 - Order.status → `REFUNDED` или `DEBT`
 
 **Errors**:
+- `403 Forbidden` — `No access to this order` (заказ не из магазина пользователя)
 - `400 Bad Request` — заказ не в статусе COMPLETED/DEBT
 - `400 Bad Request` — заказ уже возвращен
+- `400 Bad Request` — `Duplicate return item: <itemId>` (одна позиция дважды в запросе)
 - `400 Bad Request` — возвращаемое количество превышает купленное
+
+Полностью оплаченный COMPLETED-заказ можно вернуть целиком (выплата = сумма возврата → `COMPLETED`, меньше → `CREDIT`). Частично оплаченный DEBT-заказ при полном возврате: долг = total − paid погашается, магазин должен клиенту возврат − долг (= оплаченное).
 
 ---
 
@@ -518,11 +546,12 @@ Authorization: Bearer <access_token>
 ### PATCH /orders/:id/clear-customer
 **Требует JWT + Staff**
 
-Удаление клиента из заказа.
+Удаление клиента из заказа. Доступ как у `GET /orders/:id` и `POST /orders/items` (`assertOrderAccess`): заказ своего магазина; продавец/кассир — только свои заказы; owner/manager — любой заказ магазина; admin — любой.
 
 **Response**: обновленный заказ
 
 **Errors**:
+- `403 Forbidden` — `No access to this order`
 - `400 Bad Request` — заказ в статусе COMPLETED/DEBT/REFUNDED
 
 ---
@@ -587,7 +616,7 @@ Authorization: Bearer <access_token>
 **Доступ**: касса должна быть OPEN и принадлежать магазину пользователя. OWNER/ADMIN (user.role) закрывают любую кассу магазина, остальные — только свою (`sellerId = staff.id`) на своем складе.
 
 **Errors**:
-- `400 Bad Request` — касса не найдена, уже закрыта или чужая (`No OPEN cashbox found for this store and warehouse`)
+- `400 Bad Request` — касса не найдена, уже закрыта или чужая (`Open cashbox not found, or it is not yours to close`)
 
 ---
 
@@ -1258,21 +1287,23 @@ Authorization: Bearer <access_token>
 ## 6. Debt Module (`/api/debt`)
 
 ### POST /debt
-**Требует JWT + Staff (OWNER/MANAGER)**
+**Требует JWT + роль OWNER или MANAGER** (`RolesGuard`, с 2026-11-14; ADMIN проходит). Сотрудник: магазин из токена, чужой `storeId` → `400 Wrong StoreId given!`; admin (без staff) обязан передать `storeId` → иначе `400 storeId is required`.
 
 Создание старого долга (не связанного с заказом).
 
 **Request**:
 ```json
 {
-  "storeId": "uuid",
+  "storeId": "uuid",                    // Опционально для сотрудника; обязателен для admin
   "customerId": "uuid",
-  "amount": 5000.00,
-  "description": "Долг за товары 2024 года",
-  "createdAt": "2024-01-15T10:00:00Z",  // Опционально
-  "returnedAt": "2024-12-31T10:00:00Z"  // Опционально
+  "amount": 5000.00,                    // >= 1
+  "description": "Долг за товары 2024 года",  // Опционально, <= 500, trim; пусто -> null
+  "createdAt": "2024-01-15T10:00:00Z",  // Опционально, по умолчанию сейчас; не в будущем (400)
+  "returnedAt": "2024-12-31T10:00:00Z"  // Опционально; не указан/null = без срока; раньше createdAt -> 400
 }
 ```
+
+Клиент не найден → `400 Клиент не найден`. Долг и привязка клиента к магазину создаются в одной транзакции.
 
 **Response**:
 ```json
@@ -1285,7 +1316,7 @@ Authorization: Bearer <access_token>
   "status": "ACTIVE",
   "description": "Долг за товары 2024 года",
   "createdAt": "2024-01-15T10:00:00Z",
-  "returnedAt": "2024-12-31T10:00:00Z"
+  "returnedAt": "2024-12-31T10:00:00Z"  // или null — без срока
 }
 ```
 
@@ -1403,7 +1434,9 @@ Authorization: Bearer <access_token>
       "total": 5000.00, "ordersCount": 2, "debtsCount": 1,
       "lastPaymentAt": "ISO | null",
       "since": "ISO",          // самый старый открытый долг: soldAt ?? createdAt заказа / createdAt долга
-      "ageDays": 42
+      "ageDays": 42,
+      "dueAt": "ISO | null",   // ближайший returnedAt открытых ручных долгов
+      "overdue": false         // dueAt < now
     }
   ]
 }
@@ -1429,6 +1462,8 @@ Authorization: Bearer <access_token>
       "description": "string | null",
       "warehouse": { "id": "uuid", "name": "string" } | null,
       "total": 3000.00, "paid": 1000.00, "remaining": 2000.00,
+      "dueAt": "ISO | null",      // MANUAL: returnedAt; ORDER: null
+      "overdue": false,
       "payments": [
         { "id": "uuid", "amount": 1000.00, "type": "CASH", "createdAt": "ISO", "createdBy": "ФИО" }
       ]
@@ -1450,46 +1485,42 @@ Authorization: Bearer <access_token>
 
 ---
 
-## 7. User Module (`/api/user`)
+## 7. User Module (`/api/users`)
 
-### POST /user
-**Требует JWT + ADMIN/OWNER**
+### POST /users
+**Требует JWT + ADMIN** (`AuthJWTGuard` + `AdminGuard`)
 
-Создание пользователя (Customer или Staff).
-
-**Request**:
-```json
-{
-  "fullName": "string",
-  "phone": "string",
-  "type": "CUSTOMER" | "STAFF",
-  "login": "string",
-  "password": "string",
-  // Если type = STAFF:
-  "storeId": "uuid",
-  "role": "OWNER" | "MANAGER" | "SELLER" | "CASHIER" | "WAREHOUSE"
-}
-```
-
-**Response**: созданный User
+Создание пользователя (`CreateUserDto`). Клиентами не используется: сотрудники, владельцы и клиенты создаются своими маршрутами (`POST /store/staff`, `POST /store/owner`, `POST /users/customers`).
 
 ---
 
-### GET /user
-**Требует JWT + Staff**
+### GET /users
+**Требует JWT + OWNER** (admin проходит)
 
-Список пользователей.
-
-**Response**: массив User
+Список пользователей (`?currentPage=&pageSize=`).
 
 ---
 
-### GET /user/:id
-**Требует JWT + Staff**
+### GET /users/customers · POST /users/customers · PUT /users/customers/set-to-order
+**Требует JWT**
 
-Детальная информация о пользователе.
+- `GET /users/customers` — поиск клиентов (`?search=`); фильтр по наличию записи `Customer` (`customer: { isNot: null }`), а не по `type: CUSTOMER` — сотрудник тоже может быть клиентом. Видимость и правила поиска — `docs/api-map.md`. Каждая строка содержит `debtTotal` (2026-11-14) — открытый долг клиента в магазине пользователя (`null` для ADMIN).
+- `POST /users/customers` — если телефон уже принадлежит клиенту → `409`; если телефон принадлежит существующему пользователю БЕЗ записи `Customer` (например, сотруднику) — для этого же пользователя создается `Customer` (новый User не создается, `fullName` пользователя сохраняется) и привязывается к магазину. Схема не менялась.
+- `PUT /users/customers/set-to-order` — заказ должен быть из магазина пользователя (403).
 
-**Response**: User с auth, staff, customer
+---
+
+### GET /users/:id · GET /users/:id/info
+**Требует JWT**
+
+Детальная информация о пользователе (`auth` без `passwordHash`, `staff`). Доступ: admin, сам пользователь или сотрудник того же магазина (`target.staff.storeId === user.staff.storeId`), иначе `403 No access to this user`.
+
+---
+
+### DELETE /users/:id
+**Требует JWT + OWNER**
+
+Деактивация пользователя; та же проверка доступа, что выше — пользователя другого магазина деактивировать нельзя (`403`).
 
 ---
 
@@ -1513,16 +1544,16 @@ Authorization: Bearer <access_token>
 ---
 
 ### GET /store
-**Требует JWT + Staff**
+**Требует JWT + ADMIN** (`AdminGuard`)
 
-Список магазинов.
+Список всех магазинов (для админа это задумано).
 
 **Response**: массив Store
 
 ---
 
 ### GET /store/:id
-**Требует JWT + Staff**
+**Требует JWT + OWNER** (свой магазин; admin — любой)
 
 Детальная информация о магазине.
 
@@ -1530,94 +1561,38 @@ Authorization: Bearer <access_token>
 
 ---
 
-## 9. Category Attributes Module (`/api/category-attributes`)
+### PUT /store/:id
+**Требует JWT + OWNER** (admin проходит)
 
-### POST /category-attributes/category
-**Требует JWT + ADMIN/OWNER**
-
-Создание категории.
-
-**Request**:
-```json
-{
-  "name": "string",
-  "parentId": "uuid | null"
-}
-```
-
-**Response**: созданная Category
+Обновление магазина. Не-admin может обновлять только свой магазин (`user.staff.storeId`), иначе `404 Store not found`.
 
 ---
 
-### POST /category-attributes/attribute
-**Требует JWT + ADMIN/OWNER**
+### GET /store/:id/stock-movements
+**Требует JWT** (`:id` — id пользователя-сотрудника)
 
-Создание атрибута (фильтра).
-
-**Request**:
-```json
-{
-  "name": "string",
-  "type": "STRING" | "NUMBER" | "BOOLEAN"
-}
-```
-
-**Response**: созданный Attribute
+Движения товара, созданные этим сотрудником. Не-admin видит только движения по складам своего магазина.
 
 ---
 
-### POST /category-attributes/attribute-value
-**Требует JWT + ADMIN/OWNER**
+## 9. Category Attributes Module (`/api/category`)
 
-Создание значения атрибута.
+Весь контроллер требует JWT (`AuthJWTGuard`). Старые пути `/category-attributes/...` в коде не существуют — маршруты начинаются с `/category`.
 
-**Request**:
-```json
-{
-  "attributeId": "uuid",
-  "valueString": "string | null",
-  "valueNumber": "number | null",
-  "valueBool": "boolean | null"
-}
-```
+- `GET /category`, `GET /category/brand`, `GET /category/tag`, `GET /category/attributes`, `GET /category/attributes/items`, `GET /category/attributes/:id` — общие справочники (любой авторизованный пользователь)
+- `GET /category/:id/categories`, `GET /category/brand/:id`, `GET /category/attributes/store/:id` — `:id` это `storeId`: должен быть магазином самого пользователя (admin — любой), иначе `403 No access to this store`
+- `POST /category/attribute`, `POST /category/attribute/value` — **только admin** (`AdminGuard`)
 
-**Response**: созданный AttributeValue
-
----
-
-### GET /category-attributes/category
-**Public endpoint**
-
-Список категорий.
-
-**Response**: массив Category (древовидная структура)
-
----
-
-### GET /category-attributes/attribute
-**Public endpoint**
-
-Список атрибутов.
-
-**Response**: массив Attribute с values
+Тела запросов — см. `CreateAttributeDto` / `CreateAttributeValueDto` (`billing/src/category-attributes/dto/create-category-attribute.dto.ts`).
 
 ---
 
 ## 10. File Module (`/api/file`)
 
-### POST /file/upload
-**Требует JWT + Staff**
+### POST /image/upload
+**Требует JWT + OWNER/MANAGER**
 
-Загрузка файла в S3.
-
-**Request**: multipart/form-data с полем `file`
-
-**Response**:
-```json
-{
-  "url": "https://s3.amazonaws.com/bucket/file.jpg"
-}
-```
+Устарело: актуальный контракт (presigned PUT в Uztelecom Object Storage, 1–5 файлов, ≤ 5 MB, jpeg/png/webp) — [docs/api-map.md → POST /image/upload](../../docs/api-map.md#post-imageupload).
 
 ---
 

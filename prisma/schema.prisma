@@ -27,6 +27,7 @@ model User {
   refreshSessions RefreshSession[]
   staff           Staff?
   stores          Store[] //created stores by this auth account
+  categories      Category[] // subcategories created by this user
 
   @@map("users")
 }
@@ -73,6 +74,30 @@ model Store {
   createdBy String // admin auth account id
   creator   User   @relation(fields: [createdBy], references: [id])
 
+  /// Store sells goods (orders, payments, returns of sales)
+  salesEnabled  Boolean @default(true)
+  /// Store rents goods out (rental module); at least one of the two flags is true
+  rentalEnabled Boolean @default(false)
+
+  /// Subscription state: TRIAL (first month, free) → ACTIVE (paid) → SUSPENDED (blocked by an admin)
+  status         StoreStatus         @default(TRIAL)
+  /// End of the free trial (createdAt + 1 month); no auto-suspend when it passes
+  trialEndsAt    DateTime?
+  /// Paid until — entered by the admin when the store is resumed / paid
+  paidUntil      DateTime?
+  suspendedAt    DateTime?
+  /// User id of the admin who suspended the store (no FK: users are never deleted)
+  suspendedById  String?
+  suspendReason  StoreSuspendReason?
+  /// Optional comment for the owner shown with the suspension
+  suspendComment String?
+
+  /// Application data entered by the admin
+  address String?
+  /// Taxpayer number (INN), exactly 9 digits
+  inn     String?
+  note    String?
+
   warehouse Warehouse[]
   staff     Staff[]
   customers Customer[]  @relation("CustomerStores")
@@ -100,12 +125,17 @@ model Customer {
 }
 
 model Staff {
-  id        String    @id @default(uuid())
-  userId    String    @unique
-  storeId   String
-  role      StaffRole
-  isActive  Boolean   @default(true)
-  createdAt DateTime  @default(now())
+  id                 String                   @id @default(uuid())
+  userId             String                   @unique
+  storeId            String
+  role               StaffRole
+  isActive           Boolean                  @default(true)
+  createdAt          DateTime                 @default(now())
+  /// Set when the owner deactivates the employee; cleared on restore
+  deactivatedAt      DateTime?
+  /// User id of who deactivated (no FK: users are never deleted)
+  deactivatedById    String?
+  deactivationReason StaffDeactivationReason?
 
   returnPayments   ReturnPayment[]    @relation("ReturnPayments")
   orders           Order[]            @relation("StaffOrders")
@@ -139,18 +169,19 @@ model StaffOnWarehouse {
  */
 
 model Warehouse {
-  id             String             @id @default(uuid())
-  storeId        String
-  name           String
-  isActive       Boolean            @default(true)
-  createdAt      DateTime           @default(now())
-  inventory      Inventory[]
-  orders         Order[]
-  staffs         StaffOnWarehouse[]
-  stockMovements StockMovement[]
-  products       Product[]
-  store          Store              @relation(fields: [storeId], references: [id])
-  cashboxes      Cashbox[]
+  id              String             @id @default(uuid())
+  storeId         String
+  name            String
+  isActive        Boolean            @default(true)
+  createdAt       DateTime           @default(now())
+  inventory       Inventory[]
+  orders          Order[]
+  staffs          StaffOnWarehouse[]
+  stockMovements  StockMovement[]
+  products        Product[]
+  store           Store              @relation(fields: [storeId], references: [id])
+  cashboxes       Cashbox[]
+  rentalCleanings RentalCleaning[]
 
   @@index([storeId])
   @@map("warehouses")
@@ -174,7 +205,8 @@ model Brand {
 model ProductImage {
   id        String  @id @default(uuid())
   productId String
-  url       String
+  /// Object key in the media bucket: products/<storeId>/<file>. The API builds the public URL from S3_PUBLIC_URL.
+  key       String
   isMain    Boolean @default(false)
   order     Int     @default(0)
   product   Product @relation(fields: [productId], references: [id])
@@ -238,22 +270,32 @@ model Product {
 }
 
 model ProductVariant {
-  id             String                  @id @default(uuid())
-  productId      String
-  sku            String // ску будет уникален в пределах магазина
-  barCode        String?
-  price          Decimal
-  createdAt      DateTime                @default(now())
-  storeId        String // это для быстрого поиска уникального SKU в пределах магазина
-  warehouseId    String // это для быстрого доступа к складу, на котором лежит товар
-  inventory      Inventory[]
-  orderItems     OrderItem[]
-  product        Product                 @relation(fields: [productId], references: [id])
-  stockMovements StockMovement[]
-  attributes     VariantAttributeValue[]
+  id                  String                  @id @default(uuid())
+  productId           String
+  sku                 String // ску будет уникален в пределах магазина
+  /// Generated (BarcodeSequence) or entered manually (factory code, digits 8–14); unique per store
+  barCode             String?
+  price               Decimal // sale price
+  /// Variant can be sold (existing order flow rejects it otherwise)
+  canSell             Boolean                 @default(true)
+  /// Variant can be rented out; then rentPricePerDay > 0 is required
+  canRent             Boolean                 @default(false)
+  rentPricePerDay     Decimal?
+  /// Dry-cleaning days suggested when the variant comes back from a rental (0 = none)
+  defaultCleaningDays Int                     @default(1)
+  createdAt           DateTime                @default(now())
+  storeId             String // это для быстрого поиска уникального SKU в пределах магазина
+  warehouseId         String // это для быстрого доступа к складу, на котором лежит товар
+  inventory           Inventory[]
+  orderItems          OrderItem[]
+  product             Product                 @relation(fields: [productId], references: [id])
+  stockMovements      StockMovement[]
+  attributes          VariantAttributeValue[]
+  rentalCleanings     RentalCleaning[]
 
   @@unique([storeId, sku])
-  @@unique([barCode])
+  /// Barcode is unique per store: a factory (EAN) code may be entered manually if free in the store; empty → generated
+  @@unique([storeId, barCode])
   @@index([productId])
   @@map("product_variants")
 }
@@ -307,15 +349,23 @@ model StockMovement {
  * =======================
  */
 
+/// Two levels: parentId = null → store direction (system, seed); parentId = direction → product subcategory.
+/// Case-insensitive uniqueness per parent for name / nameUz / nameEn is enforced by partial expression
+/// indexes created in SQL (migration 20261113120000_category_two_levels), not representable in Prisma.
 model Category {
-  id       String              @id @default(uuid())
-  name     String              @unique
-  parentId String?
-  parent   Category?           @relation("CategoryTree", fields: [parentId], references: [id])
-  children Category[]          @relation("CategoryTree")
-  store    CategoriesOnStore[]
-  products Product[]
+  id          String              @id @default(uuid())
+  name        String // Russian, primary
+  nameUz      String?
+  nameEn      String?
+  parentId    String?
+  parent      Category?           @relation("CategoryTree", fields: [parentId], references: [id])
+  children    Category[]          @relation("CategoryTree")
+  createdById String?
+  createdBy   User?               @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  store       CategoriesOnStore[]
+  products    Product[]
 
+  @@unique([parentId, name])
   @@index([parentId])
   @@map("categories")
 }
@@ -330,6 +380,8 @@ model Attribute {
   id      String             @id @default(uuid())
   name    String             @unique
   type    AttributeType
+  /// Unit for NUMBER attributes (м, кг, л); shown as «Длина — 6 м»
+  unit    String?
   values  AttributeValue[]
   store   AttributeOnStore[]
   product ProductAttribute[]
@@ -424,12 +476,16 @@ model Order {
   createdAt   DateTime     @default(now())
   /// Set once when the order becomes COMPLETED or DEBT (the sale)
   soldAt      DateTime?
+  /// Optional term for the debt left on the order ("вернуть до"), set when the sale leaves a debt
+  debtDueAt   DateTime?
 
   isReturned     Boolean             @default(false)
   returnedAt     DateTime?
   returnedAmount Decimal             @default(0)
   returns        ReturnedOrder?
   services       AdditionalService[]
+  /// Set when the order is a rental (booking); such an order never goes through the sale flow
+  rental         Rental?
 
   store            Store             @relation(fields: [storeId], references: [id])
   warehouse        Warehouse         @relation(fields: [warehouseId], references: [id])
@@ -447,17 +503,18 @@ model Order {
 }
 
 model OrderItem {
-  id          String         @id @default(uuid())
-  orderId     String
-  variantId   String
-  quantity    Int
-  retailPrice Decimal // Розничная цена на момент продажи, может отличаться от текущей цены в каталоге
-  sale        Decimal        @default(0) // Скидка на момент продажи
-  costAtSale  Decimal // За сколько закупили
-  createdAt   DateTime       @default(now())
-  returnItems ReturnItem?
-  order       Order          @relation(fields: [orderId], references: [id])
-  variant     ProductVariant @relation(fields: [variantId], references: [id])
+  id                String             @id @default(uuid())
+  orderId           String
+  variantId         String
+  quantity          Int
+  retailPrice       Decimal // Розничная цена на момент продажи, может отличаться от текущей цены в каталоге
+  sale              Decimal            @default(0) // Скидка на момент продажи
+  costAtSale        Decimal // За сколько закупили
+  createdAt         DateTime           @default(now())
+  returnItems       ReturnItem?
+  rentalReturnItems RentalReturnItem[]
+  order             Order              @relation(fields: [orderId], references: [id])
+  variant           ProductVariant     @relation(fields: [variantId], references: [id])
 
   @@index([orderId])
   @@index([variantId])
@@ -469,12 +526,141 @@ model AdditionalService {
   orderId     String
   name        String
   price       Decimal
+  sale        Decimal  @default(0) // discount on the service, sale <= price
   description String?
   createdAt   DateTime @default(now())
   order       Order    @relation(fields: [orderId], references: [id])
 
   @@index([orderId])
   @@map("additional_services")
+}
+
+/**
+ * =======================
+ * RENTALS
+ * Money lives in the Order (items, services, payments); Rental keeps dates
+ * and the physical state of the rented items. Renting never changes Inventory.
+ * =======================
+ */
+model Rental {
+  id          String @id @default(uuid())
+  orderId     String @unique
+  storeId     String
+  warehouseId String
+  customerId  String
+
+  startDate   DateTime // planned issue date
+  endDate     DateTime // planned return date
+  plannedDays Int // days the price was calculated for
+
+  status                  RentalStatus @default(BOOKED)
+  issuedAt                DateTime?
+  issuedBy                String? // staffId
+  /// Issued while the salon held no collateral (seller's responsibility)
+  issuedWithoutCollateral Boolean      @default(false)
+  closedAt                DateTime? // all items returned
+
+  cancelledAt  DateTime?
+  cancelledBy  String? // staffId
+  refundAmount Decimal? // prepayment paid back on cancellation
+  cancelReason String?
+
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  order       Order              @relation(fields: [orderId], references: [id])
+  collaterals RentalCollateral[]
+  returns     RentalReturn[]
+
+  @@index([storeId, startDate])
+  @@index([warehouseId, status])
+  @@map("rentals")
+}
+
+/// Non-cash collateral (passport, gold); never goes to the cashbox
+model RentalCollateral {
+  id          String         @id @default(uuid())
+  rentalId    String
+  type        CollateralType
+  description String
+  receivedAt  DateTime       @default(now())
+  receivedBy  String // staffId
+  returnedAt  DateTime?
+  returnedBy  String? // staffId
+
+  rental Rental @relation(fields: [rentalId], references: [id])
+
+  @@index([rentalId])
+  @@map("rental_collaterals")
+}
+
+/// One return event (full or partial)
+model RentalReturn {
+  id                String   @id @default(uuid())
+  rentalId          String
+  returnedAt        DateTime // actual return time
+  penaltyAmount     Decimal  @default(0) // damage / late return, entered by the seller
+  penaltyComment    String? // required when penaltyAmount > 0
+  earlyReturnRefund Decimal  @default(0) // total reduction on early return, OWNER/MANAGER only
+  createdBy         String // staffId
+  createdAt         DateTime @default(now())
+
+  rental Rental             @relation(fields: [rentalId], references: [id])
+  items  RentalReturnItem[]
+
+  @@index([rentalId])
+  @@map("rental_returns")
+}
+
+model RentalReturnItem {
+  id            String   @id @default(uuid())
+  returnId      String
+  orderItemId   String
+  quantity      Int
+  cleaningDays  Int      @default(0) // 0 = no dry cleaning
+  availableFrom DateTime // returnedAt + cleaningDays: the unit is free again from here
+
+  return    RentalReturn @relation(fields: [returnId], references: [id])
+  orderItem OrderItem    @relation(fields: [orderItemId], references: [id])
+
+  @@index([returnId])
+  @@index([orderItemId])
+  @@map("rental_return_items")
+}
+
+/// Dry cleaning planned by an OWNER/MANAGER outside a return (R13): one unit
+/// of the variant is busy on [startDate, endDate) like a booking; the expense
+/// goes to the cashbox at once, a cancel before the start writes it back.
+model RentalCleaning {
+  id          String               @id @default(uuid())
+  storeId     String
+  warehouseId String
+  variantId   String
+  startDate   DateTime // 12:00 of the first cleaning day
+  endDate     DateTime // 12:00 after the last cleaning day: the unit is free again
+  days        Int
+  amount      Decimal
+  paymentType PaymentType
+  comment     String?
+  status      RentalCleaningStatus @default(ACTIVE)
+
+  expenseTransactionId String  @unique // CashTransaction EXPENSE/DRY_CLEANING
+  refundTransactionId  String? @unique // CashTransaction INCOME/DRY_CLEANING on cancel
+
+  createdBy   String // staffId
+  createdAt   DateTime  @default(now())
+  cancelledBy String? // staffId
+  cancelledAt DateTime?
+
+  warehouse          Warehouse        @relation(fields: [warehouseId], references: [id])
+  variant            ProductVariant   @relation(fields: [variantId], references: [id])
+  expenseTransaction CashTransaction  @relation("RentalCleaningExpense", fields: [expenseTransactionId], references: [id])
+  refundTransaction  CashTransaction? @relation("RentalCleaningRefund", fields: [refundTransactionId], references: [id])
+
+  @@index([warehouseId, variantId, endDate])
+  @@index([storeId, startDate])
+  @@map("rental_cleanings")
 }
 
 /**
@@ -489,6 +675,9 @@ model ReturnedOrder {
   createdBy   String
   status      ReturnOrderStatus
   totalAmount Decimal           @default(0)
+  /// Why the customer returned the goods — information only
+  reason      ReturnReason      @default(OTHER)
+  comment     String?
   items       ReturnItem[]
   payments    ReturnPayment[]
   order       Order             @relation(fields: [orderId], references: [id])
@@ -582,6 +771,9 @@ model CashTransaction {
 
   order Order?       @relation(fields: [orderId], references: [id])
   debt  DebtPayment? @relation(fields: [debtId], references: [id])
+
+  rentalCleaningExpense RentalCleaning? @relation("RentalCleaningExpense")
+  rentalCleaningRefund  RentalCleaning? @relation("RentalCleaningRefund")
 }
 
 model CustomerDebt {
@@ -663,6 +855,28 @@ enum CashTransactionCategory {
   PURCHASE
   RETURN
   OTHER
+  RENTAL // income of a rental order; not to be confused with RENT (premises rent expense)
+  DRY_CLEANING // planned dry cleaning of a rental item (EXPENSE; INCOME when cancelled)
+  DEFECT_COMPENSATION // money given for a defective item the shop does not take back (manual EXPENSE, no stock movement)
+}
+
+enum RentalStatus {
+  BOOKED // booked, items are in the salon
+  ISSUED // handed out to the customer
+  PARTIALLY_RETURNED // some items are back
+  RETURNED // all items are back
+  CANCELLED // booking cancelled before issue
+}
+
+enum RentalCleaningStatus {
+  ACTIVE
+  CANCELLED
+}
+
+enum CollateralType {
+  PASSPORT
+  GOLD
+  OTHER
 }
 
 enum CashStatus {
@@ -687,6 +901,27 @@ enum StaffRole {
   MANAGER
   CASHIER
   WAREHOUSE
+}
+
+/// Store subscription state (Store.status)
+enum StoreStatus {
+  TRIAL
+  ACTIVE
+  SUSPENDED
+}
+
+/// Why an admin suspended a store (Store.suspendReason)
+enum StoreSuspendReason {
+  UNPAID
+  OWNER_REQUEST
+  OTHER
+}
+
+/// Why an employee was deactivated (Staff.deactivationReason)
+enum StaffDeactivationReason {
+  LEFT
+  TEMPORARY
+  OTHER
 }
 
 enum StockMovementType {
@@ -714,6 +949,13 @@ enum ReturnOrderStatus {
   DEBT
   CREDIT
   COMPLETED
+}
+
+enum ReturnReason {
+  DEFECT
+  NOT_FIT
+  EXTRA
+  OTHER
 }
 
 enum PaymentType {

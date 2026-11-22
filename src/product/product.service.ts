@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -21,40 +22,134 @@ import {
 import { buildSku } from '@shared/helper/sku-generator.helper';
 import { CurrentUser } from '@auth/models/auth.model';
 import { BarcodeService } from '@shared/helper/bar-code.service';
-import { UpdateProductVariantPriceDTO } from './dto/update-product.dto';
+import { canSeeCost } from '@shared/helper/role.helper';
+import {
+  UpdateProductDto,
+  UpdateProductVariantPriceDTO,
+} from './dto/update-product.dto';
 import { ProductListParams } from './dto/product-list-params.dto';
 import { LOW_STOCK_THRESHOLD } from './product.constants';
+import { assertWarehouseAccess } from '@shared/helper/warehouse-access.helper';
+import { S3Service } from '@prisma/s3.service';
+import {
+  FileHelper,
+  PRODUCT_IMAGE_MAX_COUNT,
+  PRODUCT_IMAGE_MAX_SIZE,
+  PRODUCT_IMAGE_MIME_TYPES,
+} from '@shared/helper/file.helper';
+
+/** Owner (user or staff role), manager or admin — may edit products and finish drafts. */
+function canManageProducts(user: CurrentUser): boolean {
+  return (
+    user.role === UserRole.ADMIN ||
+    user.role === UserRole.OWNER ||
+    user.staff?.role === StaffRole.OWNER ||
+    user.staff?.role === StaffRole.MANAGER
+  );
+}
+
+/** Category label in every language; the client picks one (falls back to `name`, Russian). */
+function categoryI18n(
+  category: {
+    name: string;
+    nameUz: string | null;
+    nameEn: string | null;
+  } | null,
+) {
+  return category
+    ? { name: category.name, nameUz: category.nameUz, nameEn: category.nameEn }
+    : null;
+}
 
 @Injectable()
 export class ProductService {
   constructor(
     private prisma: PrismaService,
     private barcodeService: BarcodeService,
+    private s3Service: S3Service,
     @InjectPinoLogger(ProductService.name) private readonly logger: PinoLogger,
   ) {}
+
+  /**
+   * Client image values (keys, or full URLs under S3_PUBLIC_URL from the legacy web) → object keys.
+   * Each key must be under `products/<storeId>/` and already uploaded (HEAD): image type, ≤ 5 MB.
+   */
+  private async resolveImageKeys(
+    images: string[],
+    storeId: string,
+  ): Promise<string[]> {
+    if (images.length > PRODUCT_IMAGE_MAX_COUNT) {
+      throw new BadRequestException(
+        `At most ${PRODUCT_IMAGE_MAX_COUNT} images per product`,
+      );
+    }
+    const prefix = FileHelper.productImagePrefix(storeId);
+    const keys = images.map((value) => {
+      const key = FileHelper.toKey(value);
+      if (!key || !key.startsWith(prefix) || key.includes('..')) {
+        throw new BadRequestException('Invalid product image');
+      }
+      return key;
+    });
+    if (new Set(keys).size !== keys.length) {
+      throw new BadRequestException('Duplicate product image');
+    }
+    const heads = await Promise.all(
+      keys.map((key) => this.s3Service.headObject(key)),
+    );
+    heads.forEach((head) => {
+      if (!head) throw new BadRequestException('Product image is not uploaded');
+      if (head.size > PRODUCT_IMAGE_MAX_SIZE) {
+        throw new BadRequestException('Image must be 5 MB or smaller');
+      }
+      if (!PRODUCT_IMAGE_MIME_TYPES.includes(head.contentType)) {
+        throw new BadRequestException(
+          'Only JPEG, PNG or WebP images are allowed',
+        );
+      }
+    });
+    return keys;
+  }
+
+  /** DB image rows (key) → API shape (url) */
+  private toImageResponse(
+    images: { id: string; key: string; isMain: boolean }[],
+  ) {
+    return images.map(({ key, ...image }) => ({
+      ...image,
+      url: FileHelper.toPublicUrl(key),
+    }));
+  }
 
   async createProduct(
     dto: CreateProductDto,
     user: CurrentUser,
   ): Promise<Product> {
+    // The warehouse must belong to the caller's store (403 before the try)
+    await assertWarehouseAccess(this.prisma, user, dto.warehouseId);
+    const warehouse = await this.prisma.warehouse.findUnique({
+      where: { id: dto.warehouseId },
+    });
+    if (!warehouse) throw new NotFoundException('Warehouse not found');
+    await this.assertStoreSubcategory(dto.categoryId, warehouse.storeId);
+    const imageKeys = await this.resolveImageKeys(
+      dto.images ?? [],
+      warehouse.storeId,
+    );
     try {
-      const warehouse = await this.prisma.warehouse.findUnique({
-        where: { id: dto.warehouseId },
-      });
-      if (!warehouse) throw new NotFoundException('Warehouse not found');
-
       const product = await this.prisma.product.create({
         data: {
           name: dto.name,
           warehouseId: dto.warehouseId,
           storeId: warehouse.storeId,
           brandId: dto.brandId ?? null,
-          categoryId: dto.categoryId ?? null,
+          categoryId: dto.categoryId,
           description: dto.description ?? null,
           images: {
             createMany: {
-              data: dto.images.map((url, index) => ({
-                url,
+              data: imageKeys.map((key, index) => ({
+                key,
+                order: index,
                 isMain: index === 0,
               })),
             },
@@ -92,16 +187,47 @@ export class ProductService {
     try {
       const product = await this.prisma.product.findUnique({
         where: { id: dto.productId },
+        include: {
+          category: { select: { name: true } },
+          attributes: { select: { attributeId: true } },
+        },
       });
       if (!product) throw new NotFoundException('Product not found');
+      this.assertWarehouseAccess(product.storeId, product.warehouseId, user);
+      // SKU uses the category name from the DB, never the client's `dto.category`
+      const categoryName = product.category?.name ?? '';
       const warehouse = await this.prisma.warehouse.findUnique({
         where: { id: product.warehouseId },
       });
       if (!warehouse) throw new NotFoundException('Warehouse not found');
 
+      const saleRentByVariant = dto.variants.map((v) =>
+        this.resolveSaleRent(v),
+      );
+      const valueById = await this.assertVariantAttributes(
+        product.id,
+        (product.attributes ?? []).map((a) => a.attributeId),
+        dto.variants.map((v) => v.attributes.map((a) => a.attributeValueId)),
+      );
+      const manualCodes = await this.assertManualBarcodes(
+        dto.variants.map((v) => v.barCode),
+        warehouse.storeId,
+      );
+      if (dto.variants.some((v) => v.quantity > 0) && !user.staff?.id) {
+        throw new BadRequestException(
+          'Initial stock requires a staff account (it creates a stock receipt)',
+        );
+      }
+
       await this.prisma.$transaction(async (tx) => {
-        for (const variant of dto.variants) {
-          const barCode = await this.barcodeService.generateUniqueBarcode(tx);
+        for (const [index, variant] of dto.variants.entries()) {
+          const barCode =
+            manualCodes[index] ??
+            (await this.generateStoreBarcode(
+              tx,
+              warehouse.storeId,
+              manualCodes,
+            ));
           const newVariant = await tx.productVariant.create({
             data: {
               productId: product.id,
@@ -109,11 +235,15 @@ export class ProductService {
               storeId: warehouse.storeId, // важно: берем из warehouse, не из dto
               sku: buildSku(
                 product.name,
-                dto.category,
-                variant.attributes.map((a) => a.value),
+                categoryName,
+                // values from the DB, in the client's attribute order
+                variant.attributes.map(
+                  (a) => valueById.get(a.attributeValueId) ?? a.value,
+                ),
               ),
               barCode,
               price: new Prisma.Decimal(variant.retailPrice),
+              ...saleRentByVariant[index],
             },
           });
 
@@ -124,17 +254,20 @@ export class ProductService {
               warehouseId: warehouse.id,
             },
           });
-          await tx.stockMovement.create({
-            data: {
-              type: StockMovementType.IN,
-              reason: StockMovementReason.PURCHASE,
-              quantity: variant.quantity,
-              variantId: newVariant.id,
-              warehouseId: warehouse.id,
-              unitCost: new Prisma.Decimal(variant.costPrice),
-              createdById: user.staff.id,
-            },
-          });
+          // qty 0 = future goods: no receipt yet, the cost is recorded with the first «Приход»
+          if (variant.quantity > 0) {
+            await tx.stockMovement.create({
+              data: {
+                type: StockMovementType.IN,
+                reason: StockMovementReason.PURCHASE,
+                quantity: variant.quantity,
+                variantId: newVariant.id,
+                warehouseId: warehouse.id,
+                unitCost: new Prisma.Decimal(variant.costPrice),
+                createdById: user.staff.id,
+              },
+            });
+          }
           await tx.variantAttributeValue.createMany({
             data: variant.attributes.map((attr) => ({
               attributeValueId: attr.attributeValueId,
@@ -154,8 +287,186 @@ export class ProductService {
         { productId: dto.productId, err: error.message },
         'Failed to create product variants',
       );
+      if (
+        error instanceof ForbiddenException ||
+        error instanceof ConflictException
+      ) {
+        throw error;
+      }
+      // Two requests raced for the same manual barcode
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException('Barcode is already used in this store');
+      }
       throw new BadRequestException(error.response || error.message);
     }
+  }
+
+  /**
+   * Every value must belong to one of the product's attributes, at most one
+   * value per attribute in a variant, and no two variants (new or existing)
+   * may have the same value set. Returns value id → display value (for the SKU).
+   */
+  private async assertVariantAttributes(
+    productId: string,
+    productAttributeIds: string[],
+    valueIdsByVariant: string[][],
+  ): Promise<Map<string, string | number>> {
+    const allIds = [...new Set(valueIdsByVariant.flat())];
+    const values = allIds.length
+      ? await this.prisma.attributeValue.findMany({
+          where: { id: { in: allIds } },
+        })
+      : [];
+    const attributeOf = new Map(values.map((v) => [v.id, v.attributeId]));
+    const allowed = new Set(productAttributeIds);
+    for (const id of allIds) {
+      const attributeId = attributeOf.get(id);
+      if (!attributeId || !allowed.has(attributeId)) {
+        throw new BadRequestException(
+          'Variant attribute value does not belong to the product attributes',
+        );
+      }
+    }
+    for (const ids of valueIdsByVariant) {
+      const attrs = ids.map((id) => attributeOf.get(id));
+      if (new Set(attrs).size !== attrs.length) {
+        throw new BadRequestException(
+          'A variant can have only one value per attribute',
+        );
+      }
+    }
+
+    const keyOf = (ids: string[]) => [...new Set(ids)].sort().join('|');
+    const existing = await this.prisma.productVariant.findMany({
+      where: { productId },
+      select: { attributes: { select: { attributeValueId: true } } },
+    });
+    const seen = new Set(
+      existing.map((v) => keyOf(v.attributes.map((a) => a.attributeValueId))),
+    );
+    for (const ids of valueIdsByVariant) {
+      const key = keyOf(ids);
+      if (seen.has(key)) {
+        throw new BadRequestException(
+          'A variant with the same attribute values already exists',
+        );
+      }
+      seen.add(key);
+    }
+
+    return new Map(
+      values.map((v) => [
+        v.id,
+        v.valueString ??
+          (v.valueNumber !== null
+            ? Number(v.valueNumber)
+            : String(Boolean(v.valueBool))),
+      ]),
+    );
+  }
+
+  /**
+   * Manual barcodes (index → code, empty → undefined): no duplicates in the
+   * request (400), free in the store (409).
+   */
+  private async assertManualBarcodes(
+    codes: (string | undefined)[],
+    storeId: string,
+  ): Promise<(string | undefined)[]> {
+    const normalized = codes.map((c) => c?.trim() || undefined);
+    const given = normalized.filter((c): c is string => !!c);
+    if (new Set(given).size !== given.length) {
+      throw new BadRequestException(
+        'The same barcode is used for two variants',
+      );
+    }
+    if (given.length) {
+      const taken = await this.prisma.productVariant.findFirst({
+        where: { storeId, barCode: { in: given } },
+        select: { barCode: true },
+      });
+      if (taken) {
+        throw new ConflictException(
+          `Barcode ${taken.barCode} is already used in this store`,
+        );
+      }
+    }
+    return normalized;
+  }
+
+  /** Next generated barcode that is not taken in the store (a manual code may sit in the 2… range). */
+  private async generateStoreBarcode(
+    tx: Prisma.TransactionClient,
+    storeId: string,
+    reserved: (string | undefined)[],
+  ): Promise<string> {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const code = await this.barcodeService.generateUniqueBarcode(tx);
+      if (reserved.includes(code)) continue;
+      const taken = await tx.productVariant.findFirst({
+        where: { storeId, barCode: code },
+        select: { id: true },
+      });
+      if (!taken) return code;
+    }
+    throw new ConflictException('Could not generate a free barcode, try again');
+  }
+
+  /**
+   * Sale/rent flags of a variant: omitted fields keep `current` (or the
+   * defaults canSell = true, canRent = false). A rentable variant needs a
+   * positive rent price per day.
+   */
+  /**
+   * A product's category must be a subcategory (level 2) of one of the store's directions.
+   * Throws 400 before the create `try`.
+   */
+  private async assertStoreSubcategory(categoryId: string, storeId: string) {
+    const category = await this.prisma.category.findFirst({
+      where: {
+        id: categoryId,
+        parent: { parentId: null, store: { some: { storeId } } },
+      },
+      select: { id: true },
+    });
+    if (!category) {
+      throw new BadRequestException(
+        'Category must be a subcategory of the store direction',
+      );
+    }
+  }
+
+  private resolveSaleRent(
+    input: {
+      canSell?: boolean;
+      canRent?: boolean;
+      rentPricePerDay?: number;
+      defaultCleaningDays?: number;
+    },
+    current?: {
+      canSell: boolean;
+      canRent: boolean;
+      rentPricePerDay: Prisma.Decimal | null;
+      defaultCleaningDays: number;
+    },
+  ) {
+    const canSell = input.canSell ?? current?.canSell ?? true;
+    const canRent = input.canRent ?? current?.canRent ?? false;
+    const rentPricePerDay =
+      input.rentPricePerDay !== undefined
+        ? new Prisma.Decimal(input.rentPricePerDay)
+        : (current?.rentPricePerDay ?? null);
+    if (canRent && (!rentPricePerDay || rentPricePerDay.lte(0))) {
+      throw new BadRequestException(
+        'A rentable variant requires a rent price per day greater than 0',
+      );
+    }
+    const defaultCleaningDays =
+      input.defaultCleaningDays ?? current?.defaultCleaningDays ?? 1;
+    return { canSell, canRent, rentPricePerDay, defaultCleaningDays };
   }
 
   /**
@@ -190,6 +501,8 @@ export class ProductService {
     });
     const lowIds = products
       .filter((p) => {
+        // A draft (no variants yet) is not «low stock» — it has no goods at all
+        if (p.variants.length === 0) return false;
         const total = p.variants.reduce(
           (acc, v) => acc + v.inventory.reduce((s, i) => s + i.quantity, 0),
           0,
@@ -204,8 +517,12 @@ export class ProductService {
     const pageSize = params.pageSize ?? 10;
     const currentPage = params.currentPage ?? 1;
     const skip = (currentPage - 1) * pageSize;
+    if (params.warehouseId) {
+      await assertWarehouseAccess(this.prisma, user, params.warehouseId);
+    }
     try {
       const and: Prisma.ProductWhereInput[] = [{ isArchived: false }];
+      if (params.warehouseId) and.push({ warehouseId: params.warehouseId });
       if (user.role !== UserRole.ADMIN) {
         if (!user.staff) throw new ForbiddenException('Staff only');
         and.push({ storeId: user.staff.storeId });
@@ -219,6 +536,8 @@ export class ProductService {
             },
           });
         }
+        // Drafts (cards without variants) are for those who finish them: owner / manager
+        if (!canManageProducts(user)) and.push({ variants: { some: {} } });
       }
       const search = params.search?.trim();
       if (search) {
@@ -239,12 +558,11 @@ export class ProductService {
         });
       }
       if (params.categoryId) {
-        // A chip is a top category: include products of its subcategories.
+        // A direction chip includes products of its subcategories (two levels only).
         and.push({
           OR: [
             { categoryId: params.categoryId },
             { category: { parentId: params.categoryId } },
-            { category: { parent: { parentId: params.categoryId } } },
           ],
         });
       }
@@ -265,8 +583,9 @@ export class ProductService {
         },
         include: {
           images: {
+            orderBy: [{ isMain: 'desc' }, { order: 'asc' }],
             select: {
-              url: true,
+              key: true,
               isMain: true,
               id: true,
             },
@@ -308,19 +627,26 @@ export class ProductService {
           return {
             brand: product.brand?.name,
             category: product.category?.name,
+            categoryI18n: categoryI18n(product.category),
             variants: product.variants.map((v) => ({
               id: v.id,
               price: v.price,
+              canSell: v.canSell,
+              canRent: v.canRent,
+              rentPricePerDay: v.rentPricePerDay,
+              defaultCleaningDays: v.defaultCleaningDays,
               quantity:
                 v.inventory.reduce((acc, curr) => acc + curr.quantity, 0) || 0,
             })),
             name: product.name,
             id: product.id,
-            images: product.images,
+            images: this.toImageResponse(product.images),
             createdAt: product.createdAt,
             warehouseId: product.warehouseId,
             warehouse: product.warehouse,
             isArchived: product.isArchived,
+            /** Card created, variants not yet — the client opens step 2 */
+            isDraft: product.variants.length === 0,
             description: product.description,
             tags: product.tags.map((t) => ({
               id: t.value.id,
@@ -347,8 +673,9 @@ export class ProductService {
         where: { id },
         include: {
           images: {
+            orderBy: [{ isMain: 'desc' }, { order: 'asc' }],
             select: {
-              url: true,
+              key: true,
               isMain: true,
               id: true,
             },
@@ -393,12 +720,17 @@ export class ProductService {
       });
       if (!product) throw new NotFoundException('Product not found');
       this.assertWarehouseAccess(product.storeId, product.warehouseId, user);
+      const showCost = canSeeCost(user);
       const variants = product.variants.map((variant) => {
         return {
           id: variant.id,
           sku: variant.sku,
           barCode: variant.barCode,
           price: variant.price,
+          canSell: variant.canSell,
+          canRent: variant.canRent,
+          rentPricePerDay: variant.rentPricePerDay,
+          defaultCleaningDays: variant.defaultCleaningDays,
           attributes: variant.attributes.map((a) => ({
             id: a.value.id,
             value:
@@ -420,7 +752,7 @@ export class ProductService {
             reason: movement.reason,
             warehouseId: movement.warehouseId,
             quantity: movement.quantity,
-            unitCost: movement.unitCost,
+            unitCost: showCost ? movement.unitCost : null,
             createdAt: movement.createdAt,
             createdBy: movement.createdBy
               ? {
@@ -438,9 +770,13 @@ export class ProductService {
         id: product.id,
         name: product.name,
         brand: product.brand?.name,
+        /** Ids for the edit form (mobile «Изменить карточку») */
+        brandId: product.brandId,
+        categoryId: product.categoryId,
         category: product.category?.name,
+        categoryI18n: categoryI18n(product.category),
         description: product.description,
-        images: product.images,
+        images: this.toImageResponse(product.images),
         attributes: product.attributes.map((a) => ({ ...a.attribute })),
         isArchived: product.isArchived,
         createdAt: product.createdAt,
@@ -494,6 +830,7 @@ export class ProductService {
           },
         }),
       ]);
+      const showCost = canSeeCost(user);
       return {
         currentPage,
         pageSize,
@@ -503,7 +840,7 @@ export class ProductService {
           type: m.type,
           reason: m.reason,
           quantity: m.quantity,
-          unitCost: m.unitCost,
+          unitCost: showCost ? m.unitCost : null,
           createdAt: m.createdAt,
           createdBy: m.createdBy?.user?.fullName ?? null,
         })),
@@ -531,6 +868,7 @@ export class ProductService {
           },
         },
       });
+      const showCost = canSeeCost(user);
       return {
         count,
         currentPage,
@@ -539,6 +877,10 @@ export class ProductService {
           id: v.id,
           barCode: v.barCode,
           price: v.price,
+          canSell: v.canSell,
+          canRent: v.canRent,
+          rentPricePerDay: v.rentPricePerDay,
+          defaultCleaningDays: v.defaultCleaningDays,
           sku: v.sku,
           stockMovements: v.stockMovements.map((movement) => ({
             id: movement.id,
@@ -546,7 +888,7 @@ export class ProductService {
             reason: movement.reason,
             warehouseId: movement.warehouseId,
             quantity: movement.quantity,
-            unitCost: movement.unitCost,
+            unitCost: showCost ? movement.unitCost : null,
             createdAt: movement.createdAt,
           })),
           quantity:
@@ -604,6 +946,7 @@ export class ProductService {
           },
         },
       });
+      const showCost = canSeeCost(user);
       return {
         count,
         currentPage,
@@ -612,6 +955,10 @@ export class ProductService {
           id: v.id,
           barCode: v.barCode,
           price: v.price,
+          canSell: v.canSell,
+          canRent: v.canRent,
+          rentPricePerDay: v.rentPricePerDay,
+          defaultCleaningDays: v.defaultCleaningDays,
           sku: v.sku,
           productId: v.product.id,
           productName: v.product.name,
@@ -628,7 +975,7 @@ export class ProductService {
             reason: movement.reason,
             warehouseId: movement.warehouseId,
             quantity: movement.quantity,
-            unitCost: movement.unitCost,
+            unitCost: showCost ? movement.unitCost : null,
             createdAt: movement.createdAt,
           })),
           quantity:
@@ -651,28 +998,14 @@ export class ProductService {
         where: { id },
       });
       if (!variant) throw new NotFoundException('Product variant not found');
-      const warehouse = await this.prisma.warehouse.findUnique({
-        where: { id: variant.warehouseId },
-      });
-
-      if (!warehouse) throw new NotFoundException('Warehouse not found');
-      const hasAccess =
-        user.role === UserRole.OWNER ||
-        (user.staff && user.staff.role === StaffRole.MANAGER);
-
-      if (
-        hasAccess &&
-        !user.staff.warehouse.some((w) => w.warehouseId === warehouse.id)
-      ) {
-        throw new ForbiddenException(
-          'You do not have access to this warehouse',
-        );
-      }
+      // Own store; a non-owner also needs the variant's warehouse
+      this.assertWarehouseAccess(variant.storeId, variant.warehouseId, user);
 
       await this.prisma.productVariant.update({
         where: { id },
         data: {
           price: dto.price,
+          ...this.resolveSaleRent(dto, variant),
         },
       });
       this.logger.info({ variantId: id }, 'Product variant price updated');
@@ -682,8 +1015,111 @@ export class ProductService {
         { variantId: id, err: error.message },
         'Failed to update product variant price',
       );
+      if (error instanceof ForbiddenException) throw error;
       throw new BadRequestException(error.response || error.message);
     }
+  }
+
+  /**
+   * Edit the product card. Attributes define the variants, so they can change
+   * only while the product has none. Tags and images are replaced by the new
+   * lists (images: first = main). Returns the product card (`findOne`).
+   */
+  async updateProduct(id: string, dto: UpdateProductDto, user: CurrentUser) {
+    const product = await this.prisma.product.findUnique({
+      where: { id },
+      include: {
+        attributes: { select: { attributeId: true } },
+        _count: { select: { variants: true } },
+      },
+    });
+    if (!product) throw new NotFoundException('Product not found');
+    this.assertWarehouseAccess(product.storeId, product.warehouseId, user);
+    if (product.isArchived) {
+      throw new BadRequestException('An archived product cannot be edited');
+    }
+
+    const name = dto.name?.trim();
+    if (dto.name !== undefined && !name) {
+      throw new BadRequestException('Product name is required');
+    }
+    if (dto.categoryId) {
+      await this.assertStoreSubcategory(dto.categoryId, product.storeId);
+    }
+    const attributeIds = dto.attributeIds
+      ? [...new Set(dto.attributeIds)]
+      : undefined;
+    if (attributeIds) {
+      const current = new Set(product.attributes.map((a) => a.attributeId));
+      const changed =
+        current.size !== attributeIds.length ||
+        attributeIds.some((a) => !current.has(a));
+      if (changed && product._count.variants > 0) {
+        throw new BadRequestException(
+          'Attributes cannot be changed once the product has variants',
+        );
+      }
+    }
+    const imageKeys = dto.images
+      ? await this.resolveImageKeys(dto.images, product.storeId)
+      : undefined;
+
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.product.update({
+          where: { id },
+          data: {
+            ...(name !== undefined ? { name } : {}),
+            ...(dto.description !== undefined
+              ? { description: dto.description.trim() || null }
+              : {}),
+            ...(dto.categoryId ? { categoryId: dto.categoryId } : {}),
+            ...(dto.brandId ? { brandId: dto.brandId } : {}),
+          },
+        });
+        if (attributeIds) {
+          await tx.productAttribute.deleteMany({ where: { productId: id } });
+          await tx.productAttribute.createMany({
+            data: attributeIds.map((attributeId) => ({
+              productId: id,
+              attributeId,
+            })),
+          });
+        }
+        if (dto.tagIds) {
+          await tx.productTagValue.deleteMany({ where: { productId: id } });
+          await tx.productTagValue.createMany({
+            data: [...new Set(dto.tagIds)].map((tagValueId) => ({
+              productId: id,
+              tagValueId,
+            })),
+          });
+        }
+        if (imageKeys) {
+          await tx.productImage.deleteMany({ where: { productId: id } });
+          await tx.productImage.createMany({
+            data: imageKeys.map((key, index) => ({
+              productId: id,
+              key,
+              order: index,
+              isMain: index === 0,
+            })),
+          });
+        }
+      });
+      this.logger.info(
+        { productId: id, fields: Object.keys(dto) },
+        'Product updated',
+      );
+    } catch (error: any) {
+      this.logger.error(
+        { productId: id, err: error.message },
+        'Failed to update product',
+      );
+      throw new BadRequestException(error.response || error.message);
+    }
+
+    return this.findOne(id, user);
   }
 
   async remove(id: string, user: CurrentUser) {

@@ -20,8 +20,7 @@ import { CreateReturnOrderDto } from './dto/create-return.dto';
 import { AuthJWTGuard } from '@auth/guard/auth.guard';
 import { CurrentUser } from '@shared/decorators/user.decorator';
 import { type CurrentUser as CurrentUserType } from '@auth/models/auth.model';
-import { OrderQueryParams } from './entities/order.entity';
-import { DateRangeParams } from '@shared/dto/date-range.dto';
+import { OrderQueryParams, OrderSummaryParams } from './entities/order.entity';
 
 @UseGuards(AuthJWTGuard)
 @Controller('orders')
@@ -68,29 +67,44 @@ export class OrderController {
       status,
       fromDate,
       toDate,
+      warehouseId,
+      dateBy,
+      customerId,
+      owedToCustomer,
     }: OrderQueryParams,
     @CurrentUser() user: CurrentUserType,
   ) {
     return this.orderService.findAll(
-      { pageSize, currentPage, search, status, fromDate, toDate },
+      {
+        pageSize,
+        currentPage,
+        search,
+        status,
+        fromDate,
+        toDate,
+        warehouseId,
+        dateBy,
+        customerId,
+        owedToCustomer,
+      },
       user,
     );
   }
 
   @Get('summary')
   getSummary(
-    @Query() range: DateRangeParams,
+    @Query() params: OrderSummaryParams,
     @CurrentUser() user: CurrentUserType,
   ) {
-    return this.orderService.getSummary(range, user);
+    return this.orderService.getSummary(params, user);
   }
 
   @Get('search')
   searchOrder(
-    @Query() { search }: OrderQueryParams,
+    @Query() { search, warehouseId }: OrderQueryParams,
     @CurrentUser() user: CurrentUserType,
   ) {
-    return this.orderService.searchOrders(search!, user);
+    return this.orderService.searchOrders(search!, user, warehouseId);
   }
 
   @Get(':id')
@@ -104,8 +118,9 @@ export class OrderController {
   @Patch(':id/clear-customer')
   clearCustomerFromOrder(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: CurrentUserType,
   ) {
-    return this.orderService.clearCustomerFromOrder(id);
+    return this.orderService.clearCustomerFromOrder(id, user);
   }
 
   @Delete(':id')

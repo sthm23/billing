@@ -14,6 +14,7 @@ import {
 import { PrismaService } from '@prisma/prisma.service';
 import { StaffRole, UserRole, UserType } from '@generated/enums';
 import { HashingHelper } from '@shared/helper/hash.helper';
+import { canSeeCost } from '@shared/helper/role.helper';
 import { CurrentUser } from '@auth/models/auth.model';
 import { UpdateStoreDto } from './dto/update-store.dto';
 
@@ -37,6 +38,12 @@ export class StoreService {
       }
       if (!category) {
         throw new NotFoundException('Category not found');
+      }
+      // A store direction is a top-level category; subcategories belong to products
+      if (category.parentId) {
+        throw new BadRequestException(
+          'Store category must be a direction (top level)',
+        );
       }
 
       return this.prisma.$transaction(async (tx) => {
@@ -104,8 +111,11 @@ export class StoreService {
     }
   }
 
-  async updateStore(id: string, dto: UpdateStoreDto) {
+  async updateStore(id: string, dto: UpdateStoreDto, user: CurrentUser) {
     try {
+      if (user.role !== UserRole.ADMIN && user.staff?.storeId !== id) {
+        throw new NotFoundException('Store not found');
+      }
       const store = await this.prisma.store.findUnique({
         where: { id },
         include: {
@@ -116,6 +126,13 @@ export class StoreService {
       });
       if (!store) {
         throw new NotFoundException('Store not found');
+      }
+      const salesEnabled = dto.salesEnabled ?? store.salesEnabled;
+      const rentalEnabled = dto.rentalEnabled ?? store.rentalEnabled;
+      if (!salesEnabled && !rentalEnabled) {
+        throw new BadRequestException(
+          'A store must have sales or rental enabled',
+        );
       }
       const nextAttributeIds = [...new Set(dto.attributeIds ?? [])];
       const nextBrandIds = [...new Set(dto.brandIds ?? [])];
@@ -150,6 +167,8 @@ export class StoreService {
           where: { id },
           data: {
             ...(dto.name ? { name: dto.name } : {}),
+            salesEnabled,
+            rentalEnabled,
           },
         });
 
@@ -362,7 +381,9 @@ export class StoreService {
         },
         include: {
           // Never return passwordHash to the client.
-          auth: { select: { id: true, login: true, isActive: true, createdAt: true } },
+          auth: {
+            select: { id: true, login: true, isActive: true, createdAt: true },
+          },
           staff: true,
         },
       });
@@ -442,9 +463,13 @@ export class StoreService {
       const movements = await this.prisma.stockMovement.findMany({
         where: {
           createdById: userId,
+          // Only movements of your own store's warehouses
+          ...(user.role === UserRole.ADMIN
+            ? {}
+            : { warehouse: { storeId: user.staff?.storeId ?? '' } }),
         },
         omit: {
-          unitCost: user.role !== UserRole.OWNER,
+          unitCost: !canSeeCost(user),
         },
         include: {
           variant: true,

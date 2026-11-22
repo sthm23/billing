@@ -19,6 +19,7 @@ import {
   OrderStatus,
   PaymentType,
   ReturnOrderStatus,
+  ReturnReason,
   StaffRole,
   StockMovementReason,
   StockMovementType,
@@ -27,8 +28,18 @@ import {
 } from '@generated/enums';
 import { OrderItem, Prisma } from '@generated/client';
 import { CreateReturnOrderDto, ReturnItemDto } from './dto/create-return.dto';
-import { OrderQueryParams } from './entities/order.entity';
+import { OrderQueryParams, OrderSummaryParams } from './entities/order.entity';
 import { DateRangeParams, resolveDateRange } from '@shared/dto/date-range.dto';
+import {
+  assertReturnAccess,
+  canSeeCost,
+  canOpenCashbox,
+  isStoreOwner,
+  staffWarehouseIds,
+} from '@shared/helper/role.helper';
+import { resolvePaymentCashbox } from '../cashbox/payment-cashbox';
+import { SOLD_ORDER_FILTER } from './entities/sold-order.filter';
+import { assertWarehouseAccess } from '@shared/helper/warehouse-access.helper';
 
 @Injectable()
 export class OrderService {
@@ -72,7 +83,9 @@ export class OrderService {
         },
       });
       const order = await this.prisma.$transaction(async (prisma) => {
-        if (!cashBox) {
+        // Owner / manager / cashier get their cashbox opened on the first
+        // order; a seller has none and pays into an open cashbox of the warehouse
+        if (!cashBox && canOpenCashbox(user)) {
           await prisma.cashbox.create({
             data: {
               status: CashStatus.OPEN,
@@ -116,6 +129,7 @@ export class OrderService {
     returnItems: ReturnItemDto[],
     orderItemsById: Map<string, OrderItem>,
   ) {
+    const seen = new Set<string>();
     for (const returnItem of returnItems) {
       const orderItem = orderItemsById.get(returnItem.itemId);
       if (!orderItem) {
@@ -123,12 +137,43 @@ export class OrderService {
           `Order item not found: ${returnItem.itemId}`,
         );
       }
+      if (seen.has(returnItem.itemId)) {
+        throw new BadRequestException(
+          `Duplicate return item: ${returnItem.itemId}`,
+        );
+      }
+      seen.add(returnItem.itemId);
       if (returnItem.quantity > orderItem.quantity) {
         throw new BadRequestException(
           `Return quantity exceeds purchased quantity for item: ${returnItem.itemId}`,
         );
       }
     }
+  }
+
+  /**
+   * Money given to the customer now. `payoutMethod` — the backend pays out
+   * the whole amount owed by that method: the refund, or for a DEBT order the
+   * part of the refund above the debt (nothing when the debt absorbs it).
+   * Otherwise the client's `returnPayments` (web); empty = pay out later.
+   */
+  private resolveReturnPayments(
+    dto: CreateReturnOrderDto,
+    orderStatus: OrderStatus,
+    refundAmount: number,
+    debt: number,
+  ): { type: PaymentType; amount: number }[] {
+    if (!dto.payoutMethod) return dto.returnPayments;
+    if (dto.returnPayments.length > 0) {
+      throw new BadRequestException(
+        'Send either payoutMethod or returnPayments, not both',
+      );
+    }
+    const owed =
+      orderStatus === OrderStatus.DEBT
+        ? Math.max(0, refundAmount - Math.max(0, debt))
+        : refundAmount;
+    return owed > 0 ? [{ type: dto.payoutMethod, amount: owed }] : [];
   }
 
   private validateReturnPayments(
@@ -147,12 +192,6 @@ export class OrderService {
     if (cashierTotalPayment > refundAmount) {
       throw new BadRequestException(
         `Total amount returned by cashier cannot be more than total return amount`,
-      );
-    }
-
-    if (refundAmount === orderTotalAmount && customerTotalPaid > 0) {
-      throw new BadRequestException(
-        `Total return amount cannot be equal to original order total amount for DEBT orders, because the order is not fully paid`,
       );
     }
 
@@ -254,6 +293,34 @@ export class OrderService {
     }
   }
 
+  /**
+   * A rental order (booking) is handled only by the rental module: the sale
+   * flow would deduct stock and treat it as a sale.
+   */
+  private assertNotRental(order: { rental: { id: string } | null }) {
+    if (order.rental) {
+      throw new BadRequestException(
+        'This is a rental order; manage it via the /rental endpoints',
+      );
+    }
+  }
+
+  /** New sales: the store must sell, and every variant must be sellable. */
+  private assertCanSell(
+    store: { salesEnabled: boolean },
+    variants: { id: string; canSell: boolean }[],
+  ) {
+    if (!store.salesEnabled) {
+      throw new BadRequestException('Sales are disabled for this store');
+    }
+    const notForSale = variants.find((v) => !v.canSell);
+    if (notForSale) {
+      throw new BadRequestException(
+        `Product variant is not for sale: ${notForSale.id}`,
+      );
+    }
+  }
+
   async createReturn(createOrderDto: CreateReturnOrderDto, user: CurrentUser) {
     this.logger.debug(
       {
@@ -264,12 +331,23 @@ export class OrderService {
     );
     const order = await this.prisma.order.findUnique({
       where: { id: createOrderDto.orderId },
-      include: { items: true, payments: true, services: true },
+      include: {
+        items: true,
+        payments: true,
+        services: true,
+        rental: { select: { id: true } },
+      },
     });
 
     if (!order) {
       throw new NotFoundException('Order not found');
     }
+    if (!user.staff || order.storeId !== user.staff.storeId) {
+      throw new ForbiddenException('No access to this order');
+    }
+    // Store owner, or a manager of the order's warehouse
+    assertReturnAccess(user, order.warehouseId);
+    this.assertNotRental(order);
 
     if (order.isReturned) {
       throw new BadRequestException('Order is already returned');
@@ -287,15 +365,28 @@ export class OrderService {
       (sum, p) => sum + +p.amount,
       0,
     );
-    const refundAmount = createOrderDto.items.reduce(
-      (sum, item) => sum + (item.retailPrice - item.sale) * item.quantity,
-      0,
+    const orderItemsById = new Map(order.items.map((item) => [item.id, item]));
+    this.validateReturnItems(createOrderDto.items, orderItemsById);
+
+    // Prices come from the order lines, never from the request
+    const refundAmount = createOrderDto.items.reduce((sum, item) => {
+      const orderItem = orderItemsById.get(item.itemId)!;
+      return sum + (+orderItem.retailPrice - +orderItem.sale) * item.quantity;
+    }, 0);
+    const returnPayments = this.resolveReturnPayments(
+      createOrderDto,
+      order.status,
+      refundAmount,
+      +order.totalAmount - customerPayments,
     );
-    const cashierPayments = createOrderDto.returnPayments.reduce(
+    const cashierPayments = returnPayments.reduce(
       (sum, p) => sum + +p.amount,
       0,
     );
-    const servicesAmount = order.services.reduce((sum, s) => sum + +s.price, 0);
+    const servicesAmount = order.services.reduce(
+      (sum, s) => sum + +s.price - +s.sale,
+      0,
+    );
 
     const initialReturnStatus = this.returnInitialStatus(
       order.status,
@@ -304,20 +395,15 @@ export class OrderService {
       customerPayments,
     );
 
-    const cashBox = await this.prisma.cashbox.findFirst({
-      where: {
-        storeId: order.storeId,
-        warehouseId: order.warehouseId,
-        sellerId: user.staff.id,
-        status: CashStatus.OPEN,
-      },
-    });
-
-    if (!cashBox) {
-      throw new BadRequestException(
-        'Open cashbox not found for the order store and warehouse',
-      );
-    }
+    // A cashbox only when money is paid out now: reducing a debt or paying out
+    // later (CREDIT) moves no money. Same rule as a debt repayment.
+    const cashBox =
+      cashierPayments > 0
+        ? await resolvePaymentCashbox(this.prisma, user, {
+            cashboxId: createOrderDto.cashboxId,
+            warehouseId: order.warehouseId,
+          })
+        : null;
     try {
       return await this.prisma.$transaction(async (prisma) => {
         const returnOrder = await prisma.returnedOrder.create({
@@ -326,12 +412,10 @@ export class OrderService {
             createdBy: user.staff.id,
             status: initialReturnStatus,
             totalAmount: refundAmount,
+            reason: createOrderDto.reason ?? ReturnReason.OTHER,
+            comment: createOrderDto.comment ?? null,
           },
         });
-
-        const orderItemsById = new Map(
-          order.items.map((item) => [item.id, item]),
-        );
 
         const returnItemsData = createOrderDto.items.map((item) => {
           return {
@@ -340,8 +424,6 @@ export class OrderService {
             quantity: item.quantity,
           };
         });
-
-        this.validateReturnItems(createOrderDto.items, orderItemsById);
 
         await prisma.returnItem.createMany({
           data: returnItemsData,
@@ -353,7 +435,7 @@ export class OrderService {
             type: StockMovementType.IN,
             reason: StockMovementReason.RETURN,
             quantity: returnedItem.quantity,
-            unitCost: new Prisma.Decimal(returnedItem.costAtSale),
+            unitCost: orderItem.costAtSale,
             variantId: orderItem.variantId,
             warehouseId: order.warehouseId,
             createdById: user.staff.id,
@@ -363,7 +445,28 @@ export class OrderService {
           data: stockMovementsData,
         });
 
-        const createdPayments = createOrderDto.returnPayments.map((payment) => {
+        // Returned goods go back to the order's warehouse
+        const qtyByVariantId = new Map<string, number>();
+        for (const movement of stockMovementsData) {
+          qtyByVariantId.set(
+            movement.variantId,
+            (qtyByVariantId.get(movement.variantId) ?? 0) + movement.quantity,
+          );
+        }
+        for (const [variantId, quantity] of qtyByVariantId.entries()) {
+          await prisma.inventory.upsert({
+            where: {
+              warehouseId_variantId: {
+                warehouseId: order.warehouseId,
+                variantId,
+              },
+            },
+            update: { quantity: { increment: quantity } },
+            create: { warehouseId: order.warehouseId, variantId, quantity },
+          });
+        }
+
+        const createdPayments = returnPayments.map((payment) => {
           return {
             returnOrderId: returnOrder.id,
             type: payment.type,
@@ -371,17 +474,19 @@ export class OrderService {
             createdBy: user.staff.id,
           };
         });
-        await prisma.cashTransaction.createMany({
-          data: createdPayments.map((p) => ({
-            cashboxId: cashBox.id,
-            amount: p.amount,
-            type: CashTransactionType.EXPENSE,
-            createdById: user.staff.id,
-            orderId: order.id,
-            category: CashTransactionCategory.RETURN,
-            paymentType: p.type as PaymentType,
-          })),
-        });
+        if (cashBox) {
+          await prisma.cashTransaction.createMany({
+            data: createdPayments.map((p) => ({
+              cashboxId: cashBox.id,
+              amount: p.amount,
+              type: CashTransactionType.EXPENSE,
+              createdById: user.staff.id,
+              orderId: order.id,
+              category: CashTransactionCategory.RETURN,
+              paymentType: p.type as PaymentType,
+            })),
+          });
+        }
 
         const returnStatus = this.validateReturnPayments(
           order.status, // статус заказа
@@ -416,12 +521,14 @@ export class OrderService {
           },
         });
 
-        await prisma.cashbox.update({
-          where: { id: cashBox.id },
-          data: {
-            balance: { increment: new Prisma.Decimal(-cashierPayments) },
-          },
-        });
+        if (cashBox) {
+          await prisma.cashbox.update({
+            where: { id: cashBox.id },
+            data: {
+              balance: { increment: new Prisma.Decimal(-cashierPayments) },
+            },
+          });
+        }
 
         this.logger.info(
           {
@@ -432,7 +539,14 @@ export class OrderService {
           },
           'Order return completed',
         );
-        return Promise.resolve({ message: 'Order returned successfully' });
+        return {
+          message: 'Order returned successfully',
+          returnId: returnOrder.id,
+          status: returnStatus,
+          totalAmount: refundAmount,
+          paidOut: cashierPayments,
+          cashboxId: cashBox?.id ?? null,
+        };
       });
     } catch (error: any) {
       this.logger.error(
@@ -453,7 +567,7 @@ export class OrderService {
     );
   }
 
-  /** Same scope as findOne: own store; sellers and cashiers only their own orders. */
+  /** Write access (items, customer): own store; owner/manager any order, others only orders they created. Viewing (findOne) is wider. */
   private async assertOrderAccess(orderId: string, user: CurrentUser) {
     if (user.role === UserRole.ADMIN) return;
     const order = await this.prisma.order.findUnique({
@@ -480,10 +594,16 @@ export class OrderService {
       await this.prisma.$transaction(async (prisma) => {
         const order = await prisma.order.findUnique({
           where: { id: dto.orderId },
-          include: { items: true, services: true },
+          include: {
+            items: true,
+            services: true,
+            rental: { select: { id: true } },
+            store: { select: { salesEnabled: true } },
+          },
         });
 
         if (!order) throw new BadRequestException('Order not found');
+        this.assertNotRental(order);
         if (
           order.status !== OrderStatus.CREATED &&
           order.status !== OrderStatus.HOLD
@@ -521,9 +641,11 @@ export class OrderService {
             id: true,
             storeId: true,
             price: true,
+            canSell: true,
             product: { select: { isArchived: true } },
           },
         });
+        this.assertCanSell(order.store, variants);
 
         const variantById = new Map(variants.map((v) => [v.id, v]));
         for (const variantId of incomingQuantityByVariant.keys()) {
@@ -612,6 +734,21 @@ export class OrderService {
           }
         }
 
+        // 4.1) Себестоимость — последний приход варианта (любой склад), не из запроса
+        const latestReceipts = await prisma.stockMovement.findMany({
+          where: {
+            variantId: { in: Array.from(variantById.keys()) },
+            type: StockMovementType.IN,
+            unitCost: { not: null },
+          },
+          orderBy: { createdAt: 'desc' },
+          distinct: ['variantId'],
+          select: { variantId: true, unitCost: true },
+        });
+        const costByVariant = new Map(
+          latestReceipts.map((m) => [m.variantId, m.unitCost!]),
+        );
+
         // 5) Создаем позиции и пересчитываем сумму добавления
         let totalAmountToAdd = 0;
 
@@ -622,33 +759,27 @@ export class OrderService {
 
           totalAmountToAdd += priceAtSale * item.quantity;
 
-          if (item.itemId) {
-            // только позиции этого заказа
-            const existingItem = order.items.find((i) => i.id === item.itemId);
+          // только позиции этого заказа
+          const existingItem = item.itemId
+            ? order.items.find((i) => i.id === item.itemId)
+            : undefined;
+          // A saved line keeps its cost unless the variant changed
+          const costAtSale =
+            existingItem && existingItem.variantId === item.variantId
+              ? existingItem.costAtSale
+              : (costByVariant.get(item.variantId) ?? 0);
 
-            if (!existingItem) {
-              await prisma.orderItem.create({
-                data: {
-                  orderId: dto.orderId,
-                  variantId: item.variantId,
-                  quantity: item.quantity,
-                  retailPrice: item.retailPrice,
-                  sale: item.sale,
-                  costAtSale: item.costAtSale,
-                },
-              });
-            } else {
-              await prisma.orderItem.update({
-                where: { id: item.itemId },
-                data: {
-                  variantId: item.variantId,
-                  quantity: item.quantity,
-                  retailPrice: item.retailPrice,
-                  sale: item.sale,
-                  costAtSale: item.costAtSale,
-                },
-              });
-            }
+          if (existingItem) {
+            await prisma.orderItem.update({
+              where: { id: existingItem.id },
+              data: {
+                variantId: item.variantId,
+                quantity: item.quantity,
+                retailPrice: item.retailPrice,
+                sale: item.sale,
+                costAtSale,
+              },
+            });
           } else {
             await prisma.orderItem.create({
               data: {
@@ -657,13 +788,21 @@ export class OrderService {
                 quantity: item.quantity,
                 retailPrice: item.retailPrice,
                 sale: item.sale,
-                costAtSale: item.costAtSale,
+                costAtSale,
               },
             });
           }
         }
 
         let additionalServicesAmount = 0;
+
+        for (const service of dto.additionalServices) {
+          if (+(service.sale ?? 0) > +service.price) {
+            throw new BadRequestException(
+              'Discount cannot exceed the service price',
+            );
+          }
+        }
 
         if (dto.additionalServices.length > 0) {
           const removedIds = order.services
@@ -675,7 +814,7 @@ export class OrderService {
             });
           }
           for (const service of dto.additionalServices) {
-            additionalServicesAmount += +service.price;
+            additionalServicesAmount += +service.price - +(service.sale ?? 0);
             if (service.id) {
               const existing = order.services.find((s) => s.id === service.id);
               if (existing) {
@@ -684,6 +823,7 @@ export class OrderService {
                   data: {
                     name: service.name,
                     price: +service.price,
+                    sale: +(service.sale ?? 0),
                     description: service.description ?? null,
                   },
                 });
@@ -694,6 +834,7 @@ export class OrderService {
                   orderId: dto.orderId,
                   name: service.name,
                   price: +service.price,
+                  sale: +(service.sale ?? 0),
                   description: service.description ?? null,
                 },
               });
@@ -749,11 +890,34 @@ export class OrderService {
     try {
       const order = await this.prisma.order.findUnique({
         where: { id: orderId },
-        include: { payments: true, items: true },
+        include: {
+          payments: true,
+          items: { include: { variant: { select: { canSell: true } } } },
+          rental: { select: { id: true } },
+          store: { select: { salesEnabled: true } },
+        },
       });
       if (!order) {
         throw new BadRequestException('Order not found');
       }
+      if (!user.staff || order.storeId !== user.staff.storeId) {
+        throw new ForbiddenException('No access to this order');
+      }
+      // Any employee may take the payment of a colleague's order — of their
+      // own warehouses (the owner: any)
+      const payWarehouses = staffWarehouseIds(user);
+      if (payWarehouses && !payWarehouses.includes(order.warehouseId)) {
+        throw new ForbiddenException('No access to this warehouse');
+      }
+      // Paying a rental order here would deduct its items from stock
+      this.assertNotRental(order);
+      this.assertCanSell(
+        order.store,
+        order.items.map((i) => ({
+          id: i.variantId,
+          canSell: i.variant.canSell,
+        })),
+      );
       // Only the sale itself: it deducts stock. A DEBT order is repaid via
       // POST /payment, otherwise the stock would be deducted a second time.
       if (order.status !== OrderStatus.HOLD) {
@@ -782,27 +946,32 @@ export class OrderService {
           'A customer is required to leave part of the order as debt',
         );
       }
-      const cashBox = await this.prisma.cashbox.findFirst({
-        where: {
-          storeId: order.storeId,
-          warehouseId: order.warehouseId,
-          sellerId: user.staff.id,
-          status: CashStatus.OPEN,
-        },
-      });
-
-      if (!cashBox) {
-        throw new BadRequestException(
-          'Open cashbox not found for the order store and warehouse',
-        );
+      const leavesDebt = totalPaid < +order.totalAmount;
+      const debtDueAt =
+        leavesDebt && dto.debtDueAt ? new Date(dto.debtDueAt) : null;
+      if (debtDueAt && debtDueAt.getTime() < Date.now()) {
+        throw new BadRequestException('Debt due date cannot be in the past');
       }
+      // Own open cashbox (preferably on the order's warehouse) or the chosen
+      // open cashbox of the employee's warehouse — a seller has no own one.
+      // A sale fully on debt moves no money and needs no cashbox.
+      const cashBox =
+        newPaid > 0
+          ? await resolvePaymentCashbox(this.prisma, user, {
+              cashboxId: dto.cashboxId,
+              warehouseId: order.warehouseId,
+            })
+          : null;
       await this.prisma.$transaction(async (prisma) => {
-        const paymentsData = dto.payments.map((payment) => ({
-          orderId: orderId,
-          amount: payment.amount,
-          type: payment.type,
-          createdBy: user.staff.id,
-        }));
+        // A zero amount (sale fully on debt) leaves no payment or cash record
+        const paymentsData = dto.payments
+          .filter((payment) => +payment.amount > 0)
+          .map((payment) => ({
+            orderId: orderId,
+            amount: payment.amount,
+            type: payment.type,
+            createdBy: user.staff.id,
+          }));
 
         await prisma.payment.createMany({
           data: paymentsData,
@@ -810,7 +979,7 @@ export class OrderService {
 
         await prisma.cashTransaction.createMany({
           data: paymentsData.map((p) => ({
-            cashboxId: cashBox.id,
+            cashboxId: cashBox!.id,
             amount: p.amount,
             type: CashTransactionType.INCOME,
             createdById: user.staff.id,
@@ -883,21 +1052,24 @@ export class OrderService {
             customerId: customer?.id ?? null,
             paidAmount:
               status === OrderStatus.COMPLETED ? +order.totalAmount : totalPaid,
+            debtDueAt,
             // The sale moment; a later debt payment keeps it
             ...(order.soldAt ? {} : { soldAt: new Date() }),
           },
         });
 
-        await prisma.cashbox.update({
-          where: { id: cashBox.id },
-          data: {
-            balance: { increment: new Prisma.Decimal(newPaid) },
-          },
-        });
+        if (cashBox) {
+          await prisma.cashbox.update({
+            where: { id: cashBox.id },
+            data: {
+              balance: { increment: new Prisma.Decimal(newPaid) },
+            },
+          });
+        }
       });
 
       this.logger.info(
-        { orderId, newPaid, cashboxId: cashBox.id },
+        { orderId, newPaid, cashboxId: cashBox?.id ?? null },
         'Order payment processed',
       );
       return Promise.resolve({ message: 'Payment created successfully' });
@@ -906,6 +1078,7 @@ export class OrderService {
         { orderId, err: error.message },
         'Failed to process order payment',
       );
+      if (error instanceof ForbiddenException) throw error;
       throw new BadRequestException(error.response || error.message);
     }
   }
@@ -917,15 +1090,26 @@ export class OrderService {
       status,
       fromDate,
       toDate,
+      warehouseId,
+      dateBy,
+      customerId,
+      owedToCustomer,
     }: OrderQueryParams,
     user: CurrentUser,
   ) {
     const skip = (currentPage - 1) * pageSize;
+    const storeId = this.storeScope(user);
+    if (warehouseId) {
+      await assertWarehouseAccess(this.prisma, user, warehouseId);
+    }
     try {
       const params = {};
 
-      if (user.type === UserType.STAFF) {
-        params['storeId'] = user.staff.storeId;
+      if (storeId) {
+        params['storeId'] = storeId;
+      }
+      if (warehouseId) {
+        params['warehouseId'] = warehouseId;
       }
 
       if (status) {
@@ -935,13 +1119,22 @@ export class OrderService {
       }
 
       if (fromDate || toDate) {
-        params['createdAt'] = {};
+        // Sold orders by the sale date (as «Продажи сегодня»), others by creation
+        const dateField = dateBy === 'sold' ? 'soldAt' : 'createdAt';
+        params[dateField] = {};
         if (fromDate) {
-          params['createdAt']['gte'] = new Date(fromDate);
+          params[dateField]['gte'] = new Date(fromDate);
         }
         if (toDate) {
-          params['createdAt']['lte'] = new Date(toDate);
+          params[dateField]['lte'] = new Date(toDate);
         }
+      }
+      // Combined with the store scope: another store's customer finds nothing
+      if (customerId) {
+        params['customerId'] = customerId;
+      }
+      if (owedToCustomer) {
+        params['returns'] = { is: { status: ReturnOrderStatus.CREDIT } };
       }
 
       const orders = await this.prisma.order.findMany({
@@ -961,6 +1154,10 @@ export class OrderService {
           },
           store: true,
           warehouse: true,
+          // Clients open a rental order in the rental screens, not in the cart
+          rental: { select: { id: true, status: true } },
+          // «Должны клиенту» badge: a return whose refund is not paid out yet
+          returns: { select: { status: true } },
         },
         skip: skip,
         take: +pageSize,
@@ -985,6 +1182,10 @@ export class OrderService {
           totalAmount: order.totalAmount,
           paidAmount: order.paidAmount,
           createdAt: order.createdAt,
+          rental: order.rental,
+          isReturned: order.isReturned,
+          returnedAmount: order.returnedAmount,
+          returnStatus: order.returns?.status ?? null,
         })),
       };
     } catch (error: any) {
@@ -993,14 +1194,30 @@ export class OrderService {
   }
 
   /**
-   * Orders sold in `[from, to)`: COMPLETED or DEBT with `soldAt` in the period.
+   * Orders sold in `[from, to)`: COMPLETED, DEBT or REFUNDED with `soldAt` in
+   * the period; `total` is net of returns, `debt` what DEBT orders still owe.
+   * A rental counts from its issue (`soldAt`) even while the order is still HOLD.
    * Owner/admin — the whole store; manager — their warehouses; seller/cashier — own sales.
    */
-  async getSummary(range: DateRangeParams, user: CurrentUser) {
+  /**
+   * Store filter for order lists: the caller's store; `undefined` only for
+   * ADMIN (all stores). A user without staff (not ADMIN) gets 403.
+   * Call it before a `try` that wraps errors into 400.
+   */
+  private storeScope(user: CurrentUser): string | undefined {
+    if (user.role === UserRole.ADMIN) return undefined;
+    if (!user.staff) throw new ForbiddenException('Staff only');
+    return user.staff.storeId;
+  }
+
+  async getSummary(range: OrderSummaryParams, user: CurrentUser) {
+    if (range.warehouseId) {
+      await assertWarehouseAccess(this.prisma, user, range.warehouseId);
+    }
     const { from, to } = resolveDateRange(range);
     const where: Prisma.OrderWhereInput = {
-      status: { in: [OrderStatus.COMPLETED, OrderStatus.DEBT] },
       soldAt: { gte: from, lt: to },
+      ...SOLD_ORDER_FILTER,
     };
     if (user.role !== UserRole.ADMIN) {
       if (!user.staff) throw new ForbiddenException('Staff only');
@@ -1015,32 +1232,67 @@ export class OrderService {
         }
       }
     }
+    // Narrows the role scope to one warehouse (access checked above)
+    if (range.warehouseId) where.warehouseId = range.warehouseId;
     try {
-      const result = await this.prisma.order.aggregate({
-        where,
-        _count: { _all: true },
-        _sum: { totalAmount: true, paidAmount: true },
-      });
-      const total = Number(result._sum.totalAmount ?? 0);
-      const paid = Number(result._sum.paidAmount ?? 0);
+      const [result, debtOrders] = await Promise.all([
+        this.prisma.order.aggregate({
+          where,
+          _count: { _all: true },
+          _sum: { totalAmount: true, returnedAmount: true },
+        }),
+        // Still owed on the period's sales (after their returns): DEBT orders
+        // and active rentals (HOLD) not fully paid yet
+        this.prisma.order.aggregate({
+          where: {
+            AND: [
+              where,
+              {
+                OR: [
+                  { status: OrderStatus.DEBT },
+                  { status: OrderStatus.HOLD, rental: { isNot: null } },
+                ],
+              },
+            ],
+          },
+          _sum: { totalAmount: true, returnedAmount: true, paidAmount: true },
+        }),
+      ]);
+      // Net sales: returned goods are not sold
+      const total =
+        Number(result._sum.totalAmount ?? 0) -
+        Number(result._sum.returnedAmount ?? 0);
+      const debt = Math.max(
+        0,
+        Number(debtOrders._sum.totalAmount ?? 0) -
+          Number(debtOrders._sum.returnedAmount ?? 0) -
+          Number(debtOrders._sum.paidAmount ?? 0),
+      );
       return {
         from,
         to,
         count: result._count._all,
         total,
-        paid,
-        debt: total - paid,
+        paid: total - debt,
+        debt,
       };
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message);
     }
   }
 
-  async searchOrders(search: string, user: CurrentUser) {
+  async searchOrders(search: string, user: CurrentUser, warehouseId?: string) {
+    const storeId = this.storeScope(user);
+    if (warehouseId) {
+      await assertWarehouseAccess(this.prisma, user, warehouseId);
+    }
     try {
       const params = {};
-      if (user.type === UserType.STAFF) {
-        params['storeId'] = user.staff.storeId;
+      if (storeId) {
+        params['storeId'] = storeId;
+      }
+      if (warehouseId) {
+        params['warehouseId'] = warehouseId;
       }
       if (search) {
         params['customer'] = {
@@ -1069,6 +1321,7 @@ export class OrderService {
               user: true,
             },
           },
+          rental: { select: { id: true, status: true } },
         },
         orderBy: { createdAt: 'desc' },
       });
@@ -1079,15 +1332,22 @@ export class OrderService {
 
   async findOne(id: string, user: CurrentUser) {
     try {
+      // Seller / cashier / warehouse staff see (read-only) every order of their
+      // warehouses; editing someone else's order stays with assertOrderAccess
+      const restrictToWarehouses =
+        user.type === UserType.STAFF &&
+        user.staff.role !== StaffRole.OWNER &&
+        user.staff.role !== StaffRole.MANAGER;
       const params = {
         id,
         storeId: user.role !== UserRole.ADMIN ? user.staff.storeId : undefined,
-        cashierId:
-          user.type === UserType.STAFF &&
-          user.staff.role !== StaffRole.OWNER &&
-          user.staff.role !== StaffRole.MANAGER
-            ? user.staff.id
-            : undefined,
+        ...(restrictToWarehouses
+          ? {
+              warehouseId: {
+                in: user.staff.warehouse.map((w) => w.warehouseId),
+              },
+            }
+          : {}),
       } as Prisma.OrderFindUniqueArgs['where'];
       this.logger.debug({ orderId: id, params }, 'Finding order');
       const order = await this.prisma.order.findUnique({
@@ -1116,18 +1376,63 @@ export class OrderService {
             },
           },
           warehouse: { select: { id: true, name: true } },
-          payments: true,
+          cashier: {
+            select: { id: true, user: { select: { fullName: true } } },
+          },
+          payments: {
+            include: {
+              cashier: { select: { user: { select: { fullName: true } } } },
+            },
+            orderBy: { createdAt: 'asc' },
+          },
           services: true,
+          returns: {
+            include: {
+              items: { select: { itemId: true, quantity: true } },
+              payments: {
+                include: {
+                  cashier: { select: { user: { select: { fullName: true } } } },
+                },
+                orderBy: { createdAt: 'asc' },
+              },
+            },
+          },
         },
       });
       if (!order) {
         throw new BadRequestException('Order not found');
       }
       this.logger.debug({ orderId: id, order }, 'Order found');
+      const showCost = canSeeCost(user);
+      // Settlement after the return, computed here so clients only display it
+      const customerPaid = order.payments.reduce(
+        (sum, p) => sum + +p.amount,
+        0,
+      );
+      const netTotal = +order.totalAmount - +order.returnedAmount;
+      const refundedOut = (order.returns?.payments ?? []).reduce(
+        (sum, p) => sum + +p.amount,
+        0,
+      );
+      const settlement = {
+        /** What the customer still owes on this order */
+        debt: Math.max(0, netTotal - customerPaid),
+        /** What the store still owes the customer after a return (CREDIT) */
+        owedToCustomer: Math.max(0, customerPaid - netTotal - refundedOut),
+        /** Refund already paid out */
+        refundedOut,
+      };
       return Promise.resolve({
         ...order,
-        items: order.items.map((item) => ({
+        settlement,
+        items: order.items.map(({ costAtSale, ...item }) => ({
           ...item,
+          // Units of this line taken back by the order's return
+          returnedQuantity:
+            order.returns?.items.find((r) => r.itemId === item.id)?.quantity ??
+            0,
+          // Purchase cost only for those who enter it (owner/manager)
+          ...(showCost ? { costAtSale } : {}),
           variant: {
             ...item.variant,
             quantity: item.variant.inventory.reduce(
@@ -1146,11 +1451,17 @@ export class OrderService {
     }
   }
 
-  async clearCustomerFromOrder(id: string) {
-    const order = await this.prisma.order.findUnique({ where: { id } });
+  async clearCustomerFromOrder(id: string, user: CurrentUser) {
+    await this.assertOrderAccess(id, user);
+    const order = await this.prisma.order.findUnique({
+      where: { id },
+      include: { rental: { select: { id: true } } },
+    });
     if (!order) {
       throw new BadRequestException('Order not found');
     }
+    // A rental requires a customer (booking, collateral, debt)
+    this.assertNotRental(order);
     if (
       order.status === OrderStatus.COMPLETED ||
       order.status === OrderStatus.DEBT ||
@@ -1168,24 +1479,39 @@ export class OrderService {
 
   async remove(id: string, user: CurrentUser) {
     this.logger.debug({ orderId: id }, 'Cancelling order');
+    const storeId = this.storeScope(user);
     try {
       const params = {};
-      if (user.type === UserType.STAFF) {
-        params['storeId'] = user.staff.storeId;
+      if (storeId) {
+        params['storeId'] = storeId;
       }
-      if (user.type === UserType.STAFF && user.role !== UserRole.OWNER) {
-        params['cashierId'] = user.staff.id;
+      // Owner — any order; manager — orders of their warehouses; others —
+      // only orders they created
+      if (user.type === UserType.STAFF && !isStoreOwner(user)) {
+        if (user.staff.role === StaffRole.MANAGER) {
+          params['warehouseId'] = {
+            in: user.staff.warehouse.map((w) => w.warehouseId),
+          };
+        } else {
+          params['cashierId'] = user.staff.id;
+        }
       }
       const order = await this.prisma.order.findUnique({
         where: {
           id,
           ...params,
         },
-        include: { items: true, payments: true },
+        include: {
+          items: true,
+          payments: true,
+          rental: { select: { id: true } },
+        },
       });
       if (!order) {
         throw new BadRequestException('Order not found');
       }
+      // A booking is cancelled via /rental/:id/cancel (prepayment refund)
+      this.assertNotRental(order);
       if (
         order.status === OrderStatus.COMPLETED ||
         order.status === OrderStatus.DEBT ||

@@ -35,7 +35,7 @@ Backups are now stored on the host filesystem, not inside the container.
 ports:
   - "${POSTGRES_OUTPUT_PORT}:${POSTGRES_PORT}"
 ```
-**For production VPS:** Comment this out! Your app should connect via Docker network, not localhost.
+**For production VPS:** Don't remove it — the app (PM2 on the host) connects through this port. Bind it to localhost only: `"127.0.0.1:${POSTGRES_OUTPUT_PORT}:${POSTGRES_PORT}"`.
 
 ---
 
@@ -160,12 +160,7 @@ Change from:
 DATABASE_URL=postgresql://user:pass@your-rds.amazonaws.com:5432/db
 ```
 
-To (if using Docker network):
-```
-DATABASE_URL=postgresql://user:pass@postgres:5432/db
-```
-
-Or (if using host network):
+To:
 ```
 DATABASE_URL=postgresql://user:pass@localhost:5432/db
 ```
@@ -173,10 +168,10 @@ DATABASE_URL=postgresql://user:pass@localhost:5432/db
 ### Step 5: Test Application
 ```bash
 # Restart your app
-docker compose restart
+pm2 restart billing-app --update-env
 
 # Check logs
-docker compose logs -f
+pm2 logs billing-app
 ```
 
 ### Step 6: Verify Performance
@@ -214,7 +209,7 @@ docker compose logs -f postgres
 
 - [ ] Backups directory has restricted permissions (700)
 - [ ] `.env` file contains strong passwords
-- [ ] PostgreSQL port NOT exposed to public (comment out ports in docker-compose.yml)
+- [ ] PostgreSQL port NOT exposed to public (bind it to 127.0.0.1 in docker-compose.yml)
 - [ ] Backups uploaded to remote storage
 - [ ] Cron job for daily backups is running
 - [ ] Test restore procedure at least once

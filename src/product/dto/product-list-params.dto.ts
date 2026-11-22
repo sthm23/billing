@@ -16,7 +16,7 @@ export class ProductListParams extends PaginationParams {
   @MaxLength(100)
   search?: string;
 
-  /** Category or one of its parents */
+  /** A subcategory, or a store direction (then all its subcategories match) */
   @IsOptional()
   @IsUUID()
   categoryId?: string;
@@ -26,4 +26,9 @@ export class ProductListParams extends PaginationParams {
   @Transform(({ value }) => value === true || value === 'true')
   @IsBoolean()
   lowStock?: boolean;
+
+  /** Only products of this warehouse (the app's working warehouse) */
+  @IsOptional()
+  @IsUUID('4')
+  warehouseId?: string;
 }

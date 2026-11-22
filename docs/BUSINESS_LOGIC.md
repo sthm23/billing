@@ -42,7 +42,7 @@ CREATED → HOLD → [DEBT | COMPLETED] → [REFUNDED | CANCELLED]
      AND sellerId = :staffId 
      AND status = 'OPEN'
    ```
-   - Если кассы нет → создается новая с `balance = 0`
+   - Если кассы нет → создается новая с `balance = 0` — только для OWNER / MANAGER / CASHIER (`canOpenCashbox`); продавцу (SELLER / WAREHOUSE) касса не создается (2026-11-15)
    - Если есть → используется существующая
 
 3. Создание заказа:
@@ -118,14 +118,11 @@ CREATED → HOLD → [DEBT | COMPLETED] → [REFUNDED | CANCELLED]
    }
    ```
 
-3. Проверка открытой кассы:
-   ```sql
-   SELECT * FROM cashbox 
-   WHERE storeId = order.storeId 
-     AND warehouseId = order.warehouseId 
-     AND sellerId = staff.id 
-     AND status = 'OPEN'
-   ```
+3. Выбор кассы (с 2026-11-15, `resolvePaymentCashbox`, `src/cashbox/payment-cashbox.ts`), только если есть деньги (продажа целиком в долг — без кассы):
+   - `cashboxId` из запроса — открытая касса магазина на одном из складов сотрудника (владелец — любой склад), иначе 400 `The chosen cashbox is not open or not on your warehouse`
+   - иначе своя открытая касса сотрудника (предпочтительно на складе заказа)
+   - иначе 400 `No open cashbox: open one or choose an open cashbox of the store`
+   - Раньше требовалась своя открытая касса продавца на складе заказа
 
 4. **Транзакция** (все атомарно):
 
@@ -226,15 +223,15 @@ CREATED → HOLD → [DEBT | COMPLETED] → [REFUNDED | CANCELLED]
 ## Управление кассой (Cashbox)
 
 ### Концепция
-**Cashbox** (касса) нужна для **разделения доходов разных продавцов** на одном складе.
+**Cashbox** (касса) нужна для **разделения доходов разных сотрудников** на одном складе.
 
-**Пример**: У магазина один склад, но работают 2 продавца. Чтобы не перемешивать, кто сколько заработал, у каждого продавца своя касса.
+**Пример**: У магазина один склад, работают кассир и менеджер. Чтобы не перемешивать, кто сколько принял, у каждого своя касса. Своя касса есть только у OWNER, MANAGER, CASHIER; продавец (SELLER) кассу не открывает и принимает деньги в открытую кассу своего склада (2026-11-15).
 
 ### Открытие кассы
 **Endpoint**: `POST /cashbox`
 
 **Условия**:
-- Любой сотрудник (продавец, кассир, менеджер, владелец) открывает свою кассу — с 2026-10-22 без RolesGuard
+- OWNER, MANAGER, CASHIER открывают свою кассу (`canOpenCashbox`, 2026-11-15; без RolesGuard). SELLER / WAREHOUSE → 403 `Only the owner, a manager or a cashier can open a cashbox: use an open cashbox of your warehouse`
 - Body: `{ warehouseId, balance? }`; магазин берется из токена (`user.staff.storeId`), `storeId`/`status` в body игнорируются (для старых клиентов)
 - Склад принадлежит магазину staff (иначе 400 `Warehouse does not belong to the store`); не-владелец должен иметь доступ к складу через StaffOnWarehouse (иначе 403), владелец — любой склад магазина
 - У сотрудника НЕТ уже открытой кассы на этом складе (одна открытая касса на сотрудника и склад; иначе 400 `You already have an open cashbox on this warehouse`)
@@ -256,7 +253,7 @@ Cashbox {
 
 **Условия**:
 - Касса должна быть `OPEN` и принадлежать магазину staff
-- Staff должен быть владельцем кассы (или ADMIN/OWNER может закрыть любую)
+- Закрывает только сотрудник-владелец кассы (на любом своем складе) или владелец магазина (`isStoreOwner`) — любую кассу магазина
 
 **Что происходит**:
 - Статус → `CLOSED`, `closedAt = now()`
@@ -269,7 +266,8 @@ Cashbox {
 
 **Условия**:
 - Касса должна быть `OPEN`
-- Staff должен быть владельцем кассы (или ADMIN/OWNER)
+- Касса магазина на одном из складов сотрудника (владелец — любая); не обязательно своя (2026-11-15)
+- EXPENSE в чужую кассу — только владелец и MANAGER (иначе 403 `Only income can be added to another employee's cashbox`); в свою — любой тип
 
 #### Типы ручных транзакций
 
@@ -381,12 +379,12 @@ if (type === INCOME) {
 - Согласование крупных расходов
 
 ### Автоматическое создание кассы
-При создании заказа (`POST /orders`), если у продавца нет открытой кассы на этом складе — она создается автоматически с `balance = 0`.
+При создании заказа (`POST /orders`), если у сотрудника нет открытой кассы на этом складе — она создается автоматически с `balance = 0`, только для OWNER / MANAGER / CASHIER; продавцу касса не создается (2026-11-15).
 
 ### Несколько касс одновременно
 **Да**, может быть несколько открытых касс одновременно:
-- Разные продавцы → разные кассы
-- Один склад, но разные продавцы → каждый со своей кассой
+- Разные сотрудники (владелец / менеджер / кассир) → разные кассы
+- Один склад, но разные кассиры → каждый со своей кассой; продавцы платят в одну из них
 - Разные склады → разные кассы
 
 ### Автоматические транзакции vs Ручные
@@ -420,9 +418,12 @@ if (type === INCOME) {
 `POST /orders/return`
 
 ### Условия
+- Заказ должен быть из магазина пользователя (`user.staff.storeId`), иначе `403 No access to this order`
 - Заказ должен быть в статусе `COMPLETED` или `DEBT`
 - Заказ НЕ должен быть уже возвращен (`isReturned = false`)
-- У продавца должна быть открытая касса на складе заказа
+- Позиции проверяются до поиска кассы и транзакции: `itemId` из этого заказа, без дублей (`400 Duplicate return item: <itemId>`), количество ≤ купленного
+- Касса нужна только при выдаче денег сейчас: `resolvePaymentCashbox` — выбранная `cashboxId` (открытая, на одном из складов сотрудника; владелец — любая) или своя открытая касса
+- Полностью оплаченный `COMPLETED`-заказ можно вернуть целиком; частично оплаченный `DEBT`-заказ тоже (долг = total − paid гасится, магазин должен клиенту возврат − долг = оплаченное)
 
 ### DTO
 ```typescript
@@ -430,11 +431,8 @@ if (type === INCOME) {
   orderId: string;
   items: [
     {
-      itemId: string;        // ID OrderItem
+      itemId: string;        // ID OrderItem (один раз на запрос)
       quantity: number;      // Сколько возвращаем
-      retailPrice: Decimal;  // Цена на момент продажи
-      sale: Decimal;         // Скидка на момент продажи
-      costAtSale: Decimal;   // Себестоимость
     }
   ];
   returnPayments: [
@@ -445,6 +443,8 @@ if (type === INCOME) {
   ];
 }
 ```
+
+Цены и себестоимость берутся из исходной позиции заказа: сумма возврата = Σ (orderItem.retailPrice − orderItem.sale) × quantity, `StockMovement.unitCost` = `orderItem.costAtSale`. Поля `retailPrice` / `sale` / `costAtSale` от старых клиентов игнорируются.
 
 ### Бизнес-сценарии
 
@@ -564,12 +564,12 @@ if (type === INCOME) {
      reason: RETURN,
      variantId: orderItem.variantId,
      quantity: returnedQuantity,
-     unitCost: costAtSale,
+     unitCost: orderItem.costAtSale,
      warehouseId: order.warehouseId,
      createdById: staff.id
    }
    
-   // Inventory увеличивается автоматически
+   // Inventory.quantity += returnedQuantity на складе заказа (upsert по варианту, в той же транзакции)
    ```
 
 4. **Создание CashTransaction** (для каждого returnPayment):
@@ -629,6 +629,16 @@ if (type === INCOME) {
 4. Для заказов `COMPLETED`:
    - Кассир может выдать полную сумму возврата или меньше (тогда `CREDIT`)
 
+Прежнее правило «сумма возврата ≠ стоимость заказа, если клиент что-то оплатил» удалено.
+
+### Выплата по возврату позже
+`POST /payment/return/:id` (`PaymentService.createPaymentForReturnOrder`) — для возврата в статусе `CREDIT`:
+- Заказ возврата должен быть из магазина сотрудника (403)
+- Лимит — сколько магазин реально должен клиенту: `owed = Σ order.payments − (order.totalAmount − order.returnedAmount)`; прежние ReturnPayment + новые ≤ owed, иначе `400 Payment amount exceeds the amount owed to the customer`; при выплате ровно `owed` статус → `COMPLETED`
+- Касса — `resolvePaymentCashbox` (как при погашении долга): необязательный `cashboxId` (любая открытая касса магазина), иначе своя открытая касса сотрудника (предпочтительно на складе заказа); нет кассы → `400 No open cashbox: ...`
+- `CashTransaction.orderId` = id **заказа** (не ReturnedOrder)
+- Ответ: `{ message: 'Return payment(s) added successfully' }`
+
 ---
 
 ## Управление долгами
@@ -657,6 +667,8 @@ if (type === INCOME) {
 - `GET /debt/debtors` — DEBT-заказы с клиентом (остаток = totalAmount − returnedAmount − paidAmount) + ACTIVE CustomerDebt (totalAmount − paidAmount), сгруппированные по клиенту; `summary`: `total`, `customers`, `over30` (долги, чья дата старше 30 дней), `paidInPeriod`
 - «Погашено за месяц» (`paidInPeriod`) = Σ CashTransaction INCOME с категорией DEBT_PAYMENT в периоде `[from, to)` (по умолчанию — текущий месяц сервера)
 - `GET /debt/debtors/:customerId` — открытые долги клиента (`kind: ORDER | MANUAL`), самые старые первыми, с платежами
+- `dueAt` / `overdue` (2026-11-14): у должника — ближайший `returnedAt` открытых ручных долгов (или `null`) и `dueAt < now`; у долга в карточке — `returnedAt` для MANUAL, `null` для ORDER
+- `GET /users/customers` возвращает `debtTotal` — открытый долг клиента в магазине пользователя (`null` для ADMIN)
 
 ### Создание старого долга
 **Endpoint**: `POST /debt`
@@ -669,10 +681,12 @@ CustomerDebt {
   totalAmount: dto.amount,
   paidAmount: 0,
   status: ACTIVE,
-  createdAt: dto.createdAt,     // Можно указать прошлую дату
-  returnedAt: dto.returnedAt    // Дата возврата (если применимо)
+  createdAt: dto.createdAt ?? now,   // Можно указать прошлую дату, не в будущем (допуск 5 мин)
+  returnedAt: dto.returnedAt ?? null // Срок возврата; не указан = без срока (до 2026-11-14 было «сейчас»)
 }
 ```
+
+Доступ (с 2026-11-14): только OWNER и MANAGER (`RolesGuard`; ADMIN проходит). Сотрудник: магазин берется из токена, чужой `storeId` → 400 `Wrong StoreId given!`; admin обязан передать `storeId` (иначе 400 `storeId is required`). Поля DTO: `storeId?`, `customerId`, `amount` (≥ 1), `description?` (≤ 500, trim, пусто → null), `createdAt?`, `returnedAt?`. Ошибки: дата создания в будущем → 400 `Дата создания долга не может быть в будущем`; `returnedAt` < `createdAt` → 400 `Дата возврата не может быть раньше даты создания`; клиент не найден → 400 `Клиент не найден`. В одной транзакции создается долг и клиент привязывается к магазину (`customer.stores connect`). Кассовых операций нет.
 
 ### Оплата старого долга
 **Endpoint**: `POST /debt/payment`
@@ -870,27 +884,23 @@ if (updated.count !== 1) {
 - ✅ Изменение цен товаров
 - ❌ Закрытие касс других продавцов
 
-#### 3. SELLER (Продавец) — В ПЛАНАХ
-**Планируемые права**:
-- Создание заказов
-- Возвраты (своих заказов)
-- Управление своей кассой
-- Просмотр товаров
+#### 3. SELLER (Продавец)
+Роль есть в enum `StaffRole` (`billing/prisma/schema.prisma`), назначается при создании сотрудника (`POST /store/staff`; роль по умолчанию в DTO — SELLER) и используется в проверках доступа.
+**Права**:
+- Создание заказов, прием оплаты, возвраты и погашение долгов
+- Видит и правит только свои заказы; продажи в `GET /orders/summary` — только свои
+- Видит только свою кассу
+- Не может занижать цену позиции (только owner/manager)
+- Не может создавать/менять/удалять товары и вносить приход/корректировку остатков (`@Roles(OWNER, MANAGER)`)
 
-#### 4. CASHIER (Кассир) — В ПЛАНАХ
-**Планируемые права**:
-- Прием платежей
-- Управление своей кассой
-- Просмотр заказов
+#### 4. CASHIER (Кассир)
+Роль есть в enum и назначается при создании сотрудника. Права в бэкенде те же, что у SELLER (свои заказы, без управления товарами и остатками, без занижения цены), но кассир может открыть свою кассу, а продавец — нет (2026-11-15).
 
-#### 5. WAREHOUSE (Складской работник) — В ПЛАНАХ
-**Планируемые права**:
-- Приход товара (PURCHASE)
-- Корректировка остатков (ADJUSTMENT)
-- Просмотр остатков
+#### 5. WAREHOUSE (Складской работник)
+Роль есть в enum и назначается при создании сотрудника. Отдельных проверок для нее нет — применяется тот же ограниченный доступ, что у SELLER/CASHIER.
 
 ### Текущая реализация
-Сейчас активно используются только **OWNER** и **MANAGER**. Остальные роли запланированы на будущее.
+Все пять ролей (`OWNER`, `MANAGER`, `SELLER`, `CASHIER`, `WAREHOUSE`) существуют и используются. Код различает три группы: **OWNER** (весь магазин), **MANAGER** (товары, приход/корректировка остатков, любые заказы магазина, занижение цены) и **остальные сотрудники** (SELLER, CASHIER, WAREHOUSE — свои заказы; свои кассы и открытые кассы своих складов). SELLER от CASHIER отличает только открытие кассы: CASHIER может (`canOpenCashbox`), SELLER и WAREHOUSE — нет (2026-11-15).
 
 ### Проверка прав в коде
 

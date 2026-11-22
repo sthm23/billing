@@ -29,7 +29,8 @@ describe('UserService', () => {
   let service: UserService;
   const prisma = {
     $transaction: jest.fn(),
-    order: { findUnique: jest.fn(), update: jest.fn() },
+    order: { findUnique: jest.fn(), update: jest.fn(), findMany: jest.fn() },
+    customerDebt: { findMany: jest.fn() },
     customer: { findUnique: jest.fn(), create: jest.fn() },
     user: { findFirst: jest.fn(), create: jest.fn(), count: jest.fn(), findMany: jest.fn() },
   };
@@ -99,7 +100,7 @@ describe('UserService', () => {
     it('lists only the store customers without a search', async () => {
       await service.getCustomers(10, 1, undefined, makeUser());
       expect(prisma.user.findMany.mock.calls[0][0].where).toEqual({
-        type: UserType.CUSTOMER,
+        customer: { isNot: null },
         AND: [ownCustomer],
       });
     });
@@ -122,13 +123,33 @@ describe('UserService', () => {
       });
     });
 
+    it('adds the open debt of each customer in the store', async () => {
+      prisma.user.findMany.mockResolvedValue([
+        { id: 'u1', customer: { id: 'c1' } },
+        { id: 'u2', customer: { id: 'c2' } },
+      ]);
+      prisma.order.findMany.mockResolvedValue([
+        { customerId: 'c1', totalAmount: 1000000, returnedAmount: 100000, paidAmount: 200000 },
+      ]);
+      prisma.customerDebt.findMany.mockResolvedValue([
+        { customerId: 'c1', totalAmount: 500000, paidAmount: 0 },
+      ]);
+      const res = await service.getCustomers(10, 1, 'али', makeUser());
+      expect(prisma.order.findMany.mock.calls[0][0].where).toMatchObject({
+        storeId: STORE,
+        customerId: { in: ['c1', 'c2'] },
+        status: 'DEBT',
+      });
+      expect(res.data.map((u) => u.debtTotal)).toEqual([1200000, 0]);
+    });
+
     it('lets an admin search everyone', async () => {
       await service.getCustomers(10, 1, '', {
         role: UserRole.ADMIN,
         staff: null,
       } as never);
       expect(prisma.user.findMany.mock.calls[0][0].where).toEqual({
-        type: UserType.CUSTOMER,
+        customer: { isNot: null },
       });
     });
   });
@@ -148,8 +169,23 @@ describe('UserService', () => {
       });
     });
 
-    it('rejects an existing phone and hints to search by the full number', async () => {
-      prisma.user.findFirst.mockResolvedValue({ id: 'u1' });
+    it('makes an employee with this phone a customer without a new user', async () => {
+      prisma.user.findFirst.mockResolvedValue({ id: 'staff-user', fullName: 'Каримов', customer: null });
+      prisma.$transaction.mockImplementation((cb: (tx: typeof prisma) => unknown) => cb(prisma));
+      prisma.customer.create.mockResolvedValue({ id: CUSTOMER });
+      const result = await service.createCustomers(
+        { fullName: 'Другое имя', phone: '+998901234567' } as never,
+        makeUser(),
+      );
+      expect(prisma.user.create).not.toHaveBeenCalled();
+      expect(prisma.customer.create).toHaveBeenCalledWith({
+        data: { userId: 'staff-user', stores: { connect: { id: STORE } } },
+      });
+      expect(result).toMatchObject({ fullName: 'Каримов', customer: { id: CUSTOMER } });
+    });
+
+    it('rejects an existing customer phone and hints to search by the full number', async () => {
+      prisma.user.findFirst.mockResolvedValue({ id: 'u1', customer: { id: CUSTOMER } });
       await expect(
         service.createCustomers({ fullName: 'X', phone: '+998901234567' } as never, makeUser()),
       ).rejects.toBeInstanceOf(ConflictException);

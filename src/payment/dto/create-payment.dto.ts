@@ -1,48 +1,68 @@
-import { ArrayMinSize, IsArray, IsDateString, IsEnum, isNotEmpty, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Min, ValidateNested } from "class-validator"
-import { CashStatus, CashTransactionCategory, CashTransactionType, PaymentType } from "@generated/enums"
-import { Type } from "class-transformer"
+import {
+  ArrayMinSize,
+  IsArray,
+  IsDateString,
+  IsEnum,
+  isNotEmpty,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Min,
+  ValidateNested,
+} from 'class-validator';
+import {
+  CashStatus,
+  CashTransactionCategory,
+  CashTransactionType,
+  PaymentType,
+} from '@generated/enums';
+import { Type } from 'class-transformer';
 
 export class CreatePaymentItemDto {
-    @IsNotEmpty()
-    @IsEnum(PaymentType)
-    type: PaymentType = PaymentType.CASH
+  @IsNotEmpty()
+  @IsEnum(PaymentType)
+  type: PaymentType = PaymentType.CASH;
 
-    @IsNumber()
-    @Min(0)
-    amount!: number
+  @IsNumber()
+  @Min(0)
+  amount!: number;
 
-    @IsOptional()
-    @IsDateString()
-    paidAt: Date | null = null
+  @IsOptional()
+  @IsDateString()
+  paidAt: Date | null = null;
 }
 export class CreatePaymentDto {
+  @IsString()
+  @IsUUID('4')
+  orderId!: string;
 
-    @IsString()
-    @IsUUID('4')
-    orderId!: string
+  @IsOptional()
+  @IsUUID('4')
+  customerId?: string;
 
-    @IsOptional()
-    @IsUUID('4')
-    customerId?: string
+  /** Open cashbox of the store to take the money; default — the employee's own open cashbox */
+  @IsOptional()
+  @IsUUID('4')
+  cashboxId?: string;
 
-    /** Open cashbox of the store to take the money; default — the employee's own open cashbox */
-    @IsOptional()
-    @IsUUID('4')
-    cashboxId?: string
-
-    @IsArray()
-    @ArrayMinSize(1, { message: "At least one payment is required" })
-    @ValidateNested({ each: true })
-    @Type(() => CreatePaymentItemDto)
-    payments: CreatePaymentItemDto[] = []
+  @IsArray()
+  @ArrayMinSize(1, { message: 'At least one payment is required' })
+  @ValidateNested({ each: true })
+  @Type(() => CreatePaymentItemDto)
+  payments: CreatePaymentItemDto[] = [];
 }
 
 export class CreateReturnPaymentDto {
+  /** Open cashbox of the store to pay out from; default — the employee's own open cashbox */
+  @IsOptional()
+  @IsUUID('4')
+  cashboxId?: string;
 
-    @IsArray()
-    @ArrayMinSize(1, { message: "At least one payment is required" })
-    @ValidateNested({ each: true })
-    @Type(() => CreatePaymentItemDto)
-    payments: CreatePaymentItemDto[] = []
+  @IsArray()
+  @ArrayMinSize(1, { message: 'At least one payment is required' })
+  @ValidateNested({ each: true })
+  @Type(() => CreatePaymentItemDto)
+  payments: CreatePaymentItemDto[] = [];
 }
-

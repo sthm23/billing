@@ -180,7 +180,7 @@ This folder contains **legacy comprehensive documentation** that may still be us
 
 Все endpoints с примерами request/response:
 
-1. **Auth Module** (login, signup, refresh, logout, me)
+1. **Auth Module** (login, refresh, logout, me)
 2. **Order Module** (create, add items, pay, return, search, findOne, cancel)
 3. **Cashbox Module** (open, close, transaction, list)
 4. **Product Module** (create, variant, list, search, update price, archive)

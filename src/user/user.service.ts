@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { Prisma, User, UserRole, UserType } from '@generated/client';
+import { DebtStatus, OrderStatus, Prisma, User, UserRole, UserType } from '@generated/client';
 import { CreateUserDto } from './dto/create-user.dto';
 import { CurrentUser } from '@auth/models/auth.model';
 import { UpdateCustomerDto } from './dto/update-user.dto';
@@ -78,7 +78,7 @@ export class UserService {
           customer: true,
         },
       });
-      if (existing) {
+      if (existing?.customer) {
         this.logger.warn(
           { phone: createUserDto.phone },
           'Customer creation rejected: phone already exists',
@@ -90,13 +90,16 @@ export class UserService {
       }
 
       return await this.prismaService.$transaction(async (tx) => {
-        const newUser = await tx.user.create({
-          data: {
-            fullName: createUserDto.fullName,
-            phone: createUserDto.phone,
-            type: UserType.CUSTOMER,
-          },
-        });
+        // An employee with this phone becomes a customer too: same user, own name kept
+        const newUser =
+          existing ??
+          (await tx.user.create({
+            data: {
+              fullName: createUserDto.fullName,
+              phone: createUserDto.phone,
+              type: UserType.CUSTOMER,
+            },
+          }));
         const customer = await tx.customer.create({
           data: {
             userId: newUser.id,
@@ -189,12 +192,26 @@ export class UserService {
     }
   }
 
-  async findOneById(id: string): Promise<Omit<User, 'password'> | null> {
+  /** Admin: anyone; otherwise yourself or an employee of your store. */
+  private assertUserAccess(
+    target: { id: string; staff: { storeId: string } | null },
+    user: CurrentUser,
+  ) {
+    if (user.role === UserRole.ADMIN || target.id === user.id) return;
+    if (!user.staff || target.staff?.storeId !== user.staff.storeId) {
+      throw new ForbiddenException('No access to this user');
+    }
+  }
+
+  async findOneById(
+    id: string,
+    user: CurrentUser,
+  ): Promise<Omit<User, 'password'> | null> {
     try {
-      return await this.prismaService.user.findUnique({
+      const found = await this.prismaService.user.findUnique({
         where: { id },
         include: {
-          auth: true,
+          auth: { omit: { passwordHash: true } },
           staff: {
             include: {
               store: true,
@@ -203,17 +220,20 @@ export class UserService {
           },
         },
       });
+      if (found) this.assertUserAccess(found, user);
+      return found;
     } catch (error: any) {
+      if (error instanceof ForbiddenException) throw error;
       throw new BadRequestException(error.response || error.message);
     }
   }
 
-  async findOneInfo(id: string): Promise<any | null> {
+  async findOneInfo(id: string, user: CurrentUser): Promise<any | null> {
     try {
-      const user = await this.prismaService.user.findUnique({
+      const found = await this.prismaService.user.findUnique({
         where: { id },
         include: {
-          auth: true,
+          auth: { omit: { passwordHash: true } },
           staff: {
             include: {
               payments: true,
@@ -222,8 +242,10 @@ export class UserService {
           },
         },
       });
-      return user;
+      if (found) this.assertUserAccess(found, user);
+      return found;
     } catch (error: any) {
+      if (error instanceof ForbiddenException) throw error;
       throw new BadRequestException(error.response || error.message);
     }
   }
@@ -260,7 +282,8 @@ export class UserService {
   ) {
     const skip = (currentPage - 1) * pageSize;
     const text = search?.trim() ?? '';
-    const where: Prisma.UserWhereInput = { type: UserType.CUSTOMER };
+    // By the customer record, not the user type: an employee can be a customer too
+    const where: Prisma.UserWhereInput = { customer: { isNot: null } };
     const and: Prisma.UserWhereInput[] = [];
 
     if (text) {
@@ -309,15 +332,51 @@ export class UserService {
           },
         }),
       ]);
+      const debts = user.staff
+        ? await this.openDebtByCustomer(
+            user.staff.storeId,
+            data.flatMap((u) => (u.customer ? [u.customer.id] : [])),
+          )
+        : null;
       return {
         currentPage,
         pageSize,
         total: count,
-        data,
+        // debtTotal — open debt in the user's store (null for an admin)
+        data: data.map((u) => ({
+          ...u,
+          debtTotal: debts ? (u.customer ? debts.get(u.customer.id) ?? 0 : 0) : null,
+        })),
       };
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message);
     }
+  }
+
+  /**
+   * Open debt of the customers in the store: DEBT orders (total − returned −
+   * paid) + ACTIVE manual debts (total − paid). Same sums as the debtors list.
+   */
+  private async openDebtByCustomer(storeId: string, customerIds: string[]) {
+    const sums = new Map<string, number>();
+    if (!customerIds.length) return sums;
+    const [orders, debts] = await Promise.all([
+      this.prismaService.order.findMany({
+        where: { storeId, customerId: { in: customerIds }, status: OrderStatus.DEBT },
+        select: { customerId: true, totalAmount: true, returnedAmount: true, paidAmount: true },
+      }),
+      this.prismaService.customerDebt.findMany({
+        where: { storeId, customerId: { in: customerIds }, status: DebtStatus.ACTIVE },
+        select: { customerId: true, totalAmount: true, paidAmount: true },
+      }),
+    ]);
+    const add = (customerId: string | null, remaining: number) => {
+      if (!customerId || remaining <= 0) return;
+      sums.set(customerId, (sums.get(customerId) ?? 0) + remaining);
+    };
+    for (const o of orders) add(o.customerId, +o.totalAmount - +o.returnedAmount - +o.paidAmount);
+    for (const d of debts) add(d.customerId, +d.totalAmount - +d.paidAmount);
+    return sums;
   }
 
   async setCustomerToOrder(dto: UpdateCustomerDto, user: CurrentUser) {
@@ -341,7 +400,7 @@ export class UserService {
     }
   }
 
-  async deactivate(id: string) {
+  async deactivate(id: string, user: CurrentUser) {
     try {
       const result = await this.prismaService.user.findUnique({
         where: { id },
@@ -353,6 +412,7 @@ export class UserService {
       if (!result) {
         throw new NotFoundException(`User with ID ${id} not found`);
       }
+      this.assertUserAccess(result, user);
       let data = {};
       if (result.staff && result.staff.isActive) {
         data = { ...data, staff: { update: { isActive: false } } };
@@ -376,6 +436,7 @@ export class UserService {
         { userId: id, err: error.message },
         'Failed to deactivate user',
       );
+      if (error instanceof ForbiddenException) throw error;
       throw new BadRequestException(error.response || error.message);
     }
   }

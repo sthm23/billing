@@ -46,9 +46,10 @@ export class CreateWarehouseDto {
   @IsString()
   name: string = '';
 
-  @IsNotEmpty()
+  /** Ignored: the store's owner is looked up by the backend (kept for older clients) */
+  @IsOptional()
   @IsUUID('4')
-  ownerId: string = '';
+  ownerId?: string;
 
   @IsOptional()
   @ValidateNested()

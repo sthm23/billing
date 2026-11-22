@@ -1,11 +1,12 @@
 import { PaymentType } from "@generated/enums";
 import { Type } from "class-transformer";
-import { ArrayMinSize, IsArray, isDate, IsDateString, isDateString, IsEnum, IsNotEmpty, IsNumber, isNumber, IsOptional, IsString, IsUUID, Min, ValidateNested } from "class-validator";
+import { ArrayMinSize, IsArray, isDate, IsDateString, isDateString, IsEnum, IsNotEmpty, IsNumber, isNumber, IsOptional, IsString, IsUUID, MaxLength, Min, ValidateNested } from "class-validator";
 
 export class CreateDebtDto {
-    @IsNotEmpty()
+    /** Ignored for staff (their store from the token; a different one → 400); required for an admin */
+    @IsOptional()
     @IsUUID('4')
-    storeId!: string;
+    storeId?: string;
 
     @IsNotEmpty()
     @IsUUID('4')
@@ -20,15 +21,18 @@ export class CreateDebtDto {
 
     @IsOptional()
     @IsString()
+    @MaxLength(500)
     description?: string;
 
+    /** When the debt arose; may be in the past, not in the future. Default — now */
     @IsOptional()
     @IsDateString()
-    createdAt?: Date;
+    createdAt?: string;
 
+    /** Repay by; not before createdAt. Omitted or null — no term */
     @IsOptional()
     @IsDateString()
-    returnedAt?: Date;
+    returnedAt?: string | null;
 }
 
 export class CreateDebtPaymentDto {

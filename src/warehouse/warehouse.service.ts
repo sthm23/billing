@@ -32,20 +32,42 @@ export class WarehouseService {
     private readonly logger: PinoLogger,
   ) {}
 
+  /**
+   * New warehouse of a store (admin). The store's owner gets access to it:
+   * StaffOnWarehouse links the owner's Staff record of this store, looked up
+   * here — `dto.ownerId` is a User id and is not used (kept for older clients).
+   */
   async createWarehouse(dto: CreateWarehouseDto) {
+    const store = await this.prisma.store.findUnique({
+      where: { id: dto.storeId },
+      select: { id: true, ownerId: true },
+    });
+    if (!store) {
+      throw new NotFoundException('Store not found');
+    }
+    const ownerStaff = await this.prisma.staff.findFirst({
+      where: {
+        storeId: store.id,
+        OR: [{ role: StaffRole.OWNER }, { userId: store.ownerId }],
+      },
+      select: { id: true },
+    });
+
     try {
+      this.logger.info(
+        { storeId: store.id, name: dto.name },
+        'Creating warehouse',
+      );
       const warehouse = await this.prisma.warehouse.create({
         data: {
           name: dto.name,
-          storeId: dto.storeId,
-          staffs: {
-            create: {
-              staffId: dto.ownerId,
-            },
-          },
+          storeId: store.id,
+          ...(ownerStaff
+            ? { staffs: { create: { staffId: ownerStaff.id } } }
+            : {}),
         },
       });
-
+      this.logger.info({ warehouse }, 'Created warehouse');
       return { warehouse, worker: null };
     } catch (error: any) {
       throw new BadRequestException(error.response || error.message);

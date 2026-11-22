@@ -6,13 +6,17 @@ import {
   CashTransactionCategory,
   OrderStatus,
   PaymentType,
+  ReturnOrderStatus,
   StaffRole,
   UserRole,
   UserType,
 } from '@generated/enums';
 import { PrismaService } from '@prisma/prisma.service';
 import type { CurrentUser } from '@auth/models/auth.model';
-import { CreatePaymentDto } from './dto/create-payment.dto';
+import {
+  CreatePaymentDto,
+  CreateReturnPaymentDto,
+} from './dto/create-payment.dto';
 import { PaymentService } from './payment.service';
 
 const STORE = '11111111-1111-4111-8111-111111111111';
@@ -32,6 +36,10 @@ const seller = {
     role: StaffRole.SELLER,
     warehouse: [{ warehouseId: WAREHOUSE }],
   },
+} as unknown as CurrentUser;
+const manager = {
+  ...seller,
+  staff: { ...seller.staff, role: StaffRole.MANAGER },
 } as unknown as CurrentUser;
 
 function debtOrder(overrides: Record<string, unknown> = {}) {
@@ -66,7 +74,8 @@ describe('PaymentService', () => {
     cashbox: { findFirst: jest.fn(), findMany: jest.fn(), update: jest.fn() },
     payment: { create: jest.fn() },
     cashTransaction: { createMany: jest.fn() },
-    returnedOrder: { update: jest.fn() },
+    returnedOrder: { update: jest.fn(), findUnique: jest.fn() },
+    returnPayment: { createMany: jest.fn() },
   };
   const logger = {
     debug: jest.fn(),
@@ -136,14 +145,36 @@ describe('PaymentService', () => {
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
-    it('takes the money into the chosen open cashbox of the store', async () => {
+    it('takes the money into the chosen open cashbox of the seller warehouse', async () => {
       prisma.cashbox.findFirst.mockResolvedValue({ id: OTHER_CASHBOX });
       await service.create(payDto(20000, { cashboxId: OTHER_CASHBOX }), seller);
       expect(prisma.cashbox.findFirst).toHaveBeenCalledWith({
-        where: { id: OTHER_CASHBOX, storeId: STORE, status: CashStatus.OPEN },
+        where: {
+          id: OTHER_CASHBOX,
+          storeId: STORE,
+          status: CashStatus.OPEN,
+          warehouseId: { in: [WAREHOUSE] },
+        },
       });
       expect(prisma.cashbox.update.mock.calls[0][0].where).toEqual({
         id: OTHER_CASHBOX,
+      });
+    });
+
+    it('counts a rental debt from paidAmount: money given back on an early return is not paid', async () => {
+      // Paid 2 000 000, 300 000 given back on an early return, then a penalty of 100 000
+      prisma.order.findUnique.mockResolvedValue(
+        debtOrder({
+          totalAmount: 1800000,
+          paidAmount: 1700000,
+          payments: [{ amount: 2000000 }],
+          rental: { id: 'rental' },
+        }),
+      );
+      await service.create(payDto(100000), seller);
+      expect(prisma.order.update.mock.calls[0][0].data).toMatchObject({
+        status: OrderStatus.COMPLETED,
+        paidAmount: 1800000,
       });
     });
 
@@ -152,6 +183,85 @@ describe('PaymentService', () => {
       await expect(service.create(payDto(20000), seller)).rejects.toThrow(
         'No open cashbox',
       );
+    });
+  });
+
+  describe('createPaymentForReturnOrder (payout of a return)', () => {
+    const RETURN = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    // Debt order 100000, customer paid 40000, returned 70000 → store owes 10000
+    const creditReturn = (overrides: Record<string, unknown> = {}) => ({
+      id: RETURN,
+      orderId: ORDER,
+      status: ReturnOrderStatus.CREDIT,
+      totalAmount: 70000,
+      payments: [],
+      order: debtOrder({
+        status: OrderStatus.REFUNDED,
+        returnedAmount: 70000,
+        isReturned: true,
+      }),
+      ...overrides,
+    });
+    const payoutDto = (amount: number) =>
+      ({
+        payments: [{ type: PaymentType.CASH, amount, paidAt: null }],
+      }) as CreateReturnPaymentDto;
+
+    beforeEach(() => {
+      prisma.returnedOrder.findUnique.mockResolvedValue(creditReturn());
+    });
+
+    it('books the payout against the order and completes the return', async () => {
+      await service.createPaymentForReturnOrder(
+        RETURN,
+        payoutDto(10000),
+        manager,
+      );
+      expect(
+        prisma.cashTransaction.createMany.mock.calls[0][0].data[0],
+      ).toMatchObject({
+        orderId: ORDER,
+        cashboxId: OWN_CASHBOX,
+        category: CashTransactionCategory.RETURN,
+      });
+      expect(prisma.returnedOrder.update).toHaveBeenCalledWith({
+        where: { id: RETURN },
+        data: { status: ReturnOrderStatus.COMPLETED },
+      });
+    });
+
+    it('rejects paying out more than the customer is owed', async () => {
+      await expect(
+        service.createPaymentForReturnOrder(RETURN, payoutDto(20000), manager),
+      ).rejects.toThrow('exceeds the amount owed');
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects a return of another store', async () => {
+      prisma.returnedOrder.findUnique.mockResolvedValue(
+        creditReturn({ order: debtOrder({ storeId: 'other-store' }) }),
+      );
+      await expect(
+        service.createPaymentForReturnOrder(RETURN, payoutDto(10000), manager),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('lets only the owner or a manager of the warehouse pay out', async () => {
+      await expect(
+        service.createPaymentForReturnOrder(RETURN, payoutDto(10000), seller),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      const otherManager = {
+        ...manager,
+        staff: { ...manager.staff, warehouse: [{ warehouseId: 'other' }] },
+      } as unknown as CurrentUser;
+      await expect(
+        service.createPaymentForReturnOrder(
+          RETURN,
+          payoutDto(10000),
+          otherManager,
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
   });
 });

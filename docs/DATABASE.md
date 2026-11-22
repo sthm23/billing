@@ -8,13 +8,14 @@
 5. [Products & Variants](#products--variants)
 6. [Inventory](#inventory)
 7. [Orders & Sales](#orders--sales)
-8. [Returns](#returns)
-9. [Payments](#payments)
-10. [Cashbox](#cashbox)
-11. [Debts](#debts)
-12. [Catalog (Categories, Brands, Attributes)](#catalog)
-13. [Enums](#enums)
-14. [Индексы и ограничения](#индексы-и-ограничения)
+8. [Rentals](#rentals)
+9. [Returns](#returns)
+10. [Payments](#payments)
+11. [Cashbox](#cashbox)
+12. [Debts](#debts)
+13. [Catalog (Categories, Brands, Attributes)](#catalog)
+14. [Enums](#enums)
+15. [Индексы и ограничения](#индексы-и-ограничения)
 
 ---
 
@@ -85,7 +86,7 @@ model AuthAccount {
 
 **Логика**:
 - `passwordHash` создается через bcrypt (salt rounds: 10)
-- `isActive = false` → пользователь не может войти
+- `isActive = false` → пользователь не может войти, обновить токен и вызвать API (401 на каждом запросе; с 2026-11-09 проверяется в `POST /login`, `GET /refresh` и JWT-стратегии — `billing/src/auth/account-status.ts`). То же для `Staff.isActive = false`.
 
 ---
 
@@ -128,6 +129,23 @@ model Store {
   createdBy String   // Admin User ID, кто создал
   createdAt DateTime @default(now())
   
+  salesEnabled  Boolean @default(true)  // магазин продаёт товары
+  rentalEnabled Boolean @default(false) // магазин сдаёт товары в аренду
+  
+  // Подписка: TRIAL (первый месяц бесплатно) → ACTIVE (оплачен) → SUSPENDED (приостановлен админом)
+  status         StoreStatus         @default(TRIAL)
+  trialEndsAt    DateTime?           // конец пробного периода (createdAt + 1 месяц)
+  paidUntil      DateTime?           // «Оплачено до» — вводит админ при возобновлении
+  suspendedAt    DateTime?
+  suspendedById  String?             // User ID админа, приостановившего магазин (без FK)
+  suspendReason  StoreSuspendReason?
+  suspendComment String?
+  
+  // Данные заявки (вводит админ)
+  address String?
+  inn     String?                    // ИНН, ровно 9 цифр
+  note    String?
+  
   creator       User                @relation(fields: [createdBy], references: [id])
   warehouse     Warehouse[]
   staff         Staff[]
@@ -145,6 +163,19 @@ model Store {
 - Один Store → много Warehouse
 - Один Store → много Staff
 - Один Store ↔ много Customer (M2M через "CustomerStores")
+
+**Режимы магазина** (миграция `20261105120000_rental_schema`):
+- `salesEnabled` — продажи (заказы, оплаты, возвраты продаж); при `false` продажа отклоняется
+- `rentalEnabled` — модуль аренды; при `false` все `/rental` эндпоинты отвечают 400 `RENTAL_DISABLED`
+- Хотя бы один флаг всегда `true` (проверяется в `PUT /store/:id` и `PATCH /admin/stores/:id`)
+
+**Статус подписки** (миграция `20261110120000_store_subscription`; существующие магазины получили `ACTIVE`):
+- `status` (`StoreStatus`): `TRIAL` — новый магазин из `POST /admin/stores`, `trialEndsAt = now + 1 месяц`; `ACTIVE` — оплачен (`paidUntil` вводит админ); `SUSPENDED` — приостановлен админом (`POST /admin/stores/:id/suspend`: `suspendedAt`, `suspendedById`, `suspendReason`, `suspendComment`)
+- По окончании пробного периода автоматической приостановки нет — список админа показывает «пробный истёк» (`trialExpired`)
+- Возобновление (`POST /admin/stores/:id/resume`) очищает поля приостановки; с `paidUntil` → `ACTIVE`, без — `TRIAL`, пока пробный не истёк, иначе `ACTIVE`
+- При `SUSPENDED` любой JWT-запрос пользователя магазина (кроме `GET /auth/me`) → 403 `STORE_SUSPENDED` (`SubscriptionGuard`)
+- `address`, `inn`, `note` — данные заявки, заполняются при создании магазина админом
+- Правила: `docs/features/stores-warehouses.md`
 
 ---
 
@@ -181,6 +212,9 @@ model Staff {
   role      StaffRole  // OWNER | SELLER | MANAGER | CASHIER | WAREHOUSE
   isActive  Boolean   @default(true)
   createdAt DateTime  @default(now())
+  deactivatedAt      DateTime?                // когда владелец деактивировал; null после восстановления
+  deactivatedById    String?                  // User.id того, кто деактивировал (без FK)
+  deactivationReason StaffDeactivationReason? // LEFT | TEMPORARY | OTHER
   
   store            Store              @relation(fields: [storeId], references: [id])
   user             User               @relation(fields: [userId], references: [id])
@@ -201,10 +235,12 @@ model Staff {
 
 **Enums**:
 - `StaffRole`: OWNER, SELLER, MANAGER, CASHIER, WAREHOUSE
+- `StaffDeactivationReason`: LEFT (увольнение), TEMPORARY, OTHER
 
 **Логика**:
 - Один Staff привязан к ОДНОМУ магазину
 - Может иметь доступ к НЕСКОЛЬКИМ складам (через `StaffOnWarehouse`)
+- Деактивация (`POST /store/staff/:id/deactivate`, миграция `20261109120000_staff_deactivation`): `isActive = false` + `deactivatedAt` / `deactivatedById` / `deactivationReason`, `AuthAccount.isActive = false`, все `RefreshSession` отозваны — одной транзакцией. Восстановление (`…/activate`) очищает эти поля. Продажи, заказы и история кассы сотрудника не трогаются. `DELETE /users/:id` (web) тоже деактивирует, но поля причины/даты не заполняет.
 
 ---
 
@@ -223,7 +259,7 @@ model StaffOnWarehouse {
 }
 ```
 
-**Логика**: Сотрудник может работать только на складах, к которым у него есть доступ.
+**Логика**: Сотрудник может работать только на складах, к которым у него есть доступ. `staffId` — это `Staff.id`, **не** `User.id` (при создании склада `POST /warehouse` бэкенд сам находит Staff владельца магазина). Владелец магазина работает со всеми складами независимо от этих строк.
 
 ---
 
@@ -276,6 +312,8 @@ model Brand {
 
 **Уникальность**: `name` уникален глобально
 
+При создании магазина админом (`POST /admin/stores`, `brandNames`) бренд ищется по имени без учёта регистра или создаётся — новый бренд доступен и другим магазинам.
+
 ---
 
 ### Product
@@ -323,8 +361,12 @@ model ProductVariant {
   id             String                  @id @default(uuid())
   productId      String
   sku            String  // Уникален в пределах магазина
-  barCode        String? // Уникален глобально
-  price          Decimal
+  barCode        String? // Уникален в пределах магазина (с 2026-11-14)
+  price          Decimal // Цена продажи
+  canSell        Boolean  @default(true)  // Можно продавать
+  canRent        Boolean  @default(false) // Можно сдавать в аренду
+  rentPricePerDay Decimal? // Цена аренды за день (обязательна > 0 при canRent)
+  defaultCleaningDays Int @default(1) // Дней химчистки по умолчанию при возврате из аренды (0…30)
   storeId        String  // Денормализация для быстрого поиска SKU
   warehouseId    String  // Денормализация для быстрого доступа к складу
   createdAt      DateTime                @default(now())
@@ -336,19 +378,21 @@ model ProductVariant {
   attributes     VariantAttributeValue[]
   
   @@unique([storeId, sku])
-  @@unique([barCode])
+  @@unique([storeId, barCode])
   @@index([productId])
 }
 ```
 
 **Уникальность**:
 - `[storeId, sku]` — SKU уникален в рамках магазина
-- `barCode` — уникален глобально
+- `[storeId, barCode]` — баркод уникален в рамках магазина (2026-11-14, миграция `20261114120000_barcode_per_store`: индекс `product_variants_barCode_key` → `product_variants_storeId_barCode_key`; раньше — глобально)
 
 **Логика**:
 - `sku` генерируется автоматически: `buildSku(productName, category, attributes)`
-- `barCode` генерируется через `BarcodeSequence` (автоинкремент с 200000000000)
+- `barCode` — собственный (заводской) код из `POST /product/variants` (`variants[].barCode`, 8–14 цифр, свободен в магазине, иначе 409) или генерируется через `BarcodeSequence` (12-значный счётчик с 200000000000 + контрольная цифра EAN-13; занятый в магазине код пропускается)
 - `storeId` и `warehouseId` берутся из `product`
+- `canSell = false` — вариант нельзя добавить/оплатить в обычном заказе
+- `canRent = true` требует `rentPricePerDay > 0`; подробнее — [docs/features/rental.md](../../docs/features/rental.md)
 
 ---
 
@@ -359,7 +403,7 @@ model ProductVariant {
 model ProductImage {
   id        String  @id @default(uuid())
   productId String
-  url       String  // S3 URL
+  key       String  // ключ объекта в хранилище: products/<storeId>/<file>
   isMain    Boolean @default(false)
   order     Int     @default(0)
   
@@ -370,7 +414,9 @@ model ProductImage {
 ```
 
 **Логика**:
-- Первая картинка помечается `isMain: true`
+- Первая картинка помечается `isMain: true`, `order` = позиция в `images` запроса `POST /product` / `PATCH /product/:id` (PATCH заменяет все строки товара; объекты в хранилище при этом не удаляются)
+- Хранится **ключ**, не URL (2026-11-13, миграция `20261113150000_product_image_key`: колонка `url` → `key`, все старые строки с AWS-URL удалены). Публичный URL строит backend: `S3_PUBLIC_URL/<key>`; API по-прежнему отдаёт `images: [{ id, isMain, url }]`
+- Файлы лежат в Uztelecom Object Storage (S3-совместимое); правила загрузки — [docs/security.md → File Uploads and S3](../../docs/security.md#file-uploads-and-s3)
 
 ---
 
@@ -388,7 +434,7 @@ model BarcodeSequence {
 **Логика**:
 - Инициализируется с `200000000000`
 - При каждом создании варианта инкрементируется
-- Используется `BarcodeService.generateUniqueBarcode()`
+- Используется `BarcodeService.generateUniqueBarcode()` — счётчик глобальный, но уникальность баркода проверяется в рамках магазина (`ProductService.generateStoreBarcode`, до 10 попыток)
 
 ---
 
@@ -420,6 +466,7 @@ model Inventory {
   - Продаже (OUT, SALE)
   - Возврате (IN, RETURN)
   - Корректировке (IN/OUT, ADJUSTMENT)
+- Для арендуемого варианта `quantity` = сколько единиц принадлежит салону. Аренда **не меняет** Inventory и не создаёт StockMovement; занятость по датам считается из `Rental` (см. [Rentals](#rentals))
 
 ---
 
@@ -474,6 +521,7 @@ model Order {
   totalAmount Decimal
   paidAmount  Decimal      @default(0)
   soldAt      DateTime?    // момент продажи (COMPLETED/DEBT), ставится один раз
+  debtDueAt   DateTime?    // «вернуть до» для долга по заказу (опционально, 2026-11-15)
   createdAt   DateTime     @default(now())
   
   // Возврат
@@ -481,6 +529,8 @@ model Order {
   returnedAt     DateTime?
   returnedAmount Decimal             @default(0)
   returns        ReturnedOrder?
+  
+  rental         Rental?            // заказ-аренда (1:1, опционально)
   
   // Relationships
   store            Store             @relation(fields: [storeId], references: [id])
@@ -520,6 +570,12 @@ CREATED → HOLD → [DEBT | COMPLETED] → [REFUNDED | CANCELLED]
 - `returnedAt`: дата возврата
 - `returnedAmount`: сумма возвращенных товаров
 
+После возврата статус заказа — REFUNDED (и при частичном возврате) или DEBT, если клиент ещё должен. Сводки продаж (`SOLD_ORDER_FILTER`: COMPLETED, DEBT, REFUNDED) считают нетто `totalAmount − returnedAmount` (с 2026-11-15).
+
+**`debtDueAt`** (миграция `20261115120000_order_return_details`): срок долга по заказу. Ставится только в `POST /orders/payment/:id`, если оплата оставляет долг (не в прошлом); потом не меняется и на логику оплат не влияет. Отдаётся в должниках как `dueAt` / `overdue`.
+
+**Заказ-аренда**: если у заказа есть `rental`, он ведётся только через `/rental` эндпоинты (sale flow его отклоняет). Деньги аренды (позиции, услуги, платежи, `paidAmount`) хранятся в Order; `soldAt` ставится при выдаче.
+
 ---
 
 ### OrderItem
@@ -539,6 +595,7 @@ model OrderItem {
   order       Order          @relation(fields: [orderId], references: [id])
   variant     ProductVariant @relation(fields: [variantId], references: [id])
   returnItems ReturnItem?
+  rentalReturnItems RentalReturnItem[] // возвраты из аренды
   
   @@index([orderId])
   @@index([variantId])
@@ -548,7 +605,7 @@ model OrderItem {
 **Логика**:
 - `retailPrice` — может отличаться от текущей цены в каталоге (фиксируется на момент продажи)
 - `sale` — скидка (итоговая цена = retailPrice - sale)
-- `costAtSale` — себестоимость (для расчета прибыли)
+- `costAtSale` — себестоимость (для расчета прибыли); у позиций заказа-аренды `costAtSale = 0`
 
 **Итоговая сумма позиции**: `(retailPrice - sale) * quantity`
 
@@ -563,6 +620,7 @@ model AdditionalService {
   orderId     String
   name        String
   price       Decimal
+  sale        Decimal  @default(0) // Скидка на услугу, sale <= price
   description String?
   createdAt   DateTime @default(now())
   
@@ -575,8 +633,171 @@ model AdditionalService {
 **Примеры**: Доставка, нарезка, упаковка, гравировка
 
 **Логика**:
-- Включаются в `Order.totalAmount`
+- Включаются в `Order.totalAmount` как `price - sale`
 - НЕ возвращаются при возврате товара
+
+---
+
+## Rentals
+
+Аренда (свадебный салон). Деньги живут в Order (позиции, услуги, платежи); `Rental` хранит даты и физическое состояние арендованных вещей. Аренда никогда не меняет Inventory. Полные правила — [docs/features/rental.md](../../docs/features/rental.md).
+
+### Rental
+Бронь/аренда, 1:1 с Order.
+
+```prisma
+model Rental {
+  id          String @id @default(uuid())
+  orderId     String @unique
+  storeId     String
+  warehouseId String
+  customerId  String
+
+  startDate   DateTime // плановая дата выдачи
+  endDate     DateTime // плановая дата возврата
+  plannedDays Int      // дней, на которые посчитана цена
+
+  status   RentalStatus @default(BOOKED)
+  issuedAt DateTime?
+  issuedBy String?      // staffId
+  issuedWithoutCollateral Boolean @default(false) // выдано без залога (нет невозвращённых залогов при выдаче)
+  closedAt DateTime?    // все вещи возвращены
+
+  cancelledAt  DateTime?
+  cancelledBy  String?  // staffId
+  refundAmount Decimal? // возвращённая при отмене предоплата
+  cancelReason String?
+
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  order       Order              @relation(fields: [orderId], references: [id])
+  collaterals RentalCollateral[]
+  returns     RentalReturn[]
+
+  @@index([storeId, startDate])
+  @@index([warehouseId, status])
+  @@map("rentals")
+}
+```
+
+**Уникальность**: `orderId` — один Rental на заказ
+
+**Жизненный цикл**:
+```
+BOOKED → ISSUED → [PARTIALLY_RETURNED] → RETURNED
+BOOKED → CANCELLED
+```
+
+---
+
+### RentalCollateral
+Неденежный залог (паспорт, золото). **Никогда не проходит через кассу.**
+
+```prisma
+model RentalCollateral {
+  id          String         @id @default(uuid())
+  rentalId    String
+  type        CollateralType // PASSPORT | GOLD | OTHER
+  description String
+  receivedAt  DateTime       @default(now())
+  receivedBy  String         // staffId
+  returnedAt  DateTime?
+  returnedBy  String?        // staffId
+
+  rental Rental @relation(fields: [rentalId], references: [id])
+
+  @@index([rentalId])
+  @@map("rental_collaterals")
+}
+```
+
+---
+
+### RentalReturn
+Одно событие возврата (полного или частичного).
+
+```prisma
+model RentalReturn {
+  id                String   @id @default(uuid())
+  rentalId          String
+  returnedAt        DateTime // фактическое время возврата
+  penaltyAmount     Decimal  @default(0) // порча / просрочка, вводит продавец
+  penaltyComment    String?  // обязателен при penaltyAmount > 0
+  earlyReturnRefund Decimal  @default(0) // уменьшение суммы при раннем возврате, только OWNER/MANAGER
+  createdBy         String   // staffId
+  createdAt         DateTime @default(now())
+
+  rental Rental             @relation(fields: [rentalId], references: [id])
+  items  RentalReturnItem[]
+
+  @@index([rentalId])
+  @@map("rental_returns")
+}
+```
+
+---
+
+### RentalReturnItem
+Возвращённые единицы позиции заказа.
+
+```prisma
+model RentalReturnItem {
+  id            String   @id @default(uuid())
+  returnId      String
+  orderItemId   String
+  quantity      Int
+  cleaningDays  Int      @default(0) // 0 = без химчистки
+  availableFrom DateTime // returnedAt + cleaningDays: с этого момента единица снова свободна
+
+  return    RentalReturn @relation(fields: [returnId], references: [id])
+  orderItem OrderItem    @relation(fields: [orderItemId], references: [id])
+
+  @@index([returnId])
+  @@index([orderItemId])
+  @@map("rental_return_items")
+}
+```
+
+---
+
+### RentalCleaning
+Химчистка, запланированная владельцем/менеджером вне возврата (R13, миграция `20261107120000_rental_cleaning`). Занимает **одну** единицу варианта на `[startDate, endDate)` так же, как бронь; Inventory не меняет.
+
+```prisma
+model RentalCleaning {
+  id          String               @id @default(uuid())
+  storeId     String
+  warehouseId String
+  variantId   String
+  startDate   DateTime // 12:00 первого дня химчистки
+  endDate     DateTime // 12:00 после последнего дня: единица снова свободна
+  days        Int
+  amount      Decimal
+  paymentType PaymentType
+  comment     String?
+  status      RentalCleaningStatus @default(ACTIVE) // ACTIVE | CANCELLED
+
+  expenseTransactionId String  @unique // CashTransaction EXPENSE/DRY_CLEANING
+  refundTransactionId  String? @unique // CashTransaction INCOME/DRY_CLEANING при отмене
+
+  createdBy   String // staffId
+  createdAt   DateTime  @default(now())
+  cancelledBy String? // staffId
+  cancelledAt DateTime?
+
+  warehouse          Warehouse        @relation(...)
+  variant            ProductVariant   @relation(...)
+  expenseTransaction CashTransaction  @relation("RentalCleaningExpense", ...)
+  refundTransaction  CashTransaction? @relation("RentalCleaningRefund", ...)
+
+  @@index([warehouseId, variantId, endDate])
+  @@index([storeId, startDate])
+  @@map("rental_cleanings")
+}
+```
+Состояние для UI (`PLANNED` / `IN_PROGRESS` / `DONE`) вычисляется из дат; хранится только `ACTIVE`/`CANCELLED`. В `CashTransactionCategory` добавлена `DRY_CLEANING`.
 
 ---
 
@@ -593,6 +814,8 @@ model ReturnedOrder {
   createdBy   String            // Staff ID
   status      ReturnOrderStatus  // DEBT | CREDIT | COMPLETED
   totalAmount Decimal           @default(0)
+  reason      ReturnReason      @default(OTHER)  // причина возврата — только информация (2026-11-15)
+  comment     String?                            // комментарий, ≤ 500 (валидация DTO)
   
   order       Order             @relation(fields: [orderId], references: [id])
   items       ReturnItem[]
@@ -602,8 +825,11 @@ model ReturnedOrder {
 
 **Enums**:
 - `ReturnOrderStatus`: DEBT (клиент все еще должен), CREDIT (магазин должен клиенту), COMPLETED (расчет завершен)
+- `ReturnReason`: DEFECT (брак), NOT_FIT (не подошёл), EXTRA (лишнее), OTHER (другое; по умолчанию)
 
 **Связь**: один заказ может иметь максимум один возврат (`orderId @unique`)
+
+`reason` и `comment` добавлены миграцией `20261115120000_order_return_details`; на суммы, остатки и статусы не влияют.
 
 ---
 
@@ -726,7 +952,7 @@ model CashTransaction {
   cashboxId   String
   createdById String                  // Staff ID
   type        CashTransactionType     // INCOME | EXPENSE
-  category    CashTransactionCategory // SALE | DEBT_PAYMENT | RENT | DELIVERY | SALARY | PURCHASE | RETURN | OTHER
+  category    CashTransactionCategory // SALE | DEBT_PAYMENT | RENT | DELIVERY | SALARY | PURCHASE | RETURN | OTHER | RENTAL | DRY_CLEANING | DEFECT_COMPENSATION
   paymentType PaymentType             // CASH | CARD | ONLINE | TRANSFER
   amount      Decimal
   comment     String?
@@ -746,7 +972,7 @@ model CashTransaction {
 
 **Enums**:
 - `CashTransactionType`: INCOME (приход), EXPENSE (расход)
-- `CashTransactionCategory`: SALE, DEBT_PAYMENT, RENT, DELIVERY, SALARY, PURCHASE, RETURN, OTHER
+- `CashTransactionCategory`: SALE, DEBT_PAYMENT, RENT, DELIVERY, SALARY, PURCHASE, RETURN, OTHER, RENTAL, DRY_CLEANING, DEFECT_COMPENSATION (`RENT` — расход на помещение, `RENTAL` — доход от аренды товаров, `DRY_CLEANING` — запланированная химчистка вне возврата: EXPENSE, при отмене INCOME, `DEFECT_COMPENSATION` — компенсация за брак без возврата товара: только EXPENSE, обычно с `orderId` заказа своего магазина; миграция `20261115120000_order_return_details`)
 
 **Логика**:
 
@@ -760,6 +986,13 @@ model CashTransaction {
 - **Оплата старого долга**: `POST /debt/payment`
   - Создается: INCOME, DEBT_PAYMENT, debtId
   - Cashbox.balance увеличивается
+- **Оплата аренды** (предоплата/доплата): `POST /rental/:id/payments`, `/rental/:id/issue`, `/rental/:id/returns`
+  - Создается: Payment + INCOME, RENTAL, orderId
+  - Cashbox.balance увеличивается
+- **Выплата по аренде** (переплата при раннем возврате, возврат предоплаты при отмене)
+  - Создается: EXPENSE, RETURN, orderId
+  - Cashbox.balance уменьшается
+- Залог (паспорт, золото) в кассу не попадает
 
 **Ручные транзакции** (создает кассир через UI):
 - **Неопознанный платеж**: `POST /cashbox/:id/transaction`
@@ -777,7 +1010,7 @@ model CashTransaction {
   - Создается: EXPENSE, SALARY, comment: "Зарплата Петрову"
 - **Аренда**: 
   - Оплата аренды помещения
-  - Создается: EXPENSE, RENT
+  - Создается: EXPENSE, RENT (не путать с RENTAL — доходом от аренды товаров)
 - **Доставка**: 
   - Оплата доставки
   - Создается: EXPENSE, DELIVERY
@@ -810,7 +1043,7 @@ model CustomerDebt {
   paidAmount  Decimal    @default(0)
   status      DebtStatus  // ACTIVE | PAID
   createdAt   DateTime   @default(now())
-  returnedAt  DateTime?   // Дата возникновения долга (можно указать прошлую)
+  returnedAt  DateTime?   // Срок возврата (после createdAt); null = без срока. createdAt — когда возник долг (можно прошлую)
   
   customer Customer      @relation(fields: [customerId], references: [id])
   store    Store         @relation(fields: [storeId], references: [id])
@@ -826,7 +1059,7 @@ model CustomerDebt {
 - `DebtStatus`: ACTIVE, PAID
 
 **Логика**:
-- Создается вручную (`POST /debt`)
+- Создается вручную (`POST /debt`, только OWNER/MANAGER); `returnedAt` не указан → `null`
 - Используется для переноса старых долгов при миграции на систему
 
 ---
@@ -863,22 +1096,28 @@ model DebtPayment {
 
 ```prisma
 model Category {
-  id       String              @id @default(uuid())
-  name     String              @unique
-  parentId String?
-  
-  parent   Category?           @relation("CategoryTree", fields: [parentId], references: [id])
-  children Category[]          @relation("CategoryTree")
-  
-  store    CategoriesOnStore[]
-  products Product[]
-  
+  id          String              @id @default(uuid())
+  name        String              // русское название, основное
+  nameUz      String?
+  nameEn      String?
+  parentId    String?
+  parent      Category?           @relation("CategoryTree", fields: [parentId], references: [id])
+  children    Category[]          @relation("CategoryTree")
+  createdById String?             // кто создал подкатегорию; null у системных (сид)
+  createdBy   User?               @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  store       CategoriesOnStore[]
+  products    Product[]
+
+  @@unique([parentId, name])
   @@index([parentId])
 }
 ```
 
 **Логика**:
-- Поддерживает вложенность (parent → children)
+- **Ровно 2 уровня** (миграция `20261113120000_category_two_levels` выровняла старое 3–4-уровневое дерево): уровень 1 — направление магазина (`parentId = null`, системные из сида; выбирает админ при создании магазина, `POST /admin/stores` принимает только категорию без `parentId`), уровень 2 — подкатегории товаров. Глубина — правило, не ограничение схемы
+- **Названия**: `name` — русский (основной), `nameUz` / `nameEn` — переводы (у системных заполнены сидом, у созданных пользователями могут быть null). Клиент показывает перевод на языке приложения, иначе `name`. Системный список — `prisma/seed/category.seed.ts` (`CATEGORY_TREE`)
+- **Уникальность** — внутри родителя без учёта регистра, отдельно для `name`, `nameUz`, `nameEn`. Обеспечивается частичными индексами по выражению `lower(...)` (`categories_root_*_ci_key` для корней, `categories_child_*_ci_key` для подкатегорий), созданными SQL в миграции: в `schema.prisma` их не выразить, `prisma migrate diff` их не трогает
+- Справочник общий для всех магазинов: подкатегории направления видят все магазины этого направления. План доработки (API, права, mobile) — `billing/docs/categories/PLAN.md`
 - Связывается с магазинами через M2M (`CategoriesOnStore`)
 
 ---
@@ -891,6 +1130,7 @@ model Attribute {
   id      String             @id @default(uuid())
   name    String             @unique
   type    AttributeType       // STRING | NUMBER | BOOLEAN
+  unit    String?             // единица для NUMBER (м, кг, л): «Длина — 6 м»
   
   values  AttributeValue[]
   store   AttributeOnStore[]
@@ -902,6 +1142,8 @@ model Attribute {
 - `AttributeType`: STRING, NUMBER, BOOLEAN
 
 **Примеры**: Размер (STRING), Вес (NUMBER), Водонепроницаемость (BOOLEAN)
+
+**Логика**: атрибут — глобальная группа значений (`Attribute` → `AttributeValue`, например Материал → Хлопок / Шёлк), связывается с магазинами через `AttributeOnStore`. При создании магазина админом новый атрибут с уже существующим именем переиспользуется, только если совпадает тип (иначе 400). `unit` добавлен миграцией `20261110120000_store_subscription`.
 
 ---
 
@@ -1052,10 +1294,37 @@ enum UserType {
 ```prisma
 enum StaffRole {
   OWNER      // Владелец (полный доступ + сотрудники + отчеты)
-  SELLER     // Продавец (в планах)
+  SELLER     // Продавец (свои заказы и касса; роль по умолчанию при создании сотрудника)
   MANAGER    // Менеджер (полный доступ без сотрудников/отчетов)
-  CASHIER    // Кассир (в планах)
-  WAREHOUSE  // Складской работник (в планах)
+  CASHIER    // Кассир (права как у продавца)
+  WAREHOUSE  // Складской работник (права как у продавца; отдельных проверок нет)
+}
+```
+
+### StoreStatus
+```prisma
+enum StoreStatus {
+  TRIAL      // Пробный период (первый месяц бесплатно)
+  ACTIVE     // Оплачен
+  SUSPENDED  // Приостановлен админом
+}
+```
+
+### StoreSuspendReason
+```prisma
+enum StoreSuspendReason {
+  UNPAID         // Не оплачен
+  OWNER_REQUEST  // По просьбе владельца
+  OTHER          // Другое
+}
+```
+
+### StaffDeactivationReason
+```prisma
+enum StaffDeactivationReason {
+  LEFT       // Увольнение
+  TEMPORARY  // Временно
+  OTHER      // Другое
 }
 ```
 
@@ -1098,6 +1367,16 @@ enum ReturnOrderStatus {
 }
 ```
 
+### ReturnReason
+```prisma
+enum ReturnReason {
+  DEFECT  // Брак
+  NOT_FIT // Не подошёл
+  EXTRA   // Лишнее
+  OTHER   // Другое (по умолчанию)
+}
+```
+
 ### PaymentType
 ```prisma
 enum PaymentType {
@@ -1137,12 +1416,45 @@ enum CashTransactionType {
 enum CashTransactionCategory {
   SALE         // Продажа товара
   DEBT_PAYMENT // Оплата старого долга
-  RENT         // Аренда
+  RENT         // Аренда помещения (EXPENSE)
   DELIVERY     // Доставка
   SALARY       // Зарплата
   PURCHASE     // Закупка товара
   RETURN       // Возврат денег клиенту
   OTHER        // Прочее
+  RENTAL       // Доход от аренды товаров (INCOME)
+  DRY_CLEANING // Химчистка вне возврата (EXPENSE; INCOME при отмене), R13
+  DEFECT_COMPENSATION // Компенсация за брак: ручной EXPENSE, товар не возвращают, без StockMovement (2026-11-15)
+}
+```
+
+**Не путать**: `RENT` — расход на аренду помещения, `RENTAL` — доход заказа-аренды.
+
+### RentalStatus
+```prisma
+enum RentalStatus {
+  BOOKED             // Забронировано, вещи в салоне
+  ISSUED             // Выдано клиенту
+  PARTIALLY_RETURNED // Часть вещей вернули
+  RETURNED           // Всё вернули
+  CANCELLED          // Бронь отменена до выдачи
+}
+```
+
+### RentalCleaningStatus
+```prisma
+enum RentalCleaningStatus {
+  ACTIVE    // химчистка запланирована / идёт / прошла
+  CANCELLED // отменена до начала, расход возвращён в кассу
+}
+```
+
+### CollateralType
+```prisma
+enum CollateralType {
+  PASSPORT // Паспорт
+  GOLD     // Золото
+  OTHER    // Прочее
 }
 ```
 
@@ -1177,7 +1489,7 @@ UNIQUE (userId), UNIQUE (login)
 
 -- ProductVariant
 UNIQUE ([storeId, sku])  -- SKU уникален в рамках магазина
-UNIQUE (barCode)         -- Barcode уникален глобально
+UNIQUE ([storeId, barCode])  -- Barcode уникален в рамках магазина (2026-11-14)
 
 -- Inventory
 UNIQUE ([warehouseId, variantId])  -- Один вариант на одном складе
@@ -1187,6 +1499,9 @@ UNIQUE (orderId)  -- Один возврат на заказ
 
 -- ReturnItem
 UNIQUE (itemId)   -- Одна позиция возвращается один раз
+
+-- Rental
+UNIQUE (orderId)  -- Один Rental на заказ
 
 -- Brand, Category, Attribute, Tag
 UNIQUE (name)     -- Уникальные названия
@@ -1237,6 +1552,17 @@ INDEX (orderId)
 
 -- Payment
 INDEX (orderId)
+
+-- Rental
+INDEX (storeId, startDate)
+INDEX (warehouseId, status)
+
+-- RentalCollateral, RentalReturn
+INDEX (rentalId)
+
+-- RentalReturnItem
+INDEX (returnId)
+INDEX (orderItemId)
 
 -- Cashbox
 INDEX (storeId, createdAt)
@@ -1320,5 +1646,5 @@ ORDER BY sm.created_at DESC;
 
 ---
 
-**Последнее обновление**: 2026-08-15  
+**Последнее обновление**: 2026-11-15 (возврат: `ReturnedOrder.reason/comment`, `Order.debtDueAt`, `DEFECT_COMPENSATION`)  
 **Версия схемы**: Prisma 6 / PostgreSQL 17

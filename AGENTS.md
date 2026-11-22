@@ -9,8 +9,9 @@
 - **Framework**: NestJS 10+
 - **ORM**: Prisma 6
 - **Database**: PostgreSQL 17
-- **Auth**: JWT (access + refresh tokens) via Passport
-- **File Storage**: AWS S3 (LocalStack in dev)
+- **Auth**: JWT (access + refresh tokens) via Passport; access token bound to its `RefreshSession` (`sid`)
+- **Rate limiting**: `@nestjs/throttler` ^6.7.1 — auth routes only (`src/auth/auth-throttle.ts`)
+- **File Storage**: Uztelecom Object Storage (S3-compatible, `@aws-sdk/client-s3` with `S3_ENDPOINT`); product photos only, presigned PUT — see `docs/security.md` → File Uploads and S3
 - **Container**: Docker Compose for PostgreSQL
 
 ---
@@ -39,7 +40,7 @@ This application is the **source of truth for business logic**.
 src/
 ├── auth/              # JWT authentication (login, refresh, logout)
 ├── user/              # User management (CUSTOMER, STAFF)
-├── admin/             # Admin operations (only ADMIN role)
+├── admin/             # Admin operations (only ADMIN role); admin-stores.* — /admin/stores (store list/card, create with new owner, suspend/resume)
 ├── store/             # Store management
 ├── warehouse/         # Warehouse management, inventory movements
 ├── product/           # Products and variants (SKU)
@@ -162,6 +163,7 @@ type CurrentUser = User & {
   auth: AuthAccount;
   staff: Staff & {
     warehouse: { warehouseId: string }[];
+    store: Pick<Store, 'name' | 'status' | 'suspendedAt' | 'suspendReason'>; // for SubscriptionGuard
   };
 };
 ```
@@ -181,7 +183,14 @@ type CurrentUser = User & {
 
 **AuthJWTGuard** — Validates JWT token
 ```typescript
-@UseGuards(AuthJWTGuard)  // All routes protected by default
+@UseGuards(AuthJWTGuard)  // Per controller / route — NOT global
+```
+
+**SubscriptionGuard** (`src/shared/guards/subscription.guard.ts`) — runs **inside** `AuthJWTGuard` (no separate `@UseGuards` needed): a user of a store with `status = SUSPENDED` (owner included) gets 403 `{ code: 'STORE_SUSPENDED', ... }`; ADMIN always passes. Mark a route that must work for a suspended store with `@AllowSuspendedStore()` (`src/shared/decorators/allow-suspended-store.decorator.ts`) — currently only `GET /auth/me`. See `docs/features/authentication.md` → «Suspended Store».
+
+**AdminGuard** (`src/shared/guards/admin.guard.ts`) — platform ADMIN only
+```typescript
+@UseGuards(AuthJWTGuard, AdminGuard)  // e.g. /admin/stores
 ```
 
 **RolesGuard** — Checks staff role
@@ -190,11 +199,11 @@ type CurrentUser = User & {
 @UseGuards(AuthJWTGuard, RolesGuard)
 ```
 
-**Public Routes**
-```typescript
-@Public()  // Skip AuthJWTGuard
-async login() { ... }
-```
+**JwtStrategy** (`src/auth/strategy/jwt-access.strategy.ts`) reloads the user on every request **and** requires the token's `sid` session to be active (not revoked, not expired); otherwise 401. Logout and refresh rotation therefore invalidate the old access token at once.
+
+**ThrottlerGuard** (`@nestjs/throttler`, config `src/auth/auth-throttle.ts`, `ThrottlerModule.forRoot` in `AuthModule`) — **not global**, only on `POST /login` (`ip` 30/min + `login` 5/min per IP+login) and `GET /refresh` (`@SkipThrottle({ login: true })`, `ip` only). 429 `Too many attempts, try again later`. In-memory counters (single PM2 instance); `main.ts` sets `trust proxy: 'loopback'` so `req.ip` is the client behind local nginx. Do not add it to other routes without a decision.
+
+**Public Routes**: a route without `@UseGuards(AuthJWTGuard)` is public (the guard is not global). `@Public()` is only a marker — no guard reads it. There is no `POST /signup` (removed 2026-11-13).
 
 ---
 
@@ -297,19 +306,42 @@ await this.prisma.$transaction(async (tx) => {
 2. ✅ **Order can have multiple payments** (split payment: 500 cash + 300 card)
 3. ✅ **Every payment creates CashTransaction** and updates Cashbox
 4. ✅ **Payment to CustomerDebt uses DEBT_PAYMENT category** (not SALE)
+5. ✅ **Order debt due date** (`debtDueAt`) — optional, only at `POST /orders/payment/:id` when a debt remains, not in the past, never edited
+
+### Returns (2026-11-15, `docs/order-return/PLAN.md`, rules `../docs/features/returns.md`)
+
+1. ✅ **OWNER (any warehouse) or MANAGER (own warehouses) only** — `assertReturnAccess()` (`src/shared/helper/role.helper.ts`), also for `POST /payment/return/:id`
+2. ✅ **One return per order**; goods always go back to the order's warehouse (no write-off); `reason` / `comment` are information only
+3. ✅ **`payoutMethod`** → the backend computes the payout (full refund for COMPLETED, part above the debt for DEBT); not combined with `returnPayments` (400); nothing → CREDIT, paid later
+4. ✅ **Cashbox only when money is paid out now** — `resolvePaymentCashbox()`; debt reduction / pay later needs none
+5. ✅ **Defect compensation** = manual cashbox EXPENSE `DEFECT_COMPENSATION` linked by `orderId` (order of the cashbox's store), no StockMovement
+
+### Reporting
+
+1. ✅ **Sales are net of returns**: `SOLD_ORDER_FILTER` (`src/order/entities/sold-order.filter.ts`) includes REFUNDED, sums use `totalAmount − returnedAmount` (`GET /orders/summary`, staff card stats) — use it for any new sales report
 
 ### CashBox
 
-1. ✅ **Each seller has their own cashbox** (per warehouse + store)
-2. ✅ **Multiple cashboxes can be open simultaneously** (different sellers)
-3. ✅ **Cannot add transactions to closed cashbox**
-4. ✅ **Balance = INCOME - EXPENSE** (calculated automatically)
+1. ✅ **Only OWNER, MANAGER, CASHIER have their own cashbox** (per warehouse + store; `canOpenCashbox` in `src/shared/helper/role.helper.ts`). A SELLER / WAREHOUSE cannot open one (`POST /cashbox` → 403) and gets none on `POST /orders` (2026-11-15)
+2. ✅ **Multiple cashboxes can be open simultaneously** (different employees)
+3. ✅ **Payment money → `resolvePaymentCashbox`** (`src/cashbox/payment-cashbox.ts`; sale payment, debt repayment, return payout, rental): chosen `cashboxId` = an OPEN cashbox on one of the employee's warehouses (owner: any), else own open cashbox; no money moved → no cashbox
+4. ✅ **Visibility** (`cashboxScope`): owner — store; manager — their warehouses; others — own + OPEN cashboxes of their warehouses. `GET /cashbox/open`: owner — store, others — their warehouses
+5. ✅ **Manual transaction**: any cashbox of the store on the employee's warehouses (owner: any); EXPENSE into someone else's cashbox — owner / MANAGER only (403). **Close**: own cashbox or the store owner
+6. ✅ **Cannot add transactions to closed cashbox**
+7. ✅ **Balance = INCOME - EXPENSE** (calculated automatically)
 
 ### SKU & Barcode
 
 1. ✅ **SKU is unique per store** (`@@unique([storeId, sku])`)
-2. ✅ **Barcode is globally unique** (`@@unique([barCode])`)
-3. ✅ **Barcode is auto-generated** via `BarcodeSequence` table (200000000001, 200000000002, ...)
+2. ✅ **Barcode is unique per store** (`@@unique([storeId, barCode])`, 2026-11-14 — was global)
+3. ✅ **Barcode is manual or auto-generated**: an optional own (factory) code in `POST /product/variants` (`variants[].barCode`, 8–14 digits, `BARCODE_PATTERN`; taken in the store → 409), otherwise `BarcodeService` (global `BarcodeSequence` counter + EAN-13 check digit), re-drawn while taken in the store (`ProductService.generateStoreBarcode`)
+
+### Products (2026-11-14, `billing/docs/product-create/PLAN.md`)
+
+1. ✅ **`POST /product` — store OWNER + ADMIN only**; MANAGER edits the card (`PATCH /product/:id`) and adds variants
+2. ✅ **A product without variants is a draft** (`isDraft` in `GET /product`), hidden from non-managers and from «Мало»
+3. ✅ **Variant `quantity = 0` → Inventory 0, no StockMovement**; `> 0` → StockMovement PURCHASE
+4. ✅ **Attributes cannot change once the product has variants**; attribute values are find-or-create by store OWNER / ADMIN
 
 ### Multi-Tenancy
 
@@ -488,7 +520,7 @@ npm run test:cov                  # Coverage report
 
 **Test Files**: `*.spec.ts` co-located with source
 
-**Current state**: most specs are generated "should be defined" stubs that don't provide their dependencies and fail. Working examples with mocked `PrismaService` and Pino logger (`getLoggerToken`): `src/store/store.service.spec.ts`, `src/order/order.service.spec.ts` (`$transaction` mocked as `cb => cb(prisma)`), `src/product/product.service.spec.ts`, `src/user/user.service.spec.ts`.
+**Current state**: most specs are generated "should be defined" stubs that don't provide their dependencies and fail. Working examples with mocked `PrismaService` and Pino logger (`getLoggerToken`): `src/store/store.service.spec.ts`, `src/order/order.service.spec.ts` (`$transaction` mocked as `cb => cb(prisma)`; store-scope tests), `src/product/product.service.spec.ts` (store / warehouse access tests), `src/user/user.service.spec.ts`, `src/auth/auth.service.spec.ts` (logout), `src/auth/strategy/jwt-access.strategy.spec.ts` (session check).
 
 **Error wrapping**: most services catch everything and rethrow `BadRequestException(error.response)`, which turns a 403 into a 400. Run access checks before the `try`, or rethrow `ForbiddenException` in the `catch` (see `OrderService.createOrderItems`, `ProductService.search`). Run a subset with `npx jest src/<module>`.
 
@@ -515,9 +547,12 @@ JWT_ACCESS_EXPIRE=15m
 JWT_REFRESH_SECRET=your-refresh-secret
 JWT_REFRESH_EXPIRE=7d
 AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=test
-AWS_SECRET_ACCESS_KEY=test
-AWS_BUCKET=billing-bucket
+AWS_ACCESS_KEY_ID=<storage-access-key>
+AWS_SECRET_ACCESS_KEY=<storage-secret-key>
+AWS_S3_BUCKET_NAME=sthm-media-dev            # prod: sthm-media; created by hand, not on startup
+AWS_S3_FORCE_PATH_STYLE=true
+S3_ENDPOINT=https://s3.uztelecom.uz          # omit → AWS
+S3_PUBLIC_URL=https://s3.uztelecom.uz/sthm-media-dev   # public base INCLUDING the bucket
 PORT=4000
 ```
 

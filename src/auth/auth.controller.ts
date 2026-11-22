@@ -9,23 +9,25 @@ import {
   Res,
   UnauthorizedException,
   UseGuards,
-  ValidationPipe,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { CurrentUser } from '@shared/decorators/user.decorator';
-import { SignInDto } from './dto/create-login.dto';
 import { LocalAuthGuard } from '@auth/guard/local_passport.guard';
 import type { UserAuth } from './models/auth.model';
 import type { Response, Request } from 'express';
 import { AuthJWTGuard } from './guard/auth.guard';
 import { LogoutDto } from './dto/logout-dto';
 import { TokenValidationPipe } from './pipes/token-validation.pipe';
+import { AllowSuspendedStore } from '@shared/decorators/allow-suspended-store.decorator';
+import { SkipThrottle, ThrottlerGuard } from '@nestjs/throttler';
+import { AUTH_THROTTLE } from './auth-throttle';
 
 @Controller()
 export class AuthController {
   constructor(private authService: AuthService) { }
 
-  @UseGuards(LocalAuthGuard)
+  // Throttler first: counts wrong passwords too (LocalAuthGuard throws on them)
+  @UseGuards(ThrottlerGuard, LocalAuthGuard)
   @HttpCode(HttpStatus.OK)
   @Post('login')
   async login(
@@ -33,9 +35,6 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-
-    console.log('login user', user);
-
     const { accessToken, refreshToken } = await this.authService.login(user.id, {
       ip: req.ip,
       ua: req.headers['user-agent'],
@@ -52,20 +51,15 @@ export class AuthController {
     return { accessToken }
   }
 
-  @Post('signup')
-  signup(@Body(new ValidationPipe()) dto: SignInDto) {
-    return this.authService.signUp(dto);
-  }
 
-
+  @UseGuards(ThrottlerGuard)
+  @SkipThrottle({ [AUTH_THROTTLE.LOGIN]: true })
   @Get('refresh')
   async refreshTokens(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
     const refreshToken = req.cookies?.refreshToken as string | undefined;
-
-    console.log('refreshToken', refreshToken);
 
     if (!refreshToken) {
       throw new UnauthorizedException();
@@ -99,6 +93,8 @@ export class AuthController {
     return { accessToken: null };
   }
 
+  /** Available for a suspended store: the app reads `staff.store.status` here */
+  @AllowSuspendedStore()
   @UseGuards(AuthJWTGuard)
   @Get('auth/me')
   async me(@CurrentUser() user: UserAuth) {

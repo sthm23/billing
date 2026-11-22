@@ -65,7 +65,7 @@ This folder contains **legacy detailed documentation** that may still be useful 
 
 ### 🌐 API Reference
 **[API_MODULES.md](API_MODULES.md)** — полная документация API
-- Auth Module (login, signup, refresh, logout, me)
+- Auth Module (login, refresh, logout, me)
 - Order Module (create, add items, pay, return, search)
 - Cashbox Module (open, close, transactions)
 - Product Module (create, variants, search, update price)
@@ -105,7 +105,7 @@ This folder contains **legacy detailed documentation** that may still be useful 
 ### Tech Stack
 - **Backend**: NestJS 10+ + Prisma 6 + PostgreSQL 17
 - **Auth**: JWT (access + refresh tokens) via Passport
-- **Storage**: AWS S3 (LocalStack в dev)
+- **Storage**: Uztelecom Object Storage (S3-совместимое)
 - **Container**: Docker Compose
 
 ### Path Aliases
@@ -176,7 +176,7 @@ CREATED → HOLD → [DEBT | COMPLETED] → [REFUNDED | CANCELLED]
 4. Enum imports: только из `@generated/enums`
 5. Проверяй права: staff.storeId, staff.warehouse
 6. Логируй всё: StockMovement, CashTransaction
-7. Barcode уникален глобально, SKU — в рамках магазина
+7. Barcode и SKU уникальны в рамках магазина (barcode — с 2026-11-14, `@@unique([storeId, barCode])`; можно задать заводской код)
 
 ---
 
@@ -188,6 +188,6 @@ CREATED → HOLD → [DEBT | COMPLETED] → [REFUNDED | CANCELLED]
 
 ---
 
-**Последнее обновление**: 2026-08-15  
+**Последнее обновление**: 2026-11-15 (строка про barcode)  
 **Версия системы**: 1.0  
 **Автор документации**: AI Assistant (Claude)
