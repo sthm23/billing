@@ -378,7 +378,10 @@ model Category {
 
 model Attribute {
   id      String             @id @default(uuid())
+  /// Russian, primary (unique); the client shows nameUz / nameEn for its language when set
   name    String             @unique
+  nameUz  String?
+  nameEn  String?
   type    AttributeType
   /// Unit for NUMBER attributes (м, кг, л); shown as «Длина — 6 м»
   unit    String?

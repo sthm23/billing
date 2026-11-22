@@ -185,6 +185,15 @@ Fire-and-forget on the client (a failure never blocks adding to the cart).
   candidates (never the whole catalogue) and its answer is accepted only if the id is one of them.
 - Streaming (live) transcription while speaking.
 
+### Rejected alternatives (2026-11-22)
+
+| Alternative | Why not (now) |
+|---|---|
+| **Train / fine-tune a model on the catalogue** | Catalogue changes daily (new products, prices, stock) — a trained model is stale at once. The catalogue is given as *context* instead: STT hotwords (§6) and the in-memory warehouse catalogue in the matcher (§4). |
+| **Elasticsearch / OpenSearch** | Fuzzy "find similar" is needed, but at ~500 variants per warehouse it is solved by trigram similarity in memory or `pg_trgm`. ES is a separate JVM service (1–2 GB RAM on a 4 GB VPS), needs data sync, and still does not know Uzbek translit, suffixes or `to'rtga olti` → `4x6` — that normalization is ours either way. Revisit (or Meilisearch as a lighter option) at tens of thousands of variants per store. |
+| **Embeddings / semantic search (pgvector)** | Would match different words with the same meaning (`taxta` ↔ `doska`), but Uzbek embedding quality is uncertain and it adds a model to run. Same need is covered by catalogue cleanup + learned aliases. Possible later. |
+| **LLM with the whole catalogue in the prompt** | Works technically (~500 variants), but adds latency, per-request cost and sends catalogue data abroad. Kept only as a later re-ranker over our own candidates (§9). |
+
 ## 10. Design review (2026-11-17)
 
 The artifact design fits the agreed flow (cart-based, review with three row types, text tab, qty/price

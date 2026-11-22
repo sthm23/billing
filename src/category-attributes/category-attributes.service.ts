@@ -7,9 +7,13 @@ import {
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import {
+  ATTRIBUTE_NAME_MAX,
+  ATTRIBUTE_NAME_MIN,
   CreateAttributeDto,
   CreateAttributeValueDto,
+  UpdateAttributeDto,
 } from './dto/create-category-attribute.dto';
+import { ATTRIBUTE_LABEL_SELECT } from '@shared/helper/attribute.helper';
 import { PrismaService } from '@prisma/prisma.service';
 import { AttributeType, StaffRole, UserRole } from '@generated/enums';
 import { Prisma } from '@generated/client';
@@ -48,6 +52,14 @@ function assertNameLength(name: string): void {
   if (name.length < CATEGORY_NAME_MIN || name.length > CATEGORY_NAME_MAX) {
     throw new BadRequestException(
       `Category name must be ${CATEGORY_NAME_MIN}–${CATEGORY_NAME_MAX} characters`,
+    );
+  }
+}
+
+function assertAttributeNameLength(name: string): void {
+  if (name.length < ATTRIBUTE_NAME_MIN || name.length > ATTRIBUTE_NAME_MAX) {
+    throw new BadRequestException(
+      `Attribute name must be ${ATTRIBUTE_NAME_MIN}–${ATTRIBUTE_NAME_MAX} characters`,
     );
   }
 }
@@ -302,6 +314,72 @@ export class CategoryAttributesService {
       select: CATEGORY_SELECT,
     });
   }
+  /** ADMIN: rename an attribute / set its translations. An empty nameUz / nameEn clears it. */
+  async updateAttribute(id: string, dto: UpdateAttributeDto) {
+    const attribute = await this.prisma.attribute.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!attribute) throw new NotFoundException('Attribute not found');
+
+    const data: {
+      name?: string;
+      nameUz?: string | null;
+      nameEn?: string | null;
+    } = {};
+    if (dto.name !== undefined) {
+      data.name = normalizeName(dto.name);
+      assertAttributeNameLength(data.name);
+    }
+    for (const key of ['nameUz', 'nameEn'] as const) {
+      const value = dto[key];
+      if (value === undefined) continue;
+      const normalized = normalizeName(value);
+      if (normalized) assertAttributeNameLength(normalized);
+      data[key] = normalized || null;
+    }
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('Nothing to update');
+    }
+
+    // A name or translation must not be another attribute's name or translation
+    const names = Object.values(data).filter((v): v is string => !!v);
+    const clash = names.length
+      ? await this.prisma.attribute.findFirst({
+          where: {
+            id: { not: id },
+            OR: names.flatMap((value) =>
+              (['name', 'nameUz', 'nameEn'] as const).map((field) => ({
+                [field]: { equals: value, mode: 'insensitive' as const },
+              })),
+            ),
+          },
+          select: { name: true },
+        })
+      : null;
+    if (clash) {
+      throw new ConflictException(
+        `Attribute «${clash.name}» already uses this name`,
+      );
+    }
+    try {
+      const updated = await this.prisma.attribute.update({
+        where: { id },
+        data,
+        select: { id: true, ...ATTRIBUTE_LABEL_SELECT, type: true, unit: true },
+      });
+      this.logger.info({ attributeId: id, ...data }, 'Attribute updated');
+      return updated;
+    } catch (error: unknown) {
+      if (isUniqueViolation(error)) {
+        throw new ConflictException(
+          'An attribute with this name already exists',
+        );
+      }
+      throw error;
+    }
+  }
+
   async findAttributes({ currentPage = 1, pageSize = 10 }: AttributeParams) {
     try {
       const skip = (currentPage - 1) * pageSize;
@@ -394,6 +472,8 @@ export class CategoryAttributesService {
           id: el.id,
           attributeId: el.attributeId,
           attributeName: el.attribute.name,
+          attributeNameUz: el.attribute.nameUz,
+          attributeNameEn: el.attribute.nameEn,
           value: value,
         };
       });
@@ -406,7 +486,9 @@ export class CategoryAttributesService {
     try {
       const attribute = await this.prisma.attribute.create({
         data: {
-          name: dto.name,
+          name: normalizeName(dto.name),
+          nameUz: dto.nameUz ? normalizeName(dto.nameUz) || null : null,
+          nameEn: dto.nameEn ? normalizeName(dto.nameEn) || null : null,
           type: dto.type,
         },
       });

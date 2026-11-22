@@ -20,6 +20,7 @@ import {
   UserRole,
 } from '@generated/client';
 import { buildSku } from '@shared/helper/sku-generator.helper';
+import { ATTRIBUTE_LABEL_SELECT } from '@shared/helper/attribute.helper';
 import { CurrentUser } from '@auth/models/auth.model';
 import { BarcodeService } from '@shared/helper/bar-code.service';
 import { canSeeCost } from '@shared/helper/role.helper';
@@ -941,7 +942,9 @@ export class ProductService {
           product: { select: { id: true, name: true } },
           attributes: {
             include: {
-              value: { include: { attribute: { select: { name: true } } } },
+              value: {
+                include: { attribute: { select: ATTRIBUTE_LABEL_SELECT } },
+              },
             },
           },
         },
@@ -964,6 +967,8 @@ export class ProductService {
           productName: v.product.name,
           attributes: v.attributes.map((a) => ({
             name: a.value.attribute.name,
+            nameUz: a.value.attribute.nameUz,
+            nameEn: a.value.attribute.nameEn,
             value:
               a.value.valueString ??
               a.value.valueNumber?.toString() ??

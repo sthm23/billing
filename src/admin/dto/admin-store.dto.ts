@@ -107,11 +107,25 @@ export class NewStoreOwnerDto {
 
 /** A product attribute (group) created together with the store */
 export class NewStoreAttributeDto {
+  /** Russian name (primary) */
   @Transform(trim)
   @IsString()
   @IsNotEmpty()
   @MaxLength(60)
   name!: string;
+
+  /** Translations; empty → none */
+  @IsOptional()
+  @Transform(trimOptional)
+  @IsString()
+  @MaxLength(60)
+  nameUz?: string;
+
+  @IsOptional()
+  @Transform(trimOptional)
+  @IsString()
+  @MaxLength(60)
+  nameEn?: string;
 
   @IsEnum(AttributeType)
   type!: AttributeType;

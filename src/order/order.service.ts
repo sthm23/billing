@@ -27,6 +27,7 @@ import {
   UserType,
 } from '@generated/enums';
 import { OrderItem, Prisma } from '@generated/client';
+import { ATTRIBUTE_LABEL_SELECT } from '@shared/helper/attribute.helper';
 import { CreateReturnOrderDto, ReturnItemDto } from './dto/create-return.dto';
 import { OrderQueryParams, OrderSummaryParams } from './entities/order.entity';
 import { DateRangeParams, resolveDateRange } from '@shared/dto/date-range.dto';
@@ -1362,7 +1363,9 @@ export class OrderService {
                   attributes: {
                     include: {
                       value: {
-                        include: { attribute: { select: { name: true } } },
+                        include: {
+                          attribute: { select: ATTRIBUTE_LABEL_SELECT },
+                        },
                       },
                     },
                   },

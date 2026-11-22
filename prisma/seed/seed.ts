@@ -6,7 +6,6 @@ import { seedCategories } from './category.seed';
 import { seedAttributes } from './attribute.seed';
 import { seedUsers } from './user.seed';
 import { seedAttributeValues } from './attribute-value.seed';
-import { seedTags } from './tag-seed';
 
 const adapter = new PrismaPg({
     connectionString: process.env.DATABASE_URL,
@@ -59,9 +58,6 @@ async function main() {
      * ======================
      */
     await seedAttributeValues(prisma, attrMap);
-
-    /* Tags */
-    await seedTags(prisma);
 
     console.log('✅ Seed completed successfully')
 }

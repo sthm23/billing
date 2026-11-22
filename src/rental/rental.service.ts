@@ -10,6 +10,7 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '@prisma/prisma.service';
 import { CurrentUser } from '@auth/models/auth.model';
 import { Cashbox, Prisma } from '@generated/client';
+import { ATTRIBUTE_LABEL_SELECT } from '@shared/helper/attribute.helper';
 import {
   CashTransactionCategory,
   CashTransactionType,
@@ -307,7 +308,7 @@ const rentalDetailsInclude = {
               attributes: {
                 include: {
                   value: {
-                    include: { attribute: { select: { name: true } } },
+                    include: { attribute: { select: ATTRIBUTE_LABEL_SELECT } },
                   },
                 },
               },
@@ -1960,7 +1961,7 @@ export class RentalService {
       },
       attributes: {
         include: {
-          value: { include: { attribute: { select: { name: true } } } },
+          value: { include: { attribute: { select: ATTRIBUTE_LABEL_SELECT } } },
         },
       },
     } satisfies Prisma.ProductVariantSelect;
@@ -2009,6 +2010,8 @@ export class RentalService {
         rentPricePerDay: v.rentPricePerDay,
         attributes: v.attributes.map((a) => ({
           name: a.value.attribute.name,
+          nameUz: a.value.attribute.nameUz,
+          nameEn: a.value.attribute.nameEn,
           value:
             a.value.valueString ??
             a.value.valueNumber?.toString() ??
