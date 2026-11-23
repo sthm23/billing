@@ -1,5 +1,7 @@
 # Voice order assistant — implementation plan
 
+> **Coming back to this feature? Start with [STATUS.md](STATUS.md)** — where we stopped and how to resume.
+
 > Created 2026-11-17. Design and decisions: [DESIGN.md](DESIGN.md). Status: **stage 1 done 2026-11-23**
 > (backend, + admin flag `Store.orderAssistantEnabled`); **stage 2 built 2026-11-23** (mobile text assistant,
 > device QA pending); stage 0 done (medium-uz, no hotwords); **stage 3 built 2026-11-23** (voice: STT service,
