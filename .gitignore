@@ -56,3 +56,6 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 /generated/prisma
 /localstack
 /volume
+# STT service (Python)
+stt-service/.venv/
+stt-service/__pycache__/

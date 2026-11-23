@@ -1,6 +1,8 @@
 # Voice order assistant — design
 
-> Created 2026-11-17. Status: **planned, not implemented**. Decisions below were agreed with the user
+> Created 2026-11-17. Status: **backend stage 1 implemented 2026-11-23** (`billing/src/order-assistant/`,
+> text matching + aliases + per-store flag); **mobile stage 2 (text assistant) implemented 2026-11-23**
+> (`billing-mobile/src/screens/order/voice/`, device QA pending); stage 0 bake-off done (medium-uz); **stage 3 (voice) built 2026-11-23** — `billing/stt-service/`, `POST /order-assistant/transcribe`, voice tab (web QA passed; device QA + server install pending); **stage 4 (voice data with consent) built 2026-11-23** — §7. Decisions below were agreed with the user
 > in conversation (2026-11-09 … 2026-11-17); items marked **(proposed)** still need confirmation.
 > Implementation stages: [PLAN.md](PLAN.md).
 > UI design: claude.ai artifact `LBqDuZU3wDgKNJXJBfrAYb`, page «Голосовой заказ» (artboards `Voice*`,
@@ -38,6 +40,7 @@ Cart → 🎤 / ✍ → [transcribe] → text → [match] → review screen → 
 | 9 | Speech-to-text is a **self-hosted Uzbek fine-tuned Whisper** (faster-whisper, int8, CPU) on the same VPS, as a separate local service (§6). Final model chosen after the recording bake-off (PLAN stage 0). |
 | 10 | Recordings may be stored **only with the store's consent** to improve the STT model later (§7). Seller corrections always train the aliases (no audio needed). |
 | 11 | Text input ships first (PLAN stages 1–2) — it needs no new infrastructure; voice is added on top. |
+| 12 | **Not on by default** (user, 2026-11-23): a store asks for the assistant and a **platform admin** switches `Store.orderAssistantEnabled` (default `false`) in the store card (`POST` / `PATCH /admin/stores`). The owner cannot switch it. Off → `/order-assistant/*` answer 403 `ORDER_ASSISTANT_DISABLED`; the mobile app hides «Голос» (from `user.staff.store` of `/auth/me`). Name chosen over `hasAIAccess`: v1 has no AI, and each future AI feature gets its own flag. |
 
 ## 3. Scale and catalogue facts
 
@@ -55,9 +58,14 @@ Cart → 🎤 / ✍ → [transcribe] → text → [match] → review screen → 
 Input: free text (typed or transcribed) + `warehouseId`. Output: lines with candidates.
 
 1. **Segmentation** into phrases (one phrase = one product):
-   text mode — new lines and commas/semicolons; voice — punctuation from Whisper, separators
+   new lines and `;` always split; a **comma / dot splits only before a part with a product name** —
+   Whisper puts commas mid-product («palovoy to'rt metrli, yettiga ikki», «shifer, quvasoy»), a part
+   without a name continues the previous product (2026-11-23, real dictations); separators
    `va`, `и`, `keyin`, `yana`, `ещё`, and a boundary heuristic: a token that starts a known product name
-   (or alias) opens a new phrase.
+   (or alias) opens a new phrase. Number words glued to a number / unit / quantity are split
+   (`o'nyettiga` → 10 7ga, `oltimetrlik` → 6 metrlik, `uchpachka` → 3 pachka).
+   A nameless phrase right after a separator takes the previous product name («shifer quvasoy **va super**»
+   → shiferlar Super). **`yo'q` / `нет`** drops the last product («despilar standart, yo'q, despilar premium»).
 2. **Normalization** (same function for catalogue and phrase):
    - lower case; Uzbek Cyrillic → Latin (`ў→o'`, `қ→q`, `ғ→g'`, `ҳ→h`, `ш→sh`, `ч→ch`, …);
      apostrophe variants (`'`, `ʻ`, `ʼ`, `‘`) unified; Russian Cyrillic transliterated to Latin;
@@ -66,8 +74,9 @@ Input: free text (typed or transcribed) + `warehouseId`. Output: lines with cand
      `nol to'rt`=0.4; `один…`, `полтора`=1.5, …), plus STT spellings (`turt`, `tort`, `тўрт`);
    - dimension patterns → canonical form: `4 ga 2`, `to'rtga ikki`, `4 на 2`, `4×2`, `4*2` → `4x2`;
      `6 metr(li)`, `6 m`, `6 м` → length `6`.
-3. **Candidate search** in the warehouse catalogue (cached per warehouse, invalidated on product/variant
-   change):
+3. **Candidate search** in the warehouse catalogue (loaded per request — ~500 variants in one query, so price
+   and stock are always fresh and no cache invalidation is needed; add a cache only if latency demands it.
+   Measured locally 2026-11-23: 30–100 ms for 21 variants):
    - exact hits first: SKU, barcode, **learned alias** (normalized phrase → variant);
    - product name: fuzzy (trigram similarity on normalized names, threshold tuned on the bake-off data);
    - attributes: **numbers and sizes match strictly** — a phrase with `4x6` never matches `4x8`;
@@ -83,12 +92,33 @@ Input: free text (typed or transcribed) + `warehouseId`. Output: lines with cand
 5. **Aliases (learning without AI).** When the seller confirms the review, the client reports what was chosen
    for each phrase (picked candidate, switched variant, found manually). The backend upserts
    `phrase → variantId` for the store; confirmed aliases win over fuzzy search next time.
-   Only explicit confirmations are learned; aliases pointing to archived/foreign variants are ignored.
+   Only **corrections** create an alias: `CHANGED` (switched the MATCHED variant) and `MANUAL` (found by
+   search). `PICKED` (chose among AMBIGUOUS) and `ACCEPTED` only add `hits` to an existing alias — picking a
+   size for a vague «strapela» is a one-off choice, not a synonym. One alias for a phrase → MATCHED, several →
+   AMBIGUOUS (most used first). Aliases pointing to archived / not sellable / other-warehouse variants are
+   ignored.
 
-## 5. API (proposed contract)
+   Implementation (2026-11-23): `src/order-assistant/engine/` — `text.ts` (Cyrillic → Latin, folding
+   q→k, x/kh→h, apostrophes, doubled letters, leading ye→e; similarity = max(edit-distance ratio, trigram),
+   typed prefix ≥ 4 letters = 0.75), `normalize.ts` (tokens, number words incl. `nol to'rt`, `bir butun
+   besh`, `o'n ikki`, `полтора`; sizes `4 ga 6`, `4 на 6`, `4×6`; quantities `-ta`, `dona`, `шт` and a
+   number before the first word are dropped), `segment.ts`, `matcher.ts` (thresholds: name word ≥ 0.72,
+   MATCHED needs score ≥ 0.75 and a lead ≥ 0.15). Two numbers in a row without `ga` may be a size
+   (`besh to'rt` = 5x4); any other number must equal a numeric attribute.
+
+## 5. API
+
+`match` and `feedback` are implemented (2026-11-23); the exact contract is in `docs/api-map.md` →
+«Order Assistant Module». Differences from the first draft below: candidates also carry `productId`,
+`barCode` and `attributes` as `{ name, nameUz, nameEn, value }` (same as `GET /product/search`, so the
+client builds the cart line as usual); each line has `totalCandidates`; `feedback` takes `samples[]`
+(`{ sampleId, transcriptFinal? }`, several recordings per session because of «Ещё») instead of one
+`sampleId` / `transcriptFinal`, and returns `{ learned, reinforced, labeled }`; store without the flag → 403
+`ORDER_ASSISTANT_DISABLED`.
 
 All endpoints: JWT, any staff role allowed to create orders, store from the token, warehouse checked via
-`StaffOnWarehouse`, rate-limited per staff (throttler). Module: `billing/src/order-assistant/`.
+`StaffOnWarehouse`, store flag `orderAssistantEnabled`, rate-limited 30 / min per user (throttler).
+Module: `billing/src/order-assistant/`.
 
 ### `POST /order-assistant/match` — text → lines (read-only)
 
@@ -113,9 +143,8 @@ the cart and `POST /orders/items` re-check them as today.
 
 `multipart/form-data`: `audio` (m4a/AAC or wav, mono 16 kHz, ≤ 60 s, ≤ 2 MB), `warehouseId`.
 Response `{ "text": "…", "durationMs": 14200, "sampleId": "uuid|null" }`.
-The warehouse vocabulary (product names + attribute values, normalized) is passed to the STT service as
-`hotwords` / `initial_prompt`. Errors: `422` empty / not recognized, `429` STT queue full, `503` STT down
-or timeout (30 s).
+No hotwords (stage 0: they broke the output). Errors: `422` `SPEECH_NOT_RECOGNIZED` (silence / noise),
+`413` over 3 MB / 65 s, `429` STT queue full, `503` STT down or timeout (90 s — medium needs 15–30 s).
 
 Two calls instead of one: text mode needs only `match`; the seller can edit the transcript and re-run
 `match` without re-uploading audio; the client can show real steps («Речь распознана» → «Ищем на складе»).
@@ -123,37 +152,73 @@ Two calls instead of one: text mode needs only `match`; the seller can edit the 
 ### `POST /order-assistant/feedback` — learn aliases
 
 ```json
-{ "warehouseId": "uuid", "sampleId": "uuid|null", "transcriptFinal": "…",
-  "choices": [{ "phrase": "strapela", "variantId": "…", "source": "PICKED|CHANGED|MANUAL|ACCEPTED" }] }
+{ "warehouseId": "uuid",
+  "choices": [{ "phrase": "strapela", "variantId": "…", "source": "PICKED|CHANGED|MANUAL|ACCEPTED" }],
+  "samples": [{ "sampleId": "uuid", "transcriptFinal": "…" }] }
 ```
-Sent once on «Добавить в корзину». Every `variantId` must belong to the store and warehouse.
-Fire-and-forget on the client (a failure never blocks adding to the cart).
+Sent on «Добавить в корзину» (chunks of 30 choices, `samples` with each — choices are appended). Every
+`variantId` must belong to the store and warehouse. Fire-and-forget on the client (a failure never blocks
+adding to the cart).
 
 ## 6. STT service
 
 - Python venv + `faster-whisper` (CTranslate2, `compute_type=int8`) + small FastAPI app, run as a
   **systemd service** on the existing VPS (the backend itself is not in Docker), bound to `127.0.0.1` only.
-- Limits in the unit: `MemoryMax=1.5G`, `CPUQuota=150%`, `Nice=10` — STT must never starve NestJS / PostgreSQL
+- Limits in the unit: `MemoryMax=1.8G`, `CPUQuota=150%`, `Nice=10` — STT must never starve NestJS / PostgreSQL
   (same 4 GB / 2 vCPU VPS). One job at a time (queue length ~3, then `429`).
-- Model: start with **whisper-small Uzbek** (int8, ~1 GB RAM). Medium needs the planned +2–4 GB RAM.
+- Model: **medium-uz** `AlexAnoshka/fast-whisper-uz-rubaistt-v2-medium-ct2` (int8, ~1 GB RAM; chosen
+  2026-11-23 after the bake-off below). Needs the planned +2–4 GB RAM.
   Candidates verified on Hugging Face (Apache-2.0): `OvozifyLabs/whisper-small-uz-v1`,
   `navai-uz/whisper-small-uzbek`, `navai-uz/whisper-medium-uzbek`, CTranslate2 builds such as
   `yuldashev222/whisper-small-uz-v1-ct2`. Choice after stage 0.
-- Options: `vad_filter=True` (no hallucinated text on silence), `language="uz"`, hotwords from the warehouse
-  vocabulary. Expected latency on 2 vCPU: ~5–15 s for 20–40 s of speech.
+- Options: `vad_filter=True` (no hallucinated text on silence), `language="uz"`, `beam_size=5`, **no hotwords**
+  (bake-off: they break the output), `temperature=0` + token cap (the fallback made a 2.7 s clip take 135–158 s —
+  STT_SERVICE.md §4). Measured on 2 threads: ≥ ~11 s per recording, 24 s of speech → 19–21 s.
 - NestJS talks to it through an adapter (`SttProvider` interface): moving STT to its own server or to a paid
   Uzbek API later is a config change.
+- **Bake-off (stage 0, 2026-11-23, 3 phone dictations / 11 products, warehouse `yogoch`, CPU int8, 2 threads,
+  local dev PC), scored by the stage 1 matcher:**
+
+  | model | products right | sec per file (9–24 s audio) | RAM |
+  |---|---|---|---|
+  | **`AlexAnoshka/fast-whisper-uz-rubaistt-v2-medium-ct2`** | **10/11** (the miss: «polovoy 6 m 13x2» does not exist) | 13–17 | ~1.0 GB |
+  | `yuldashev222/whisper-small-uz-v1-ct2` | 6/11 (`propil` for strapela, `quvozoy`, `faynerlar`) | 4–7 | ~0.43 GB |
+  | `hostmepanda/whisper-large-v3-turbo-uzbek-ct2` | 7/11 (duplicated words, `o'nichki`) | 14–21 | ~1.05 GB |
+  | `large-v3-turbo` (base, `language=uz`) | unusable | 52 | ~1.1 GB |
+
+  **Decision (user, 2026-11-23): medium-uz (`rubaistt-v2-medium-ct2`), no hotwords** — hotwords make small and
+  turbo return empty text and do not help medium. Target: ≥ 70 % of products found from speech, the seller
+  adds the rest by hand; sellers are taught to name products one after another. Re-run the bake-off on real
+  shop recordings after the first store (stage 6). Medium needs ~1 GB RAM → the planned VPS RAM upgrade.
+  Script: `billing/tools/stt-bench/` (recordings stay outside git in `voice-samples/`).
 - Before installing: check real free memory on the VPS (`free -h`); the cloud panel's "RAM 100%" is quota
   allocation, not usage.
 
 ## 7. Voice data (training) and privacy
 
-- Per-store flag **`voiceDataConsent`** (off by default). Off → audio is discarded after transcription,
-  only aliases are learned.
-- On → a `VoiceSample` row per dictation: store, staff, warehouse, audio object key, duration, model,
-  raw transcript, **seller-corrected transcript** (the review textarea — this is the training label),
-  final choices. Audio goes to **object storage** (same provider as product photos), never into PostgreSQL.
-- Retention: 12 months (proposed), then audio deleted.
+Built 2026-11-23 (PLAN stage 4). User decisions (2026-11-23): consent switched by the **owner** (store
+settings) and a **platform admin** (admin store card); the seller **is told** in the voice tab; audio in a
+**separate private bucket**; withdrawing consent **deletes all the store's recordings** at once; 12 months.
+
+- Per-store flag **`voiceDataConsent`** (off by default) + `voiceDataConsentAt` / `voiceDataConsentById`.
+  Off → audio is discarded after transcription, only aliases are learned. Owner: `PUT /store/:id` (section
+  «Голосовой помощник» in «Настройки магазина», shown when the assistant is on; a red note warns that
+  saving «off» deletes the recordings). Admin: `PATCH /admin/stores/:id` («Сохранять записи голоса», asks
+  before turning off).
+- On → a `VoiceSample` row per dictation of a store employee (never for a platform admin): store, staff,
+  warehouse, audio object key, mime, size, duration, model, raw transcript; `feedback` adds the
+  **seller-corrected transcript** (the review textarea — the training label) and the choices. Audio goes to
+  the private bucket `VOICE_S3_BUCKET_NAME` (`voice/<storeId>/<yyyy-mm>/<id>.<ext>`, same provider and keys
+  as product photos, no public URL), never into PostgreSQL. Saving is best effort: a storage error never
+  fails the transcription.
+- Label rule (app): the review text is sent as `transcriptFinal` only when the whole session came from one
+  recording; after «Ещё» the text mixes several inputs, so the recordings get the choices without a text.
+- Seller notice while consent is on: «Запись сохраняется, чтобы улучшить распознавание» under the mic.
+- Retention: 12 months, then audio and row deleted by a daily sweep inside the backend
+  (`VoiceSampleService`, 5 min after start then every 24 h — one PM2 instance; no new dependency). The
+  sweep also deletes any sample of a store without consent (a crash between the flag and the delete).
+  Deletion order: audio, then row, so a storage failure is retried next day.
+- Dataset: `billing/tools/voice-export/export.ts` (server only) → `audio/*` + `metadata.jsonl`.
 - Voice is personal data; Uzbekistan's personal-data law requires storing citizens' data on servers in
   Uzbekistan — keep audio on local servers, do **not** send it to foreign APIs (Gemini, OpenAI, …) for
   training. User decision (2026-11-17): follow the law; no formal legal review for the first stores
@@ -184,6 +249,18 @@ Fire-and-forget on the client (a failure never blocks adding to the cart).
 - LLM re-ranker: only if the stage 0/2 match rate is too low — the LLM gets the phrase and **our** top
   candidates (never the whole catalogue) and its answer is accepted only if the id is one of them.
 - Streaming (live) transcription while speaking.
+
+### Known limitations of the v1 matcher (2026-11-23)
+
+- A product the catalogue does not know does not open a new phrase: «foner nol olti strapela» without
+  strapela in the warehouse stays one phrase (fanera found, `strapela` counted as an unmatched word → the
+  line becomes AMBIGUOUS with a low score, not a separate NOT_FOUND). The seller sees the transcript and
+  can edit it; voice hotwords (stage 3) and catalogue cleanup reduce it. Possible fix: split trailing
+  unmatched words into their own NOT_FOUND line.
+- A number said **before** the product name is taken as a quantity (`nol to'rt foner` loses 0.4) — sellers
+  normally say the name first.
+- An attribute word that looks like another product's name may split a phrase (no such case in the
+  current catalogue).
 
 ### Rejected alternatives (2026-11-22)
 

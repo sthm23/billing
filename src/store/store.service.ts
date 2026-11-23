@@ -17,11 +17,16 @@ import { HashingHelper } from '@shared/helper/hash.helper';
 import { canSeeCost } from '@shared/helper/role.helper';
 import { CurrentUser } from '@auth/models/auth.model';
 import { UpdateStoreDto } from './dto/update-store.dto';
+import {
+  VoiceSampleService,
+  voiceConsentUpdate,
+} from '../order-assistant/voice-sample.service';
 
 @Injectable()
 export class StoreService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly voiceSamples: VoiceSampleService,
     @InjectPinoLogger(StoreService.name) private readonly logger: PinoLogger,
   ) {}
 
@@ -134,6 +139,11 @@ export class StoreService {
           'A store must have sales or rental enabled',
         );
       }
+      const consent = voiceConsentUpdate(
+        store.voiceDataConsent,
+        dto.voiceDataConsent,
+        user.id,
+      );
       const nextAttributeIds = [...new Set(dto.attributeIds ?? [])];
       const nextBrandIds = [...new Set(dto.brandIds ?? [])];
 
@@ -162,13 +172,14 @@ export class StoreService {
         (brandId) => !nextBrandSet.has(brandId),
       );
 
-      return this.prisma.$transaction(async (tx) => {
+      const updated = await this.prisma.$transaction(async (tx) => {
         await tx.store.update({
           where: { id },
           data: {
             ...(dto.name ? { name: dto.name } : {}),
             salesEnabled,
             rentalEnabled,
+            ...consent.data,
           },
         });
 
@@ -225,6 +236,10 @@ export class StoreService {
         this.logger.info({ storeId: id }, 'Store updated');
         return updated;
       });
+      // Consent withdrawn: the store's recordings are deleted at once
+      if (consent.revoked) await this.voiceSamples.deleteStore(id);
+
+      return updated;
     } catch (error: any) {
       this.logger.error(
         { storeId: id, err: error.message },

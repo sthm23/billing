@@ -8,6 +8,7 @@ import type { CurrentUser } from '@auth/models/auth.model';
 import { CreateStaffDto, CreateStoreDto } from './dto/create-store.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
 import { StoreService } from './store.service';
+import { VoiceSampleService } from '../order-assistant/voice-sample.service';
 
 const OWN_STORE = '11111111-1111-4111-8111-111111111111';
 const FOREIGN_STORE = '22222222-2222-4222-8222-222222222222';
@@ -51,6 +52,7 @@ describe('StoreService', () => {
     $transaction: jest.fn(),
   };
   const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
+  const voiceSamples = { deleteStore: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -62,6 +64,7 @@ describe('StoreService', () => {
       id: OWN_STORE,
       salesEnabled: true,
       rentalEnabled: false,
+      voiceDataConsent: false,
       brands: [],
       attributes: [],
       warehouse: [],
@@ -75,6 +78,7 @@ describe('StoreService', () => {
         StoreService,
         { provide: PrismaService, useValue: prisma },
         { provide: getLoggerToken(StoreService.name), useValue: logger },
+        { provide: VoiceSampleService, useValue: voiceSamples },
       ],
     }).compile();
 
@@ -192,6 +196,62 @@ describe('StoreService', () => {
         ),
       ).rejects.toThrow('sales or rental');
       expect(prisma.store.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updateStore voice data consent', () => {
+    const dto = (flags: Partial<UpdateStoreDto>): UpdateStoreDto => ({
+      attributeIds: [],
+      brandIds: [],
+      ...flags,
+    });
+
+    it('the owner gives consent: who and when are saved, nothing deleted', async () => {
+      await service.updateStore(
+        OWN_STORE,
+        dto({ voiceDataConsent: true }),
+        makeUser(),
+      );
+      expect(prisma.store.update).toHaveBeenCalledWith({
+        where: { id: OWN_STORE },
+        data: expect.objectContaining({
+          voiceDataConsent: true,
+          voiceDataConsentAt: expect.any(Date) as unknown,
+          voiceDataConsentById: 'owner-user',
+        }) as unknown,
+      });
+      expect(voiceSamples.deleteStore).not.toHaveBeenCalled();
+    });
+
+    it('withdrawing consent deletes the store recordings', async () => {
+      prisma.store.findUnique.mockResolvedValue({
+        id: OWN_STORE,
+        salesEnabled: true,
+        rentalEnabled: false,
+        voiceDataConsent: true,
+        brands: [],
+        attributes: [],
+        warehouse: [],
+      });
+      await service.updateStore(
+        OWN_STORE,
+        dto({ voiceDataConsent: false }),
+        makeUser(),
+      );
+      expect(voiceSamples.deleteStore).toHaveBeenCalledWith(OWN_STORE);
+    });
+
+    it('the same value (or none) changes nothing', async () => {
+      await service.updateStore(
+        OWN_STORE,
+        dto({ voiceDataConsent: false }),
+        makeUser(),
+      );
+      expect(prisma.store.update).toHaveBeenCalledWith({
+        where: { id: OWN_STORE },
+        data: { salesEnabled: true, rentalEnabled: false },
+      });
+      expect(voiceSamples.deleteStore).not.toHaveBeenCalled();
     });
   });
 

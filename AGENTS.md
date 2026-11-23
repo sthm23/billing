@@ -49,6 +49,7 @@ src/
 ├── cashbox/           # Cashbox (cash register) operations
 ├── debt/              # Manual debt tracking (CustomerDebt)
 ├── category-attributes/ # Categories, brands, attributes, tags
+├── order-assistant/   # Voice / text order assistant: audio → text (stt.client → local STT service), text → candidate variants, learned aliases, voice samples kept with store consent (voice-sample.service: private bucket, daily 12-month sweep) (docs/voice-order/); engine/ is pure TS
 ├── file/              # File upload (S3)
 ├── prisma/            # PrismaService, S3Service
 └── shared/            # Guards, decorators, helpers
@@ -201,7 +202,7 @@ type CurrentUser = User & {
 
 **JwtStrategy** (`src/auth/strategy/jwt-access.strategy.ts`) reloads the user on every request **and** requires the token's `sid` session to be active (not revoked, not expired); otherwise 401. Logout and refresh rotation therefore invalidate the old access token at once.
 
-**ThrottlerGuard** (`@nestjs/throttler`, config `src/auth/auth-throttle.ts`, `ThrottlerModule.forRoot` in `AuthModule`) — **not global**, only on `POST /login` (`ip` 30/min + `login` 5/min per IP+login) and `GET /refresh` (`@SkipThrottle({ login: true })`, `ip` only). 429 `Too many attempts, try again later`. In-memory counters (single PM2 instance); `main.ts` sets `trust proxy: 'loopback'` so `req.ip` is the client behind local nginx. Do not add it to other routes without a decision.
+**ThrottlerGuard** (`@nestjs/throttler`, config `src/auth/auth-throttle.ts`, `ThrottlerModule.forRoot` in `AuthModule`) — **not global**, only on `POST /login` (`ip` 30/min + `login` 5/min per IP+login), `GET /refresh` (`@SkipThrottle({ login: true })`, `ip` only) and `/order-assistant/*` (`ip` overridden to 30/min per user id, 2026-11-23). 429 `Too many attempts, try again later`. In-memory counters (single PM2 instance); `main.ts` sets `trust proxy: 'loopback'` so `req.ip` is the client behind local nginx. Do not add it to other routes without a decision.
 
 **Public Routes**: a route without `@UseGuards(AuthJWTGuard)` is public (the guard is not global). `@Public()` is only a marker — no guard reads it. There is no `POST /signup` (removed 2026-11-13).
 
@@ -554,6 +555,8 @@ AWS_S3_FORCE_PATH_STYLE=true
 S3_ENDPOINT=https://s3.uztelecom.uz          # omit → AWS
 S3_PUBLIC_URL=https://s3.uztelecom.uz/sthm-media-dev   # public base INCLUDING the bucket
 PORT=4000
+STT_URL=http://127.0.0.1:8090              # order assistant speech-to-text (billing/stt-service, docs/voice-order/STT_SERVICE.md); default if unset
+VOICE_S3_BUCKET_NAME=sthm-voice             # PRIVATE bucket for voice samples (store consent); created by hand; unset → never kept
 ```
 
 ---

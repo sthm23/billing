@@ -12,6 +12,27 @@ import { ConfigService } from '@nestjs/config';
 import { PresignedUrlResult, S3ObjectInfo } from './models/s3.model';
 
 /**
+ * Client settings shared by every bucket (product photos here, voice samples in
+ * `order-assistant/voice-sample.service.ts`): same provider, endpoint and keys.
+ */
+export function s3ClientConfig(configService: ConfigService): S3ClientConfig {
+  const endpoint = configService.get<string>('S3_ENDPOINT');
+
+  return {
+    region: configService.get<string>('AWS_REGION') || 'us-east-1',
+    ...(endpoint ? { endpoint } : {}),
+    credentials: {
+      accessKeyId: configService.get<string>('AWS_ACCESS_KEY_ID') || '',
+      secretAccessKey: configService.get<string>('AWS_SECRET_ACCESS_KEY') || '',
+    },
+    forcePathStyle:
+      configService.get<string>('AWS_S3_FORCE_PATH_STYLE') === 'true',
+    // S3-compatible storages reject the SDK's default CRC32 checksum headers
+    requestChecksumCalculation: 'WHEN_REQUIRED',
+  };
+}
+
+/**
  * S3-compatible object storage (Uztelecom Object Storage in prod, path-style).
  * The bucket is created by hand in the provider panel; the API never creates it.
  */
@@ -24,22 +45,7 @@ export class S3Service {
   constructor(private configService: ConfigService) {
     this.bucketName =
       this.configService.get<string>('AWS_S3_BUCKET_NAME') || '';
-    const endpoint = this.configService.get<string>('S3_ENDPOINT');
-
-    const config: S3ClientConfig = {
-      region: this.configService.get<string>('AWS_REGION') || 'us-east-1',
-      ...(endpoint ? { endpoint } : {}),
-      credentials: {
-        accessKeyId: this.configService.get<string>('AWS_ACCESS_KEY_ID') || '',
-        secretAccessKey:
-          this.configService.get<string>('AWS_SECRET_ACCESS_KEY') || '',
-      },
-      forcePathStyle:
-        this.configService.get<string>('AWS_S3_FORCE_PATH_STYLE') === 'true',
-      // S3-compatible storages reject the SDK's default CRC32 checksum headers
-      requestChecksumCalculation: 'WHEN_REQUIRED',
-    };
-    this.s3Client = new S3Client(config);
+    this.s3Client = new S3Client(s3ClientConfig(this.configService));
   }
 
   /**

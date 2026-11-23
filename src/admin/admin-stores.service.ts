@@ -19,6 +19,10 @@ import { PrismaService } from '@prisma/prisma.service';
 import type { CurrentUser } from '@auth/models/auth.model';
 import { HashingHelper } from '@shared/helper/hash.helper';
 import {
+  VoiceSampleService,
+  voiceConsentUpdate,
+} from '../order-assistant/voice-sample.service';
+import {
   AdminStoreListParams,
   CreateAdminStoreDto,
   ResumeStoreDto,
@@ -84,6 +88,10 @@ export type AdminStoreListItem = {
   createdAt: Date;
   salesEnabled: boolean;
   rentalEnabled: boolean;
+  /** Voice / text order assistant — admin only */
+  orderAssistantEnabled: boolean;
+  /** Voice recordings are kept for training (owner or admin) */
+  voiceDataConsent: boolean;
   owner: AdminStoreOwner | null;
   warehousesCount: number;
   staffCount: number;
@@ -189,6 +197,8 @@ function toListItem(row: ListRow, now: Date): AdminStoreListItem {
     createdAt: row.createdAt,
     salesEnabled: row.salesEnabled,
     rentalEnabled: row.rentalEnabled,
+    orderAssistantEnabled: row.orderAssistantEnabled,
+    voiceDataConsent: row.voiceDataConsent,
     owner: toOwner(row.staff[0]),
     warehousesCount: row._count.warehouse,
     staffCount: row._count.staff,
@@ -235,6 +245,7 @@ function uniqueNames(names: string[]): string[] {
 export class AdminStoresService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly voiceSamples: VoiceSampleService,
     @InjectPinoLogger(AdminStoresService.name)
     private readonly logger: PinoLogger,
   ) {}
@@ -436,6 +447,7 @@ export class AdminStoresService {
             trialEndsAt: addMonths(now, TRIAL_MONTHS),
             salesEnabled: dto.salesEnabled,
             rentalEnabled: dto.rentalEnabled,
+            orderAssistantEnabled: dto.orderAssistantEnabled ?? false,
             address: dto.address ?? null,
             inn: dto.inn ?? null,
             note: dto.note ?? null,
@@ -493,6 +505,7 @@ export class AdminStoresService {
   async update(
     id: string,
     dto: UpdateAdminStoreDto,
+    admin: CurrentUser,
   ): Promise<AdminStoreDetails> {
     const store = await this.assertStore(id);
     const salesEnabled = dto.salesEnabled ?? store.salesEnabled;
@@ -502,6 +515,11 @@ export class AdminStoresService {
         'A store must have sales or rental enabled',
       );
     }
+    const consent = voiceConsentUpdate(
+      store.voiceDataConsent,
+      dto.voiceDataConsent,
+      admin.id,
+    );
 
     await this.prisma.store.update({
       where: { id },
@@ -509,9 +527,14 @@ export class AdminStoresService {
         ...(dto.name ? { name: dto.name } : {}),
         salesEnabled,
         rentalEnabled,
+        ...(dto.orderAssistantEnabled === undefined
+          ? {}
+          : { orderAssistantEnabled: dto.orderAssistantEnabled }),
+        ...consent.data,
       },
     });
     this.logger.info({ storeId: id, dto }, 'Store updated by admin');
+    if (consent.revoked) await this.voiceSamples.deleteStore(id);
 
     return this.findOne(id);
   }
@@ -635,6 +658,7 @@ export class AdminStoresService {
         trialEndsAt: true,
         salesEnabled: true,
         rentalEnabled: true,
+        voiceDataConsent: true,
       },
     });
     if (!store) {

@@ -75,9 +75,17 @@ model Store {
   creator   User   @relation(fields: [createdBy], references: [id])
 
   /// Store sells goods (orders, payments, returns of sales)
-  salesEnabled  Boolean @default(true)
+  salesEnabled          Boolean   @default(true)
   /// Store rents goods out (rental module); at least one of the two flags is true
-  rentalEnabled Boolean @default(false)
+  rentalEnabled         Boolean   @default(false)
+  /// Voice / text order assistant (docs/voice-order/DESIGN.md); switched on by a platform admin only
+  orderAssistantEnabled Boolean   @default(false)
+  /// Store agreed that sellers' voice recordings are kept to improve speech recognition
+  /// (docs/voice-order/DESIGN.md §7). OWNER or platform ADMIN; turning it off deletes every sample
+  voiceDataConsent      Boolean   @default(false)
+  /// When / by whom (user id, no FK: users are never deleted) consent was last switched
+  voiceDataConsentAt    DateTime?
+  voiceDataConsentById  String?
 
   /// Subscription state: TRIAL (first month, free) → ACTIVE (paid) → SUSPENDED (blocked by an admin)
   status         StoreStatus         @default(TRIAL)
@@ -108,6 +116,8 @@ model Store {
   attributes    AttributeOnStore[]
   cashboxes     Cashbox[]
   customerDebts CustomerDebt[]
+  voiceAliases  VoiceAlias[]
+  voiceSamples  VoiceSample[]
 
   @@map("stores")
 }
@@ -147,6 +157,8 @@ model Staff {
   cashboxes        Cashbox[]
   cashTransactions CashTransaction[]
   debtPayments     DebtPayment[]
+  voiceAliases     VoiceAlias[]
+  voiceSamples     VoiceSample[]
 
   @@index([storeId])
   @@map("staff")
@@ -182,6 +194,7 @@ model Warehouse {
   store           Store              @relation(fields: [storeId], references: [id])
   cashboxes       Cashbox[]
   rentalCleanings RentalCleaning[]
+  voiceSamples    VoiceSample[]
 
   @@index([storeId])
   @@map("warehouses")
@@ -292,6 +305,7 @@ model ProductVariant {
   stockMovements      StockMovement[]
   attributes          VariantAttributeValue[]
   rentalCleanings     RentalCleaning[]
+  voiceAliases        VoiceAlias[]
 
   @@unique([storeId, sku])
   /// Barcode is unique per store: a factory (EAN) code may be entered manually if free in the store; empty → generated
@@ -458,6 +472,69 @@ model AttributeOnStore {
 
   @@id([storeId, attributeId])
   @@map("attributes_on_stores")
+}
+
+/**
+ * =======================
+ * ORDER ASSISTANT (voice / text order, docs/voice-order/DESIGN.md)
+ * =======================
+ */
+
+/// Learned alias: the seller corrected the assistant (changed the variant or found it manually),
+/// so this normalized phrase means this variant in this store. Written by POST /order-assistant/feedback,
+/// read by POST /order-assistant/match. Ignored when the variant is no longer sellable in the warehouse.
+model VoiceAlias {
+  id          String         @id @default(uuid())
+  storeId     String
+  /// Normalized phrase key (src/order-assistant/engine/normalize.ts phraseKey): stems, sizes 4x6, numbers
+  phrase      String
+  variantId   String
+  /// How many times sellers confirmed this alias; the most used one wins
+  hits        Int            @default(1)
+  lastUsedAt  DateTime       @default(now())
+  /// Staff who taught it first
+  createdById String
+  createdAt   DateTime       @default(now())
+  store       Store          @relation(fields: [storeId], references: [id])
+  variant     ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  createdBy   Staff          @relation(fields: [createdById], references: [id])
+
+  @@unique([storeId, phrase, variantId])
+  @@map("voice_aliases")
+}
+
+/// A seller's dictation kept for training the speech model — only while the store has
+/// `voiceDataConsent` (docs/voice-order/DESIGN.md §7). Audio lives in the private voice bucket
+/// (`audioKey`), never in PostgreSQL. Deleted after 12 months or when consent is turned off.
+model VoiceSample {
+  id              String    @id @default(uuid())
+  storeId         String
+  warehouseId     String
+  /// Seller who recorded it
+  staffId         String
+  /// Object key in the voice bucket: voice/<storeId>/<yyyy-mm>/<id>.<ext>
+  audioKey        String
+  mimeType        String
+  bytes           Int
+  durationMs      Int
+  /// STT model that produced `transcript`
+  model           String?
+  /// Raw speech-to-text result
+  transcript      String
+  /// Seller-corrected text from the review screen — the training label (null: not confirmed)
+  transcriptFinal String?
+  /// What the seller added: [{ phrase, variantId, source }] (POST /order-assistant/feedback)
+  choices         Json?
+  labeledAt       DateTime?
+  createdAt       DateTime  @default(now())
+
+  store     Store     @relation(fields: [storeId], references: [id])
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+  staff     Staff     @relation(fields: [staffId], references: [id])
+
+  @@index([storeId, createdAt])
+  @@index([createdAt])
+  @@map("voice_samples")
 }
 
 /**

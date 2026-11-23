@@ -57,8 +57,9 @@ export class AdminStoresController {
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateAdminStoreDto,
+    @CurrentUser() admin: UserInfo,
   ) {
-    return this.storesService.update(id, dto);
+    return this.storesService.update(id, dto, admin);
   }
 
   @Post(':id/suspend')

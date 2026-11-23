@@ -17,6 +17,7 @@ import { PrismaService } from '@prisma/prisma.service';
 import type { CurrentUser } from '@auth/models/auth.model';
 import { AdminStoresService, isTrialExpired } from './admin-stores.service';
 import { CreateAdminStoreDto } from './dto/admin-store.dto';
+import { VoiceSampleService } from '../order-assistant/voice-sample.service';
 
 const STORE = '11111111-1111-4111-8111-111111111111';
 const CATEGORY = '22222222-2222-4222-8222-222222222222';
@@ -108,6 +109,7 @@ describe('AdminStoresService', () => {
     $transaction: jest.fn(),
   };
   const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
+  const voiceSamples = { deleteStore: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -141,6 +143,7 @@ describe('AdminStoresService', () => {
         AdminStoresService,
         { provide: PrismaService, useValue: prisma },
         { provide: getLoggerToken(AdminStoresService.name), useValue: logger },
+        { provide: VoiceSampleService, useValue: voiceSamples },
       ],
     }).compile();
 
@@ -323,13 +326,17 @@ describe('AdminStoresService', () => {
   describe('update', () => {
     it('keeps at least one mode enabled', async () => {
       await expect(
-        service.update(STORE, { salesEnabled: false }),
+        service.update(STORE, { salesEnabled: false }, admin),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(prisma.store.update).not.toHaveBeenCalled();
     });
 
     it('renames and toggles modes', async () => {
-      await service.update(STORE, { name: 'Ёғоч 2', rentalEnabled: true });
+      await service.update(
+        STORE,
+        { name: 'Ёғоч 2', rentalEnabled: true },
+        admin,
+      );
 
       expect(prisma.store.update).toHaveBeenCalledWith({
         where: { id: STORE },
@@ -340,9 +347,31 @@ describe('AdminStoresService', () => {
     it('404 for an unknown store', async () => {
       prisma.store.findUnique.mockResolvedValue(null);
 
-      await expect(service.update(STORE, { name: 'x' })).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
+      await expect(
+        service.update(STORE, { name: 'x' }, admin),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('admin withdraws voice consent → recordings deleted, admin recorded', async () => {
+      prisma.store.findUnique.mockResolvedValueOnce({
+        id: STORE,
+        status: StoreStatus.ACTIVE,
+        trialEndsAt: null,
+        salesEnabled: true,
+        rentalEnabled: false,
+        voiceDataConsent: true,
+      });
+
+      await service.update(STORE, { voiceDataConsent: false }, admin);
+
+      expect(prisma.store.update).toHaveBeenCalledWith({
+        where: { id: STORE },
+        data: expect.objectContaining({
+          voiceDataConsent: false,
+          voiceDataConsentById: 'admin-user',
+        }) as unknown,
+      });
+      expect(voiceSamples.deleteStore).toHaveBeenCalledWith(STORE);
     });
   });
 

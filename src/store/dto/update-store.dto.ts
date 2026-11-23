@@ -23,6 +23,14 @@ export class UpdateStoreDto {
   @IsBoolean()
   rentalEnabled?: boolean;
 
+  /**
+   * Keep sellers' voice recordings to improve speech recognition (docs/voice-order/DESIGN.md §7).
+   * Turning it off deletes every saved recording of the store.
+   */
+  @IsOptional()
+  @IsBoolean()
+  voiceDataConsent?: boolean;
+
   @IsOptional()
   @IsString()
   warehouseName?: string;
