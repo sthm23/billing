@@ -6,6 +6,7 @@ import { StaffRole, UserRole, UserType } from '@generated/enums';
 import { PrismaService } from '@prisma/prisma.service';
 import type { CurrentUser } from '@auth/models/auth.model';
 import { OrderAssistantService } from './order-assistant.service';
+import { SttClient } from './stt.client';
 import {
   FEEDBACK_SOURCE,
   ORDER_ASSISTANT_DISABLED,
@@ -64,6 +65,7 @@ describe('OrderAssistantService', () => {
     $transaction: jest.fn(),
   };
   const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
+  const stt = { transcribe: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -81,6 +83,7 @@ describe('OrderAssistantService', () => {
       providers: [
         OrderAssistantService,
         { provide: PrismaService, useValue: prisma },
+        { provide: SttClient, useValue: stt },
         {
           provide: getLoggerToken(OrderAssistantService.name),
           useValue: logger,
@@ -277,6 +280,75 @@ describe('OrderAssistantService', () => {
         ),
       ).rejects.toThrow(ForbiddenException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('transcribe', () => {
+    const audio = (mimetype = 'audio/mp4') =>
+      ({
+        buffer: Buffer.from('fake-m4a'),
+        size: 8,
+        mimetype,
+        originalname: 'order.m4a',
+      }) as Express.Multer.File;
+
+    it('passes the audio to STT and returns the text without storing it', async () => {
+      stt.transcribe.mockResolvedValue({
+        text: 'shifer quvasoy',
+        durationMs: 4200,
+      });
+
+      const result = await service.transcribe(
+        { warehouseId: WAREHOUSE },
+        audio('audio/webm;codecs=opus'),
+        makeSeller(),
+      );
+
+      expect(result).toEqual({
+        text: 'shifer quvasoy',
+        durationMs: 4200,
+        sampleId: null,
+      });
+      expect(stt.transcribe).toHaveBeenCalledWith(
+        expect.objectContaining({ mimeType: 'audio/webm' }),
+      );
+      // The seller's words never reach the logs
+      expect(JSON.stringify(logger.info.mock.calls)).not.toContain('quvasoy');
+    });
+
+    it('checks the warehouse and the store flag before calling STT', async () => {
+      await expect(
+        service.transcribe(
+          { warehouseId: FOREIGN_WAREHOUSE },
+          audio(),
+          makeSeller(),
+        ),
+      ).rejects.toThrow(ForbiddenException);
+
+      prisma.store.findUnique.mockResolvedValue({
+        id: STORE,
+        orderAssistantEnabled: false,
+      });
+      await expect(
+        service.transcribe({ warehouseId: WAREHOUSE }, audio(), makeSeller()),
+      ).rejects.toMatchObject({
+        response: { code: ORDER_ASSISTANT_DISABLED },
+      });
+      expect(stt.transcribe).not.toHaveBeenCalled();
+    });
+
+    it('rejects a missing file and a non-audio type', async () => {
+      await expect(
+        service.transcribe({ warehouseId: WAREHOUSE }, undefined, makeSeller()),
+      ).rejects.toThrow(BadRequestException);
+      await expect(
+        service.transcribe(
+          { warehouseId: WAREHOUSE },
+          audio('application/pdf'),
+          makeSeller(),
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(stt.transcribe).not.toHaveBeenCalled();
     });
   });
 });

@@ -2,7 +2,7 @@
 
 > Created 2026-11-17. Status: **backend stage 1 implemented 2026-11-23** (`billing/src/order-assistant/`,
 > text matching + aliases + per-store flag); **mobile stage 2 (text assistant) implemented 2026-11-23**
-> (`billing-mobile/src/screens/order/voice/`, device QA pending); voice (stage 3+) not started. Decisions below were agreed with the user
+> (`billing-mobile/src/screens/order/voice/`, device QA pending); stage 0 bake-off done (medium-uz); **stage 3 (voice) built 2026-11-23** — `billing/stt-service/`, `POST /order-assistant/transcribe`, voice tab (device QA + server install pending). Decisions below were agreed with the user
 > in conversation (2026-11-09 … 2026-11-17); items marked **(proposed)** still need confirmation.
 > Implementation stages: [PLAN.md](PLAN.md).
 > UI design: claude.ai artifact `LBqDuZU3wDgKNJXJBfrAYb`, page «Голосовой заказ» (artboards `Voice*`,
@@ -142,9 +142,8 @@ the cart and `POST /orders/items` re-check them as today.
 
 `multipart/form-data`: `audio` (m4a/AAC or wav, mono 16 kHz, ≤ 60 s, ≤ 2 MB), `warehouseId`.
 Response `{ "text": "…", "durationMs": 14200, "sampleId": "uuid|null" }`.
-The warehouse vocabulary (product names + attribute values, normalized) is passed to the STT service as
-`hotwords` / `initial_prompt`. Errors: `422` empty / not recognized, `429` STT queue full, `503` STT down
-or timeout (30 s).
+No hotwords (stage 0: they broke the output). Errors: `422` `SPEECH_NOT_RECOGNIZED` (silence / noise),
+`413` over 3 MB / 65 s, `429` STT queue full, `503` STT down or timeout (90 s — medium needs 15–30 s).
 
 Two calls instead of one: text mode needs only `match`; the seller can edit the transcript and re-run
 `match` without re-uploading audio; the client can show real steps («Речь распознана» → «Ищем на складе»).

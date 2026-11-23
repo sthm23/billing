@@ -2,7 +2,8 @@
 
 > Created 2026-11-17. Design and decisions: [DESIGN.md](DESIGN.md). Status: **stage 1 done 2026-11-23**
 > (backend, + admin flag `Store.orderAssistantEnabled`); **stage 2 built 2026-11-23** (mobile text assistant,
-> device QA pending); stage 0 waits for recordings.
+> device QA pending); stage 0 done (medium-uz, no hotwords); **stage 3 built 2026-11-23** (voice: STT service,
+> `transcribe`, voice tab — device QA and server install pending).
 > Priority (user, 2026-11-17): launch the app and onboard ~10 stores first; stages 1–2 (text input) need no
 > infrastructure and can ship any time; voice (stage 3+) after that.
 
@@ -91,7 +92,15 @@ Done as planned (items 0–7). Code: `src/services/order-assistant/`, `src/scree
 
 → **Releasable**: text order assistant.
 
-## Stage 3 — Voice
+## Stage 3 — Voice — ✅ built 2026-11-23, server install + device QA pending
+
+Built: `billing/stt-service/app.py` (FastAPI, faster-whisper medium-uz int8, 127.0.0.1:8090, one job + queue 3 →
+429, max 65 s / 3 MB, nothing stored; install `STT_SERVICE.md`), `src/order-assistant/stt.client.ts` +
+`POST /order-assistant/transcribe` (timeout 90 s instead of 30 s — medium is slower), mobile voice tab in
+`VoiceInputSheet` + `use-voice-recorder.ts`. Changes vs the plan: recognition runs inside the sheet (not on the
+review screen) so «Не расслышали» / «Повторить» stay where the recording is; works on web too (MediaRecorder);
+Expo Go is enough (`expo-audio` is in it) — no development build. Smoke-tested locally: backend → STT on the
+real dictation 3 (23.5 s → 28 s, 5/6 products).
 
 Backend / server:
 1. STT service (DESIGN §6): FastAPI + faster-whisper, systemd unit with memory/CPU limits, `127.0.0.1`,

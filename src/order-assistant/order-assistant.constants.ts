@@ -53,3 +53,33 @@ export const ORDER_ASSISTANT_THROTTLE = {
 
 /** 403 error code: `Store.orderAssistantEnabled` is off (switched on by a platform admin). */
 export const ORDER_ASSISTANT_DISABLED = 'ORDER_ASSISTANT_DISABLED';
+
+/** `POST /order-assistant/transcribe` (docs/voice-order/DESIGN.md §5–6). */
+export const TRANSCRIBE_LIMITS = {
+  /** Upload size: 60 s of mono AAC / Opus is well under 1 MB */
+  FILE_BYTES: 3 * 1024 * 1024,
+  /**
+   * Wait for the STT service (queue + recognition). Medium on 2 vCPU needs
+   * ~15–25 s for 10–25 s of speech; 60 s of speech + a queue takes longer.
+   */
+  TIMEOUT_MS: 90_000,
+} as const;
+
+/** Mime types a phone or browser records (m4a/AAC, Opus in WebM/Ogg, WAV). */
+export const TRANSCRIBE_MIME_TYPES: ReadonlySet<string> = new Set([
+  'audio/mp4',
+  'audio/m4a',
+  'audio/x-m4a',
+  'audio/aac',
+  'audio/mpeg',
+  'audio/webm',
+  'audio/ogg',
+  'audio/wav',
+  'audio/x-wav',
+  'audio/wave',
+  'video/mp4',
+  'video/webm',
+]);
+
+/** 422 error code: nothing was recognized in the audio (silence, noise). */
+export const SPEECH_NOT_RECOGNIZED = 'SPEECH_NOT_RECOGNIZED';

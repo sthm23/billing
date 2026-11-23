@@ -54,3 +54,9 @@ export class OrderAssistantFeedbackDto {
   @Type(() => FeedbackChoiceDto)
   choices!: FeedbackChoiceDto[];
 }
+
+/** `POST /order-assistant/transcribe` — multipart fields besides the `audio` file. */
+export class TranscribeAudioDto {
+  @IsUUID('4')
+  warehouseId!: string;
+}

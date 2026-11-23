@@ -12,6 +12,7 @@ import { assertWarehouseAccess } from '@shared/helper/warehouse-access.helper';
 import {
   MatchOrderTextDto,
   OrderAssistantFeedbackDto,
+  TranscribeAudioDto,
 } from './dto/order-assistant.dto';
 import {
   AliasHit,
@@ -27,10 +28,19 @@ import {
   LEARNING_SOURCES,
   ORDER_ASSISTANT_DISABLED,
   ORDER_ASSISTANT_LIMITS,
+  TRANSCRIBE_MIME_TYPES,
 } from './order-assistant.constants';
+import { SttClient } from './stt.client';
 
 export interface MatchResponse {
   lines: MatchLine[];
+}
+
+export interface TranscribeResponse {
+  text: string;
+  durationMs: number;
+  /** Saved voice sample (stage 4, with the store's consent); always null for now */
+  sampleId: string | null;
 }
 
 export interface FeedbackResponse {
@@ -49,9 +59,55 @@ export interface FeedbackResponse {
 export class OrderAssistantService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly stt: SttClient,
     @InjectPinoLogger(OrderAssistantService.name)
     private readonly logger: PinoLogger,
   ) {}
+
+  /**
+   * Seller's recording → text for `match`. Same access as `match`; the audio
+   * only passes through to the local STT service and is not stored (stage 3).
+   */
+  async transcribe(
+    dto: TranscribeAudioDto,
+    audio: Express.Multer.File | undefined,
+    user: CurrentUser,
+  ): Promise<TranscribeResponse> {
+    await assertWarehouseAccess(this.prisma, user, dto.warehouseId);
+    await this.assertAssistantStore(user, dto.warehouseId);
+
+    if (!audio?.buffer.length) {
+      throw new BadRequestException('Audio file is required (field `audio`)');
+    }
+    const mimeType = audio.mimetype.split(';')[0].trim().toLowerCase();
+    if (!TRANSCRIBE_MIME_TYPES.has(mimeType)) {
+      throw new BadRequestException(`Unsupported audio type: ${mimeType}`);
+    }
+
+    const startedAt = Date.now();
+    const { text, durationMs } = await this.stt.transcribe({
+      buffer: audio.buffer,
+      mimeType,
+      fileName: audio.originalname || 'audio',
+    });
+    // Stats only — never the seller's words
+    this.logger.info(
+      {
+        warehouseId: dto.warehouseId,
+        bytes: audio.size,
+        audioMs: durationMs,
+        chars: text.length,
+        ms: Date.now() - startedAt,
+      },
+      'Order assistant transcribe',
+    );
+
+    return {
+      text: text.slice(0, ORDER_ASSISTANT_LIMITS.TEXT_LENGTH),
+      durationMs,
+      sampleId: null,
+    };
+  }
 
   async match(
     dto: MatchOrderTextDto,

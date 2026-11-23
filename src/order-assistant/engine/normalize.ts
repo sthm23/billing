@@ -282,7 +282,12 @@ function splitGluedNumber(folded: string, source: string): Token[] | null {
     if (UNIT_WORDS.has(rest) || QUANTITY_WORDS.has(rest)) {
       return [
         { kind: 'num', source, value: head, suffix: null, spelled: true },
-        { kind: 'word', source, word: { text: rest, stem: rest }, suffix: null },
+        {
+          kind: 'word',
+          source,
+          word: { text: rest, stem: rest },
+          suffix: null,
+        },
       ];
     }
   }
