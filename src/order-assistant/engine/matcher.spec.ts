@@ -140,6 +140,71 @@ describe('order-assistant matcher', () => {
     expect(lines[3].totalCandidates).toBe(4);
   });
 
+  it('keeps a product whole across STT commas (real dictation, whisper-small-uz)', () => {
+    const lines = match(
+      "strapela olti metrlik, to'rtga olti, shifer, quvasoy, metrovka, uchpachka.",
+    );
+
+    expect(lines.map((l) => l.phrase)).toEqual([
+      "strapela olti metrlik to'rtga olti",
+      'shifer quvasoy',
+      'metrovka uchpachka',
+    ]);
+    expect(lines[0].candidates[0].variantId).toBe(
+      byLabel('strapela', '4x6', '6'),
+    );
+    expect(lines[0].status).toBe(MATCH_STATUS.MATCHED);
+    expect(lines[1].candidates[0].variantId).toBe(
+      byLabel('shiferlar', 'Кувасой'),
+    );
+    // `uchpachka` is a quantity: metrovka stays a choice of all lengths
+    expect(lines[2].status).toBe(MATCH_STATUS.AMBIGUOUS);
+  });
+
+  it('«shifer quvasoy va super»: a nameless phrase after `va` is the same product', () => {
+    const lines = match('shifer quvasoy va super');
+
+    expect(lines.map((l) => l.status)).toEqual([
+      MATCH_STATUS.MATCHED,
+      MATCH_STATUS.MATCHED,
+    ]);
+    expect(lines[1].candidates[0].variantId).toBe(
+      byLabel('shiferlar', 'Super'),
+    );
+  });
+
+  it('a nameless line without `va` does not borrow the previous product', () => {
+    const lines = match('shifer quvasoy\npropil');
+
+    expect(lines[1].status).toBe(MATCH_STATUS.NOT_FOUND);
+  });
+
+  it("«yo'q» / «нет» takes the last product back (real dictation)", () => {
+    const spoken = match(
+      "despilar standart. yo'q, despilar premium. fonerlar nol besh",
+    );
+    expect(spoken.map((l) => l.candidates[0]?.variantId)).toEqual([
+      byLabel('despilar', 'Премиум'),
+      byLabel('fonerlar', '0.5'),
+    ]);
+
+    // No punctuation at all (whisper with hotwords)
+    const flat = match(
+      "shifer quvasoy va super despilar standart yo'q despilar premium",
+    );
+    expect(flat.map((l) => l.candidates[0]?.variantId)).toEqual([
+      byLabel('shiferlar', 'Кувасой'),
+      byLabel('shiferlar', 'Super'),
+      byLabel('despilar', 'Премиум'),
+    ]);
+
+    const inline = match('despilar termiz нет despilar premium');
+    expect(inline).toHaveLength(1);
+    expect(inline[0].candidates[0].variantId).toBe(
+      byLabel('despilar', 'Премиум'),
+    );
+  });
+
   it("strapela to'rtga olti olti metrli → only 4x6 × 6 m", () => {
     const [line] = match("strapela to'rtga olti olti metrli");
     expect(line.status).toBe(MATCH_STATUS.MATCHED);

@@ -117,6 +117,7 @@ const UNIT_WORDS = foldedSet([
   'metr',
   'metrli',
   'metrlik',
+  'metrik',
   'm',
   'метр',
   'метра',
@@ -206,6 +207,9 @@ export const SEPARATOR_WORDS = foldedSet([
   'плюс',
 ]);
 
+/** The seller takes the last product back: `despilar standart, yo'q, premium`. */
+export const CORRECTION_WORDS = foldedSet(["yo'q", 'нет']);
+
 /** Longest first; a stem keeps ≥ 3 letters. `ta` only on number words (`oltita`). */
 const SUFFIXES = [
   'lardan',
@@ -254,6 +258,38 @@ function numberWord(
   return null;
 }
 
+const MIN_GLUED_PART = 2;
+
+/**
+ * A number word glued to another number word, a unit or a quantity word, as people type and
+ * STT writes it: `o'nyettiga` → 10 + 7ga, `oltimetrlik` → 6 + metrlik, `uchpachka` → 3 + pachka. Splits only when the rest is
+ * itself a number word or a unit, so product names stay whole.
+ */
+function splitGluedNumber(folded: string, source: string): Token[] | null {
+  for (let cut = folded.length - MIN_GLUED_PART; cut >= MIN_GLUED_PART; cut--) {
+    const head = NUMBER_WORDS.get(folded.slice(0, cut));
+    if (head === undefined) continue;
+
+    // Folded again: `ye` → `e` applies at a word start (`o'nyetti` → `yetti` → `eti`)
+    const rest = foldWord(folded.slice(cut));
+    const tail = numberWord(rest);
+    if (tail) {
+      return [
+        { kind: 'num', source, value: head, suffix: null, spelled: true },
+        { kind: 'num', source, ...tail, spelled: true },
+      ];
+    }
+    if (UNIT_WORDS.has(rest) || QUANTITY_WORDS.has(rest)) {
+      return [
+        { kind: 'num', source, value: head, suffix: null, spelled: true },
+        { kind: 'word', source, word: { text: rest, stem: rest }, suffix: null },
+      ];
+    }
+  }
+
+  return null;
+}
+
 const DIM_PATTERN = /^(\d+(?:\.\d+)?)[x×*](\d+(?:\.\d+)?)$/;
 const NUM_PATTERN = /^\d+(?:\.\d+)?$/;
 /** Splits `6m`, `4ga6`, `0.4sm` into number and letters; keeps `4x6`. */
@@ -293,6 +329,12 @@ function readRawToken(source: string): Token[] {
     const spelledNumber = numberWord(folded);
     if (spelledNumber) {
       tokens.push({ kind: 'num', source, ...spelledNumber, spelled: true });
+      continue;
+    }
+
+    const glued = splitGluedNumber(folded, source);
+    if (glued) {
+      tokens.push(...glued);
       continue;
     }
 

@@ -64,6 +64,19 @@ describe('order-assistant normalize', () => {
     expect(phrase('четыре на шесть strapela').dims).toEqual([[4, 6]]);
   });
 
+  it("splits a number glued to a number or unit (real dictation): o'nyettiga, oltimetrlik", () => {
+    const strapela = phrase("strapelo oltimetrlik o'nyettiga to'rt yarim");
+    expect(strapela.words.map((w) => w.text)).toEqual(['strapelo']);
+    expect(strapela.dims).toEqual([[17, 4.5]]);
+    expect(strapela.nums).toEqual([6]);
+    expect(phrase("kanopka olti metrlik o'nuchga ikki").dims).toEqual([
+      [13, 2],
+    ]);
+    expect(phrase("palovoy to'rt metrik yettiga ikki").nums).toEqual([4]);
+    // Not split: the rest is not a number or a unit
+    expect(phrase('birinchi olmalik').nums).toEqual([]);
+  });
+
   it('drops quantities, units and filler words', () => {
     expect(phrase('ikkita shifer').nums).toEqual([]);
     expect(phrase('bitta shifer').words.map((w) => w.stem)).toEqual(['shifer']);

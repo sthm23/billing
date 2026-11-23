@@ -58,9 +58,14 @@ Cart → 🎤 / ✍ → [transcribe] → text → [match] → review screen → 
 Input: free text (typed or transcribed) + `warehouseId`. Output: lines with candidates.
 
 1. **Segmentation** into phrases (one phrase = one product):
-   text mode — new lines and commas/semicolons; voice — punctuation from Whisper, separators
+   new lines and `;` always split; a **comma / dot splits only before a part with a product name** —
+   Whisper puts commas mid-product («palovoy to'rt metrli, yettiga ikki», «shifer, quvasoy»), a part
+   without a name continues the previous product (2026-11-23, real dictations); separators
    `va`, `и`, `keyin`, `yana`, `ещё`, and a boundary heuristic: a token that starts a known product name
-   (or alias) opens a new phrase.
+   (or alias) opens a new phrase. Number words glued to a number / unit / quantity are split
+   (`o'nyettiga` → 10 7ga, `oltimetrlik` → 6 metrlik, `uchpachka` → 3 pachka).
+   A nameless phrase right after a separator takes the previous product name («shifer quvasoy **va super**»
+   → shiferlar Super). **`yo'q` / `нет`** drops the last product («despilar standart, yo'q, despilar premium»).
 2. **Normalization** (same function for catalogue and phrase):
    - lower case; Uzbek Cyrillic → Latin (`ў→o'`, `қ→q`, `ғ→g'`, `ҳ→h`, `ш→sh`, `ч→ch`, …);
      apostrophe variants (`'`, `ʻ`, `ʼ`, `‘`) unified; Russian Cyrillic transliterated to Latin;
@@ -159,14 +164,30 @@ Fire-and-forget on the client (a failure never blocks adding to the cart).
   **systemd service** on the existing VPS (the backend itself is not in Docker), bound to `127.0.0.1` only.
 - Limits in the unit: `MemoryMax=1.5G`, `CPUQuota=150%`, `Nice=10` — STT must never starve NestJS / PostgreSQL
   (same 4 GB / 2 vCPU VPS). One job at a time (queue length ~3, then `429`).
-- Model: start with **whisper-small Uzbek** (int8, ~1 GB RAM). Medium needs the planned +2–4 GB RAM.
+- Model: **medium-uz** `AlexAnoshka/fast-whisper-uz-rubaistt-v2-medium-ct2` (int8, ~1 GB RAM; chosen
+  2026-11-23 after the bake-off below). Needs the planned +2–4 GB RAM.
   Candidates verified on Hugging Face (Apache-2.0): `OvozifyLabs/whisper-small-uz-v1`,
   `navai-uz/whisper-small-uzbek`, `navai-uz/whisper-medium-uzbek`, CTranslate2 builds such as
   `yuldashev222/whisper-small-uz-v1-ct2`. Choice after stage 0.
-- Options: `vad_filter=True` (no hallucinated text on silence), `language="uz"`, hotwords from the warehouse
-  vocabulary. Expected latency on 2 vCPU: ~5–15 s for 20–40 s of speech.
+- Options: `vad_filter=True` (no hallucinated text on silence), `language="uz"`, `beam_size=5`, **no hotwords**
+  (bake-off: they break the output). Expected latency on 2 vCPU: ~5–15 s for 20–40 s of speech.
 - NestJS talks to it through an adapter (`SttProvider` interface): moving STT to its own server or to a paid
   Uzbek API later is a config change.
+- **Bake-off (stage 0, 2026-11-23, 3 phone dictations / 11 products, warehouse `yogoch`, CPU int8, 2 threads,
+  local dev PC), scored by the stage 1 matcher:**
+
+  | model | products right | sec per file (9–24 s audio) | RAM |
+  |---|---|---|---|
+  | **`AlexAnoshka/fast-whisper-uz-rubaistt-v2-medium-ct2`** | **10/11** (the miss: «polovoy 6 m 13x2» does not exist) | 13–17 | ~1.0 GB |
+  | `yuldashev222/whisper-small-uz-v1-ct2` | 6/11 (`propil` for strapela, `quvozoy`, `faynerlar`) | 4–7 | ~0.43 GB |
+  | `hostmepanda/whisper-large-v3-turbo-uzbek-ct2` | 7/11 (duplicated words, `o'nichki`) | 14–21 | ~1.05 GB |
+  | `large-v3-turbo` (base, `language=uz`) | unusable | 52 | ~1.1 GB |
+
+  **Decision (user, 2026-11-23): medium-uz (`rubaistt-v2-medium-ct2`), no hotwords** — hotwords make small and
+  turbo return empty text and do not help medium. Target: ≥ 70 % of products found from speech, the seller
+  adds the rest by hand; sellers are taught to name products one after another. Re-run the bake-off on real
+  shop recordings after the first store (stage 6). Medium needs ~1 GB RAM → the planned VPS RAM upgrade.
+  Script: `billing/tools/stt-bench/` (recordings stay outside git in `voice-samples/`).
 - Before installing: check real free memory on the VPS (`free -h`); the cloud panel's "RAM 100%" is quota
   allocation, not usage.
 

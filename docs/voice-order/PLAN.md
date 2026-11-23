@@ -10,7 +10,17 @@ Each stage ends with: `tsc` clean, tests run, device QA by the user, docs update
 
 ---
 
-## Stage 0 — STT bake-off (parallel, no product code)
+## Stage 0 — STT bake-off (parallel, no product code) — ✅ done 2026-11-23 (3 dictations): medium-uz, no hotwords
+
+Tooling ready: `billing/tools/stt-bench/bench.py` (faster-whisper, venv in `voice-samples/.venv-bench`) and
+`catalogue.ts` (hotwords + scoring through the stage 1 matcher on the local DB catalogue, optional in-memory
+`catalogue-extra.json` for variants missing locally). Results and the decision in DESIGN §6 (the 30–50 recordings
+were replaced by real shop recordings after the first store — re-run then). The dictations also fixed the
+matcher: glued number words, STT commas mid-product, `va super`, `yo'q` correction (DESIGN §4.1).
+
+    cd voice-samples
+    .venv-bench/Scripts/python -I ../billing/tools/stt-bench/bench.py . results/hotwords-latin.json results/runN.json
+    cd ../billing && npx tsx tools/stt-bench/catalogue.ts match yogoch ../voice-samples/results/runN.json ../voice-samples/catalogue-extra.json
 
 Goal: pick the STT model with real data before writing the service.
 
@@ -87,7 +97,7 @@ Backend / server:
 1. STT service (DESIGN §6): FastAPI + faster-whisper, systemd unit with memory/CPU limits, `127.0.0.1`,
    health endpoint; install doc in `billing/docs/voice-order/STT_SERVICE.md`.
 2. `SttProvider` adapter in NestJS (URL from env), `POST /order-assistant/transcribe` (multipart, size/duration
-   limits, timeout 30 s, queue → `429`, down → `503`), hotwords from the warehouse catalogue cache.
+   limits, timeout 30 s, queue → `429`, down → `503`); no hotwords (stage 0).
 3. Audio is not stored in this stage (deleted right after transcription).
 
 Mobile:
