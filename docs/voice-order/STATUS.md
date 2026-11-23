@@ -37,8 +37,10 @@ when this was written (check `git status` in `billing/` and `billing-mobile/`).
    - `20261122191124_voice_alias`
    - `20261122191509_store_order_assistant_flag`
    - `20261123172700_voice_samples`
-2. Install the STT service on the VPS ([STT_SERVICE.md](STT_SERVICE.md) §1–4). It runs as a systemd service; the
-   user decided against Docker. Check `free -h` first: it needs about 1.5 GB `available`.
+2. Install the STT service on the VPS once: `sudo bash /var/www/billing/stt-service/install.sh`
+   ([STT_SERVICE.md](STT_SERVICE.md) §2). It runs as a systemd service; the user decided against Docker. It needs
+   about 1.5 GB `available` in `free -h`. Later updates come with `deploy.sh` (GitHub Actions).
+   Voice 503 = the service is not installed, still loading, or slower than 90 s.
 3. Create the **private** bucket `sthm-voice` and set `VOICE_S3_BUCKET_NAME` ([STT_SERVICE.md](STT_SERVICE.md) §6).
    Then check that consent on → a sample is saved, and consent off → it is deleted.
 4. Admin store card: turn on «Голосовой помощник». The owner (or the admin) turns on «Сохранять записи голоса».

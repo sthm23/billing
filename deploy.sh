@@ -6,6 +6,9 @@ BRANCH=main
 PM2_APP=billing-app
 DB_CONTAINER=dev_postgres
 BACKUP_DIR="$HOME/db-backups"
+# Order assistant speech-to-text (stt-service/install.sh, docs/voice-order/STT_SERVICE.md)
+STT_SERVICE=sthm-stt
+STT_VENV=/opt/sthm-stt/venv
 
 echo "🚀 Deploying Backend..."
 
@@ -17,14 +20,15 @@ if [[ "$(git branch --show-current)" != "$BRANCH" ]]; then
 fi
 
 echo "📥 Pulling latest changes..."
-OLD_HEAD=$(git rev-parse HEAD)
+# After the re-exec below, the commit before the pull comes from the first run
+OLD_HEAD=${DEPLOY_OLD_HEAD:-$(git rev-parse HEAD)}
 git fetch origin "$BRANCH"
 # Fails instead of overwriting manual edits made on the server.
 git merge --ff-only "origin/$BRANCH"
 
 # Bash keeps running the old script after git replaces it, so restart with the pulled version.
 if [[ "$(git rev-parse HEAD)" != "$OLD_HEAD" && -z "${DEPLOY_REEXEC:-}" ]]; then
-  DEPLOY_REEXEC=1 exec bash "$APP_DIR/deploy.sh"
+  DEPLOY_REEXEC=1 DEPLOY_OLD_HEAD="$OLD_HEAD" exec bash "$APP_DIR/deploy.sh"
 fi
 
 echo "📦 Installing dependencies..."
@@ -52,6 +56,25 @@ npx prisma migrate deploy
 
 echo "🔄 Restarting PM2..."
 pm2 restart "$PM2_APP" --update-env
+
+# STT service: installed once by hand (sudo bash stt-service/install.sh); here only updated
+# when stt-service/ changed. Never fails the backend deploy — voice falls back to text.
+if [[ -x "$STT_VENV/bin/pip" ]]; then
+  if ! git diff --quiet "$OLD_HEAD" HEAD -- stt-service/; then
+    echo "🎙️ Updating STT service..."
+    "$STT_VENV/bin/pip" install --quiet -r stt-service/requirements.txt
+    if ! sudo -n /usr/bin/systemctl restart "$STT_SERVICE"; then
+      echo "⚠️  Could not restart $STT_SERVICE (sudo rule missing? re-run stt-service/install.sh)" >&2
+    fi
+  fi
+  if curl -fsS --max-time 5 http://127.0.0.1:8090/health > /dev/null; then
+    echo "🎙️ STT service is up"
+  else
+    echo "⚠️  STT service is not answering (still loading, or down: journalctl -u $STT_SERVICE)" >&2
+  fi
+else
+  echo "⚠️  STT service is not installed — voice input answers 503. Run once: sudo bash $APP_DIR/stt-service/install.sh" >&2
+fi
 
 echo "🩺 Checking health..."
 PORT=$(grep -E '^PORT=' .env | tail -n 1 | cut -d= -f2- | tr -d '"'"'"'\r ')
