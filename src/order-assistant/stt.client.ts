@@ -16,6 +16,8 @@ import {
 export interface Transcript {
   text: string;
   durationMs: number;
+  /** Model that recognized it (kept with a voice sample), null if the service did not say */
+  model: string | null;
 }
 
 export interface SttAudio {
@@ -73,7 +75,11 @@ export class SttClient {
       const text = body.text?.trim() ?? '';
       if (!text) throw this.notRecognized();
 
-      return { text, durationMs: Number(body.durationMs) || 0 };
+      return {
+        text,
+        durationMs: Number(body.durationMs) || 0,
+        model: typeof body.model === 'string' ? body.model : null,
+      };
     }
 
     const status = String(response.status);

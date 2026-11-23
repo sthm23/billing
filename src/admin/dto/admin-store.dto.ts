@@ -234,6 +234,11 @@ export class UpdateAdminStoreDto {
   @IsOptional()
   @IsBoolean()
   orderAssistantEnabled?: boolean;
+
+  /** Store's consent to keep voice recordings (also switched by the owner); off deletes them */
+  @IsOptional()
+  @IsBoolean()
+  voiceDataConsent?: boolean;
 }
 
 /** POST /admin/stores/:id/suspend */

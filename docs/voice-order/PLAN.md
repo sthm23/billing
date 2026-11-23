@@ -3,7 +3,8 @@
 > Created 2026-11-17. Design and decisions: [DESIGN.md](DESIGN.md). Status: **stage 1 done 2026-11-23**
 > (backend, + admin flag `Store.orderAssistantEnabled`); **stage 2 built 2026-11-23** (mobile text assistant,
 > device QA pending); stage 0 done (medium-uz, no hotwords); **stage 3 built 2026-11-23** (voice: STT service,
-> `transcribe`, voice tab — device QA and server install pending).
+> `transcribe`, voice tab — web QA passed, device QA and server install pending); **stage 4 built 2026-11-23**
+> (consent + stored samples — bucket setup on the server pending).
 > Priority (user, 2026-11-17): launch the app and onboard ~10 stores first; stages 1–2 (text input) need no
 > infrastructure and can ship any time; voice (stage 3+) after that.
 
@@ -115,7 +116,18 @@ Mobile:
    `VoiceNotHeard`) with design fix #1, #5.
 6. Flow: transcribe → show transcript → match; keep the file until transcribe succeeds («Повторить»).
 
-## Stage 4 — Voice data collection (with consent)
+## Stage 4 — Voice data collection (with consent) — ✅ built 2026-11-23, bucket + QA pending
+
+Built: migration `20261123172700_voice_samples` (`Store.voiceDataConsent` + `…At` / `…ById`, `VoiceSample`),
+`src/order-assistant/voice-sample.service.ts` (save to the private bucket `VOICE_S3_BUCKET_NAME`, label,
+delete on withdrawal, daily sweep), `transcribe` → `sampleId`, `feedback` → `samples[]`, consent in
+`PUT /store/:id` and `PATCH /admin/stores/:id`; the STT service also returns `model`. Mobile: owner switch in
+`StoreSettingsScreen`, admin switch in `AdminShopScreen` (inline confirmation before deleting), seller notice
+in the voice tab, `voice-store` keeps `sampleIds` and sends them in `feedback`. Export:
+`billing/tools/voice-export/export.ts`. Changes vs the plan: retention is an in-process daily timer (no
+scheduler package); `feedback` takes several samples (`«Ещё»`); the corrected text is a label only for a
+one-recording session. Decisions: DESIGN §7. Not tested against the real bucket (no local S3) — check on the
+server (STT_SERVICE.md §6).
 
 1. `Store.voiceDataConsent` (default false) — set by OWNER in store settings (mobile) / ADMIN.
 2. `VoiceSample` model + migration; audio upload to object storage (private bucket, store-prefixed key).

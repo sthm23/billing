@@ -4,7 +4,7 @@ Order assistant speech-to-text (billing/docs/voice-order/DESIGN.md §6, STT_SERV
 Local HTTP service for the NestJS backend only: bind it to 127.0.0.1. One transcription at a
 time (CPU), up to QUEUE_SIZE requests wait, the rest get 429. Audio is never written to disk.
 
-  POST /transcribe  multipart `audio` → {"text": "...", "durationMs": 14200}
+  POST /transcribe  multipart `audio` → {"text": "...", "durationMs": 14200, "model": "..."}
   GET  /health      → {"status": "ok", "model": "..."}
 
 Env: STT_MODEL, STT_THREADS (2), STT_QUEUE_SIZE (3), STT_MAX_SECONDS (65), STT_MAX_BYTES (3 MB).
@@ -111,4 +111,4 @@ async def transcribe(audio: UploadFile = File(...)) -> dict:
 
     if not text:
         raise HTTPException(422, "Speech not recognized")
-    return {"text": text, "durationMs": duration_ms}
+    return {"text": text, "durationMs": duration_ms, "model": MODEL}

@@ -29,11 +29,12 @@ describe('SttClient', () => {
     );
 
   it('posts the audio to /transcribe and returns the text', async () => {
-    reply(200, { text: ' shifer ', durationMs: 900 });
+    reply(200, { text: ' shifer ', durationMs: 900, model: 'medium-uz' });
 
     await expect(client.transcribe(audio)).resolves.toEqual({
       text: 'shifer',
       durationMs: 900,
+      model: 'medium-uz',
     });
     expect(fetchMock.mock.calls[0][0]).toBe('http://127.0.0.1:8090/transcribe');
   });

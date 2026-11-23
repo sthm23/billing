@@ -49,7 +49,7 @@ src/
 ├── cashbox/           # Cashbox (cash register) operations
 ├── debt/              # Manual debt tracking (CustomerDebt)
 ├── category-attributes/ # Categories, brands, attributes, tags
-├── order-assistant/   # Voice / text order assistant: audio → text (stt.client → local STT service), text → candidate variants, learned aliases (docs/voice-order/); engine/ is pure TS
+├── order-assistant/   # Voice / text order assistant: audio → text (stt.client → local STT service), text → candidate variants, learned aliases, voice samples kept with store consent (voice-sample.service: private bucket, daily 12-month sweep) (docs/voice-order/); engine/ is pure TS
 ├── file/              # File upload (S3)
 ├── prisma/            # PrismaService, S3Service
 └── shared/            # Guards, decorators, helpers
@@ -556,6 +556,7 @@ S3_ENDPOINT=https://s3.uztelecom.uz          # omit → AWS
 S3_PUBLIC_URL=https://s3.uztelecom.uz/sthm-media-dev   # public base INCLUDING the bucket
 PORT=4000
 STT_URL=http://127.0.0.1:8090              # order assistant speech-to-text (billing/stt-service, docs/voice-order/STT_SERVICE.md); default if unset
+VOICE_S3_BUCKET_NAME=sthm-voice             # PRIVATE bucket for voice samples (store consent); created by hand; unset → never kept
 ```
 
 ---

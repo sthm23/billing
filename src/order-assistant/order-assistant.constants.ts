@@ -83,3 +83,34 @@ export const TRANSCRIBE_MIME_TYPES: ReadonlySet<string> = new Set([
 
 /** 422 error code: nothing was recognized in the audio (silence, noise). */
 export const SPEECH_NOT_RECOGNIZED = 'SPEECH_NOT_RECOGNIZED';
+
+/** Stored voice samples (stage 4, docs/voice-order/DESIGN.md §7). */
+export const VOICE_SAMPLES = {
+  /** Object key prefix in the voice bucket: voice/<storeId>/<yyyy-mm>/<id>.<ext> */
+  KEY_PREFIX: 'voice',
+  /** Audio and rows older than this are deleted */
+  RETENTION_DAYS: 365,
+  /** Retention sweep: first run after start, then daily (single PM2 instance) */
+  SWEEP_DELAY_MS: 5 * MINUTE_MS,
+  SWEEP_INTERVAL_MS: 24 * 60 * MINUTE_MS,
+  /** Rows deleted per batch */
+  BATCH: 200,
+  /** Recordings of one review session reported in one `feedback` («Ещё» adds more) */
+  PER_FEEDBACK: 10,
+} as const;
+
+/** File extension of a stored sample by mime type. */
+export const VOICE_SAMPLE_EXTENSIONS: Readonly<Record<string, string>> = {
+  'audio/mp4': 'm4a',
+  'audio/m4a': 'm4a',
+  'audio/x-m4a': 'm4a',
+  'video/mp4': 'm4a',
+  'audio/aac': 'aac',
+  'audio/mpeg': 'mp3',
+  'audio/webm': 'webm',
+  'video/webm': 'webm',
+  'audio/ogg': 'ogg',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/wave': 'wav',
+};

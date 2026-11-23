@@ -5,6 +5,7 @@ import {
   IsArray,
   IsIn,
   IsNotEmpty,
+  IsOptional,
   IsString,
   IsUUID,
   MaxLength,
@@ -13,6 +14,7 @@ import {
 import {
   FEEDBACK_SOURCE,
   ORDER_ASSISTANT_LIMITS,
+  VOICE_SAMPLES,
   type FeedbackSource,
 } from '../order-assistant.constants';
 
@@ -42,6 +44,18 @@ export class FeedbackChoiceDto {
   source!: FeedbackSource;
 }
 
+/** A recording of this review session (`transcribe` → `sampleId`). */
+export class FeedbackSampleDto {
+  @IsUUID('4')
+  sampleId!: string;
+
+  /** Review text after the seller's corrections — sent only when it is this recording's text */
+  @IsOptional()
+  @IsString()
+  @MaxLength(ORDER_ASSISTANT_LIMITS.TEXT_LENGTH)
+  transcriptFinal?: string;
+}
+
 /** `POST /order-assistant/feedback` — what the seller chose, sent on «Добавить в корзину». */
 export class OrderAssistantFeedbackDto {
   @IsUUID('4')
@@ -53,6 +67,14 @@ export class OrderAssistantFeedbackDto {
   @ValidateNested({ each: true })
   @Type(() => FeedbackChoiceDto)
   choices!: FeedbackChoiceDto[];
+
+  /** Saved recordings of the session (store with voice consent); own ones only */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(VOICE_SAMPLES.PER_FEEDBACK)
+  @ValidateNested({ each: true })
+  @Type(() => FeedbackSampleDto)
+  samples?: FeedbackSampleDto[];
 }
 
 /** `POST /order-assistant/transcribe` — multipart fields besides the `audio` file. */

@@ -2,7 +2,7 @@
 
 > Created 2026-11-17. Status: **backend stage 1 implemented 2026-11-23** (`billing/src/order-assistant/`,
 > text matching + aliases + per-store flag); **mobile stage 2 (text assistant) implemented 2026-11-23**
-> (`billing-mobile/src/screens/order/voice/`, device QA pending); stage 0 bake-off done (medium-uz); **stage 3 (voice) built 2026-11-23** — `billing/stt-service/`, `POST /order-assistant/transcribe`, voice tab (device QA + server install pending). Decisions below were agreed with the user
+> (`billing-mobile/src/screens/order/voice/`, device QA pending); stage 0 bake-off done (medium-uz); **stage 3 (voice) built 2026-11-23** — `billing/stt-service/`, `POST /order-assistant/transcribe`, voice tab (web QA passed; device QA + server install pending); **stage 4 (voice data with consent) built 2026-11-23** — §7. Decisions below were agreed with the user
 > in conversation (2026-11-09 … 2026-11-17); items marked **(proposed)** still need confirmation.
 > Implementation stages: [PLAN.md](PLAN.md).
 > UI design: claude.ai artifact `LBqDuZU3wDgKNJXJBfrAYb`, page «Голосовой заказ» (artboards `Voice*`,
@@ -111,8 +111,9 @@ Input: free text (typed or transcribed) + `warehouseId`. Output: lines with cand
 `match` and `feedback` are implemented (2026-11-23); the exact contract is in `docs/api-map.md` →
 «Order Assistant Module». Differences from the first draft below: candidates also carry `productId`,
 `barCode` and `attributes` as `{ name, nameUz, nameEn, value }` (same as `GET /product/search`, so the
-client builds the cart line as usual); each line has `totalCandidates`; `feedback` has no `sampleId` /
-`transcriptFinal` yet (stage 4) and returns `{ learned, reinforced }`; store without the flag → 403
+client builds the cart line as usual); each line has `totalCandidates`; `feedback` takes `samples[]`
+(`{ sampleId, transcriptFinal? }`, several recordings per session because of «Ещё») instead of one
+`sampleId` / `transcriptFinal`, and returns `{ learned, reinforced, labeled }`; store without the flag → 403
 `ORDER_ASSISTANT_DISABLED`.
 
 All endpoints: JWT, any staff role allowed to create orders, store from the token, warehouse checked via
@@ -151,17 +152,19 @@ Two calls instead of one: text mode needs only `match`; the seller can edit the 
 ### `POST /order-assistant/feedback` — learn aliases
 
 ```json
-{ "warehouseId": "uuid", "sampleId": "uuid|null", "transcriptFinal": "…",
-  "choices": [{ "phrase": "strapela", "variantId": "…", "source": "PICKED|CHANGED|MANUAL|ACCEPTED" }] }
+{ "warehouseId": "uuid",
+  "choices": [{ "phrase": "strapela", "variantId": "…", "source": "PICKED|CHANGED|MANUAL|ACCEPTED" }],
+  "samples": [{ "sampleId": "uuid", "transcriptFinal": "…" }] }
 ```
-Sent once on «Добавить в корзину». Every `variantId` must belong to the store and warehouse.
-Fire-and-forget on the client (a failure never blocks adding to the cart).
+Sent on «Добавить в корзину» (chunks of 30 choices, `samples` with each — choices are appended). Every
+`variantId` must belong to the store and warehouse. Fire-and-forget on the client (a failure never blocks
+adding to the cart).
 
 ## 6. STT service
 
 - Python venv + `faster-whisper` (CTranslate2, `compute_type=int8`) + small FastAPI app, run as a
   **systemd service** on the existing VPS (the backend itself is not in Docker), bound to `127.0.0.1` only.
-- Limits in the unit: `MemoryMax=1.5G`, `CPUQuota=150%`, `Nice=10` — STT must never starve NestJS / PostgreSQL
+- Limits in the unit: `MemoryMax=1.8G`, `CPUQuota=150%`, `Nice=10` — STT must never starve NestJS / PostgreSQL
   (same 4 GB / 2 vCPU VPS). One job at a time (queue length ~3, then `429`).
 - Model: **medium-uz** `AlexAnoshka/fast-whisper-uz-rubaistt-v2-medium-ct2` (int8, ~1 GB RAM; chosen
   2026-11-23 after the bake-off below). Needs the planned +2–4 GB RAM.
@@ -169,7 +172,8 @@ Fire-and-forget on the client (a failure never blocks adding to the cart).
   `navai-uz/whisper-small-uzbek`, `navai-uz/whisper-medium-uzbek`, CTranslate2 builds such as
   `yuldashev222/whisper-small-uz-v1-ct2`. Choice after stage 0.
 - Options: `vad_filter=True` (no hallucinated text on silence), `language="uz"`, `beam_size=5`, **no hotwords**
-  (bake-off: they break the output). Expected latency on 2 vCPU: ~5–15 s for 20–40 s of speech.
+  (bake-off: they break the output), `temperature=0` + token cap (the fallback made a 2.7 s clip take 135–158 s —
+  STT_SERVICE.md §4). Measured on 2 threads: ≥ ~11 s per recording, 24 s of speech → 19–21 s.
 - NestJS talks to it through an adapter (`SttProvider` interface): moving STT to its own server or to a paid
   Uzbek API later is a config change.
 - **Bake-off (stage 0, 2026-11-23, 3 phone dictations / 11 products, warehouse `yogoch`, CPU int8, 2 threads,
@@ -192,12 +196,29 @@ Fire-and-forget on the client (a failure never blocks adding to the cart).
 
 ## 7. Voice data (training) and privacy
 
-- Per-store flag **`voiceDataConsent`** (off by default). Off → audio is discarded after transcription,
-  only aliases are learned.
-- On → a `VoiceSample` row per dictation: store, staff, warehouse, audio object key, duration, model,
-  raw transcript, **seller-corrected transcript** (the review textarea — this is the training label),
-  final choices. Audio goes to **object storage** (same provider as product photos), never into PostgreSQL.
-- Retention: 12 months (proposed), then audio deleted.
+Built 2026-11-23 (PLAN stage 4). User decisions (2026-11-23): consent switched by the **owner** (store
+settings) and a **platform admin** (admin store card); the seller **is told** in the voice tab; audio in a
+**separate private bucket**; withdrawing consent **deletes all the store's recordings** at once; 12 months.
+
+- Per-store flag **`voiceDataConsent`** (off by default) + `voiceDataConsentAt` / `voiceDataConsentById`.
+  Off → audio is discarded after transcription, only aliases are learned. Owner: `PUT /store/:id` (section
+  «Голосовой помощник» in «Настройки магазина», shown when the assistant is on; a red note warns that
+  saving «off» deletes the recordings). Admin: `PATCH /admin/stores/:id` («Сохранять записи голоса», asks
+  before turning off).
+- On → a `VoiceSample` row per dictation of a store employee (never for a platform admin): store, staff,
+  warehouse, audio object key, mime, size, duration, model, raw transcript; `feedback` adds the
+  **seller-corrected transcript** (the review textarea — the training label) and the choices. Audio goes to
+  the private bucket `VOICE_S3_BUCKET_NAME` (`voice/<storeId>/<yyyy-mm>/<id>.<ext>`, same provider and keys
+  as product photos, no public URL), never into PostgreSQL. Saving is best effort: a storage error never
+  fails the transcription.
+- Label rule (app): the review text is sent as `transcriptFinal` only when the whole session came from one
+  recording; after «Ещё» the text mixes several inputs, so the recordings get the choices without a text.
+- Seller notice while consent is on: «Запись сохраняется, чтобы улучшить распознавание» under the mic.
+- Retention: 12 months, then audio and row deleted by a daily sweep inside the backend
+  (`VoiceSampleService`, 5 min after start then every 24 h — one PM2 instance; no new dependency). The
+  sweep also deletes any sample of a store without consent (a crash between the flag and the delete).
+  Deletion order: audio, then row, so a storage failure is retried next day.
+- Dataset: `billing/tools/voice-export/export.ts` (server only) → `audio/*` + `metadata.jsonl`.
 - Voice is personal data; Uzbekistan's personal-data law requires storing citizens' data on servers in
   Uzbekistan — keep audio on local servers, do **not** send it to foreign APIs (Gemini, OpenAI, …) for
   training. User decision (2026-11-17): follow the law; no formal legal review for the first stores

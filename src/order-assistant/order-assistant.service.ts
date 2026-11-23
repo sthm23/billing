@@ -31,6 +31,7 @@ import {
   TRANSCRIBE_MIME_TYPES,
 } from './order-assistant.constants';
 import { SttClient } from './stt.client';
+import { VoiceSampleService } from './voice-sample.service';
 
 export interface MatchResponse {
   lines: MatchLine[];
@@ -39,7 +40,10 @@ export interface MatchResponse {
 export interface TranscribeResponse {
   text: string;
   durationMs: number;
-  /** Saved voice sample (stage 4, with the store's consent); always null for now */
+  /**
+   * Saved voice sample (store with `voiceDataConsent`), null when not kept. The app sends it
+   * back in `feedback` with the corrected text — the training label.
+   */
   sampleId: string | null;
 }
 
@@ -48,7 +52,20 @@ export interface FeedbackResponse {
   learned: number;
   /** Existing aliases confirmed by PICKED / ACCEPTED */
   reinforced: number;
+  /** Own voice samples that got the seller's result */
+  labeled: number;
 }
+
+interface AssistantStore {
+  id: string;
+  voiceDataConsent: boolean;
+}
+
+const ASSISTANT_STORE_SELECT = {
+  id: true,
+  orderAssistantEnabled: true,
+  voiceDataConsent: true,
+} as const;
 
 /**
  * Order assistant (docs/voice-order/DESIGN.md): text → candidate variants of the
@@ -60,13 +77,14 @@ export class OrderAssistantService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stt: SttClient,
+    private readonly samples: VoiceSampleService,
     @InjectPinoLogger(OrderAssistantService.name)
     private readonly logger: PinoLogger,
   ) {}
 
   /**
-   * Seller's recording → text for `match`. Same access as `match`; the audio
-   * only passes through to the local STT service and is not stored (stage 3).
+   * Seller's recording → text for `match`. Same access as `match`. The audio goes to the
+   * local STT service; it is kept (with the raw text) only when the store gave consent.
    */
   async transcribe(
     dto: TranscribeAudioDto,
@@ -74,7 +92,7 @@ export class OrderAssistantService {
     user: CurrentUser,
   ): Promise<TranscribeResponse> {
     await assertWarehouseAccess(this.prisma, user, dto.warehouseId);
-    await this.assertAssistantStore(user, dto.warehouseId);
+    const store = await this.assertAssistantStore(user, dto.warehouseId);
 
     if (!audio?.buffer.length) {
       throw new BadRequestException('Audio file is required (field `audio`)');
@@ -85,11 +103,28 @@ export class OrderAssistantService {
     }
 
     const startedAt = Date.now();
-    const { text, durationMs } = await this.stt.transcribe({
+    const { text, durationMs, model } = await this.stt.transcribe({
       buffer: audio.buffer,
       mimeType,
       fileName: audio.originalname || 'audio',
     });
+    const transcript = text.slice(0, ORDER_ASSISTANT_LIMITS.TEXT_LENGTH);
+
+    // Only a seller of the store records for it (a platform admin has no staff record)
+    const sampleId =
+      store.voiceDataConsent && user.staff?.storeId === store.id
+        ? await this.samples.save({
+            storeId: store.id,
+            warehouseId: dto.warehouseId,
+            staffId: user.staff.id,
+            buffer: audio.buffer,
+            mimeType,
+            durationMs,
+            model,
+            transcript,
+          })
+        : null;
+
     // Stats only — never the seller's words
     this.logger.info(
       {
@@ -97,16 +132,13 @@ export class OrderAssistantService {
         bytes: audio.size,
         audioMs: durationMs,
         chars: text.length,
+        saved: sampleId !== null,
         ms: Date.now() - startedAt,
       },
       'Order assistant transcribe',
     );
 
-    return {
-      text: text.slice(0, ORDER_ASSISTANT_LIMITS.TEXT_LENGTH),
-      durationMs,
-      sampleId: null,
-    };
+    return { text: transcript, durationMs, sampleId };
   }
 
   async match(
@@ -116,7 +148,10 @@ export class OrderAssistantService {
     await assertWarehouseAccess(this.prisma, user, dto.warehouseId);
     const startedAt = Date.now();
 
-    const storeId = await this.assertAssistantStore(user, dto.warehouseId);
+    const { id: storeId } = await this.assertAssistantStore(
+      user,
+      dto.warehouseId,
+    );
     const index = buildIndex(
       await this.loadCatalogue(storeId, dto.warehouseId),
     );
@@ -161,7 +196,7 @@ export class OrderAssistantService {
     await assertWarehouseAccess(this.prisma, user, dto.warehouseId);
     await this.assertAssistantStore(user, dto.warehouseId);
     // A platform admin has no staff record to attribute an alias to
-    if (!user.staff) return { learned: 0, reinforced: 0 };
+    if (!user.staff) return { learned: 0, reinforced: 0, labeled: 0 };
 
     const storeId = user.staff.storeId;
     const variantIds = [...new Set(dto.choices.map((c) => c.variantId))];
@@ -223,12 +258,30 @@ export class OrderAssistantService {
       return { learned, reinforced };
     });
 
+    const labeled = dto.samples?.length
+      ? await this.samples.label(
+          storeId,
+          staffId,
+          dto.samples,
+          dto.choices.map(({ phrase, variantId, source }) => ({
+            phrase,
+            variantId,
+            source,
+          })),
+        )
+      : 0;
+
     this.logger.info(
-      { warehouseId: dto.warehouseId, choices: dto.choices.length, ...result },
+      {
+        warehouseId: dto.warehouseId,
+        choices: dto.choices.length,
+        ...result,
+        labeled,
+      },
       'Order assistant feedback',
     );
 
-    return result;
+    return { ...result, labeled };
   }
 
   /**
@@ -238,19 +291,17 @@ export class OrderAssistantService {
   private async assertAssistantStore(
     user: CurrentUser,
     warehouseId: string,
-  ): Promise<string> {
+  ): Promise<AssistantStore> {
     const store =
       user.role !== UserRole.ADMIN && user.staff
         ? await this.prisma.store.findUnique({
             where: { id: user.staff.storeId },
-            select: { id: true, orderAssistantEnabled: true },
+            select: ASSISTANT_STORE_SELECT,
           })
         : (
             await this.prisma.warehouse.findUniqueOrThrow({
               where: { id: warehouseId },
-              select: {
-                store: { select: { id: true, orderAssistantEnabled: true } },
-              },
+              select: { store: { select: ASSISTANT_STORE_SELECT } },
             })
           ).store;
     if (!store?.orderAssistantEnabled) {
@@ -260,7 +311,7 @@ export class OrderAssistantService {
       });
     }
 
-    return store.id;
+    return { id: store.id, voiceDataConsent: store.voiceDataConsent };
   }
 
   /** Sellable variants of the warehouse (~500 per store, loaded per request: price and stock stay fresh). */

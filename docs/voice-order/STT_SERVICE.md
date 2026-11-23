@@ -96,6 +96,26 @@ sudo systemctl restart sthm-stt
 Changing the model: set `Environment=STT_MODEL=…` in the unit, restart; re-run the stage 0 bake-off
 (`billing/tools/stt-bench/`) before switching.
 
+## 6. Voice samples bucket (stage 4)
+
+Recordings of stores that gave consent (DESIGN §7) go to a **separate private bucket** — never the public
+photo bucket.
+
+1. Uztelecom panel → create bucket `sthm-voice` (prod) / `sthm-voice-dev` (dev). **No public access**, no
+   public-read policy; the same access keys as the photo bucket must be allowed to Put / Get / Delete / List.
+2. `billing/.env`: `VOICE_S3_BUCKET_NAME=sthm-voice`, `pm2 restart billing-app`. Unset → nothing is kept
+   (the log warns once).
+3. Check: turn on consent for a test store, dictate once → a `voice_samples` row and an object under
+   `voice/<storeId>/`; turn consent off → both gone.
+
+Retention (12 months) and clean-up of stores without consent run inside the backend daily — no cron.
+Dataset for fine-tuning (on the server; the data stays in Uzbekistan):
+
+```bash
+cd /var/www/billing && npx tsx tools/voice-export/export.ts /opt/sthm-stt/dataset          # labeled only
+npx tsx tools/voice-export/export.ts /opt/sthm-stt/dataset --all                            # + raw transcripts
+```
+
 ## Local development
 
 ```bash

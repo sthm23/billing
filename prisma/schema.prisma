@@ -75,11 +75,17 @@ model Store {
   creator   User   @relation(fields: [createdBy], references: [id])
 
   /// Store sells goods (orders, payments, returns of sales)
-  salesEnabled  Boolean @default(true)
+  salesEnabled          Boolean   @default(true)
   /// Store rents goods out (rental module); at least one of the two flags is true
-  rentalEnabled Boolean @default(false)
+  rentalEnabled         Boolean   @default(false)
   /// Voice / text order assistant (docs/voice-order/DESIGN.md); switched on by a platform admin only
-  orderAssistantEnabled Boolean @default(false)
+  orderAssistantEnabled Boolean   @default(false)
+  /// Store agreed that sellers' voice recordings are kept to improve speech recognition
+  /// (docs/voice-order/DESIGN.md §7). OWNER or platform ADMIN; turning it off deletes every sample
+  voiceDataConsent      Boolean   @default(false)
+  /// When / by whom (user id, no FK: users are never deleted) consent was last switched
+  voiceDataConsentAt    DateTime?
+  voiceDataConsentById  String?
 
   /// Subscription state: TRIAL (first month, free) → ACTIVE (paid) → SUSPENDED (blocked by an admin)
   status         StoreStatus         @default(TRIAL)
@@ -111,6 +117,7 @@ model Store {
   cashboxes     Cashbox[]
   customerDebts CustomerDebt[]
   voiceAliases  VoiceAlias[]
+  voiceSamples  VoiceSample[]
 
   @@map("stores")
 }
@@ -151,6 +158,7 @@ model Staff {
   cashTransactions CashTransaction[]
   debtPayments     DebtPayment[]
   voiceAliases     VoiceAlias[]
+  voiceSamples     VoiceSample[]
 
   @@index([storeId])
   @@map("staff")
@@ -186,6 +194,7 @@ model Warehouse {
   store           Store              @relation(fields: [storeId], references: [id])
   cashboxes       Cashbox[]
   rentalCleanings RentalCleaning[]
+  voiceSamples    VoiceSample[]
 
   @@index([storeId])
   @@map("warehouses")
@@ -492,6 +501,40 @@ model VoiceAlias {
 
   @@unique([storeId, phrase, variantId])
   @@map("voice_aliases")
+}
+
+/// A seller's dictation kept for training the speech model — only while the store has
+/// `voiceDataConsent` (docs/voice-order/DESIGN.md §7). Audio lives in the private voice bucket
+/// (`audioKey`), never in PostgreSQL. Deleted after 12 months or when consent is turned off.
+model VoiceSample {
+  id              String    @id @default(uuid())
+  storeId         String
+  warehouseId     String
+  /// Seller who recorded it
+  staffId         String
+  /// Object key in the voice bucket: voice/<storeId>/<yyyy-mm>/<id>.<ext>
+  audioKey        String
+  mimeType        String
+  bytes           Int
+  durationMs      Int
+  /// STT model that produced `transcript`
+  model           String?
+  /// Raw speech-to-text result
+  transcript      String
+  /// Seller-corrected text from the review screen — the training label (null: not confirmed)
+  transcriptFinal String?
+  /// What the seller added: [{ phrase, variantId, source }] (POST /order-assistant/feedback)
+  choices         Json?
+  labeledAt       DateTime?
+  createdAt       DateTime  @default(now())
+
+  store     Store     @relation(fields: [storeId], references: [id])
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+  staff     Staff     @relation(fields: [staffId], references: [id])
+
+  @@index([storeId, createdAt])
+  @@index([createdAt])
+  @@map("voice_samples")
 }
 
 /**
