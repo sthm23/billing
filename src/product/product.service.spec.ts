@@ -599,6 +599,7 @@ describe('ProductService', () => {
         canSell: true,
         canRent: false,
         rentPricePerDay: new Prisma.Decimal(150000),
+        product: { isArchived: false },
       });
       prisma.warehouse.findUnique.mockResolvedValue({ id: WAREHOUSE });
       await service.updateProductVariant(
@@ -619,6 +620,7 @@ describe('ProductService', () => {
         canSell: true,
         canRent: false,
         rentPricePerDay: null,
+        product: { isArchived: false },
       });
       prisma.warehouse.findUnique.mockResolvedValue({ id: WAREHOUSE });
       await expect(
@@ -628,6 +630,21 @@ describe('ProductService', () => {
           owner(),
         ),
       ).rejects.toThrow('rent price per day');
+      expect(prisma.productVariant.update).not.toHaveBeenCalled();
+    });
+    it('rejects a price / flag change of an archived product variant', async () => {
+      prisma.productVariant.findUnique.mockResolvedValue({
+        id: 'variant',
+        storeId: STORE,
+        warehouseId: WAREHOUSE,
+        canSell: true,
+        canRent: false,
+        rentPricePerDay: null,
+        product: { isArchived: true },
+      });
+      await expect(
+        service.updateProductVariant('variant', { price: 100000 }, owner()),
+      ).rejects.toThrow('archived');
       expect(prisma.productVariant.update).not.toHaveBeenCalled();
     });
   });
@@ -733,6 +750,25 @@ describe('ProductService', () => {
           owner(),
         ),
       ).rejects.toThrow('does not belong');
+      expect(prisma.productVariant.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects new variants for an archived product', async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        id: 'product',
+        name: 'Oxford',
+        storeId: STORE,
+        warehouseId: WAREHOUSE,
+        isArchived: true,
+        category: { name: 'Рубашки' },
+        attributes: [{ attributeId: SIZE }, { attributeId: COLOR }],
+      });
+      await expect(
+        service.createProductVariant(
+          dto([variant({ attributes: attrs('m', 'white') })]),
+          owner(),
+        ),
+      ).rejects.toThrow('archived');
       expect(prisma.productVariant.create).not.toHaveBeenCalled();
     });
 

@@ -56,7 +56,13 @@ products or bring one back. The UI also calls archiving «Удалить тов�
 - Specs: list with `archived=true` (owner / manager scope / seller 403), `counts.archived`, restore
   (ok / not archived 400 / other warehouse 403 / other store 403).
 
-### Stage 2 — backend: read-only archived card
+### Stage 2 — backend: read-only archived card — DONE 2026-11-24
+> `ARCHIVED_PRODUCT_ERROR` (`product.constants.ts`, same text as the old PATCH message «An archived product cannot
+> be edited») used by `updateProduct`, `createProductVariant`, `updateProductVariant` and
+> `WarehouseService.inventoryMovement` (variant read with `product.isArchived` inside the transaction, checked
+> after the access check). Specs: product + warehouse services 70 passing (3 new). Full suite: 480 passing;
+> the 12 failing suites are scaffold `*.controller.spec.ts` + `admin.service.spec.ts` without Prisma mocks
+> (pre-existing).
 - Reject with **400** `An archived product cannot be changed` (or reuse the existing PATCH message) in:
   - `createProductVariant` (`POST /product/variants`);
   - variant price update (`PUT /product/variants/:id`);

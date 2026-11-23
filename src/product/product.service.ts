@@ -29,7 +29,10 @@ import {
   UpdateProductVariantPriceDTO,
 } from './dto/update-product.dto';
 import { ProductListParams } from './dto/product-list-params.dto';
-import { LOW_STOCK_THRESHOLD } from './product.constants';
+import {
+  ARCHIVED_PRODUCT_ERROR,
+  LOW_STOCK_THRESHOLD,
+} from './product.constants';
 import { assertWarehouseAccess } from '@shared/helper/warehouse-access.helper';
 import { S3Service } from '@prisma/s3.service';
 import {
@@ -195,6 +198,9 @@ export class ProductService {
       });
       if (!product) throw new NotFoundException('Product not found');
       this.assertWarehouseAccess(product.storeId, product.warehouseId, user);
+      if (product.isArchived) {
+        throw new BadRequestException(ARCHIVED_PRODUCT_ERROR);
+      }
       // SKU uses the category name from the DB, never the client's `dto.category`
       const categoryName = product.category?.name ?? '';
       const warehouse = await this.prisma.warehouse.findUnique({
@@ -1030,10 +1036,14 @@ export class ProductService {
     try {
       const variant = await this.prisma.productVariant.findUnique({
         where: { id },
+        include: { product: { select: { isArchived: true } } },
       });
       if (!variant) throw new NotFoundException('Product variant not found');
       // Own store; a non-owner also needs the variant's warehouse
       this.assertWarehouseAccess(variant.storeId, variant.warehouseId, user);
+      if (variant.product.isArchived) {
+        throw new BadRequestException(ARCHIVED_PRODUCT_ERROR);
+      }
 
       await this.prisma.productVariant.update({
         where: { id },
@@ -1070,7 +1080,7 @@ export class ProductService {
     if (!product) throw new NotFoundException('Product not found');
     this.assertWarehouseAccess(product.storeId, product.warehouseId, user);
     if (product.isArchived) {
-      throw new BadRequestException('An archived product cannot be edited');
+      throw new BadRequestException(ARCHIVED_PRODUCT_ERROR);
     }
 
     const name = dto.name?.trim();

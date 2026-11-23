@@ -23,6 +23,7 @@ import { HashingHelper } from '@shared/helper/hash.helper';
 import { Prisma, Staff, User } from '@generated/client';
 import { StockInDto } from './dto/stock-in.dto';
 import { CurrentUser } from '@auth/models/auth.model';
+import { ARCHIVED_PRODUCT_ERROR } from '@product/product.constants';
 
 @Injectable()
 export class WarehouseService {
@@ -171,6 +172,7 @@ export class WarehouseService {
       const result = await this.prisma.$transaction(async (tx) => {
         const variant = await tx.productVariant.findUnique({
           where: { id: dto.variantId },
+          include: { product: { select: { isArchived: true } } },
         });
         if (!variant) {
           this.logger.warn(
@@ -190,6 +192,14 @@ export class WarehouseService {
           throw new NotFoundException('Warehouse not found');
         }
         this.assertWarehouseAccess(warehouse, user);
+        // An archived product is read-only: restore it first
+        if (variant.product.isArchived) {
+          this.logger.warn(
+            { warehouseId, variantId: dto.variantId },
+            'Inventory movement rejected: product archived',
+          );
+          throw new BadRequestException(ARCHIVED_PRODUCT_ERROR);
+        }
 
         if (dto.type === StockMovementType.IN) {
           await tx.inventory.upsert({

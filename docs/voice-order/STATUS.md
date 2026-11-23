@@ -24,7 +24,7 @@ Sellers are taught to name products one after another.
 | 0 | STT bake-off on 3 real dictations | ✅ done: **medium-uz** (`AlexAnoshka/fast-whisper-uz-rubaistt-v2-medium-ct2`), **no hotwords** (they returned empty text). Score 10/11 products |
 | 1 | Backend text matching + aliases + admin flag `orderAssistantEnabled` | ✅ done |
 | 2 | Mobile text assistant (cart «Голос» → review screen → cart) | ✅ built, **device QA pending** |
-| 3 | Voice: STT service + `POST /order-assistant/transcribe` + voice tab | ✅ built, **web QA passed**, device QA and server install pending |
+| 3 | Voice: STT service + `POST /order-assistant/transcribe` + voice tab | ✅ built, **web QA passed**, **installed on the VPS 2026-11-24** (`install.sh`; model load 15.5 s), device QA pending |
 | 4 | Voice data with consent (`voiceDataConsent`, `VoiceSample`, private bucket, 12-month retention, export) | ✅ built, **not tested against a real bucket**, device QA pending |
 | 5 | Fine-tune on collected samples | ⏳ waiting for data |
 
