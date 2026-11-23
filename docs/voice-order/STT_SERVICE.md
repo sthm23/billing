@@ -25,6 +25,15 @@ On the 4 GB VPS with NestJS + PostgreSQL + Docker, check the `available` column,
 
 ## 2. Install
 
+**Script (recommended)** — does §2–3 below in one go, plus a sudo rule so `deploy.sh` can restart the service.
+Run once as the user that owns `/var/www/billing` (the GitHub Actions deploy user):
+
+```bash
+sudo bash /var/www/billing/stt-service/install.sh     # waits until /health is ok (first start ~800 MB download)
+```
+
+By hand:
+
 ```bash
 sudo apt install -y python3-venv python3-pip
 cd /var/www/billing/stt-service            # comes with the billing git checkout
@@ -86,7 +95,9 @@ re-decoded up to 6 times — and hit the backend timeout (503). Do not remove th
 
 ## 5. Updates
 
-`deploy.sh` does not touch this service. After a change in `stt-service/`:
+Automatic: `deploy.sh` (GitHub Actions on push to `main`) runs `pip install` and
+`sudo -n systemctl restart sthm-stt` when `stt-service/` changed in the pulled commits, then checks `/health`.
+It never fails the backend deploy — it prints a warning (not installed / not answering). By hand:
 
 ```bash
 /opt/sthm-stt/venv/bin/pip install -r /var/www/billing/stt-service/requirements.txt
