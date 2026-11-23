@@ -14,8 +14,9 @@
 11. [Cashbox](#cashbox)
 12. [Debts](#debts)
 13. [Catalog (Categories, Brands, Attributes)](#catalog)
-14. [Enums](#enums)
-15. [Индексы и ограничения](#индексы-и-ограничения)
+14. [Order Assistant](#order-assistant)
+15. [Enums](#enums)
+16. [Индексы и ограничения](#индексы-и-ограничения)
 
 ---
 
@@ -131,6 +132,7 @@ model Store {
   
   salesEnabled  Boolean @default(true)  // магазин продаёт товары
   rentalEnabled Boolean @default(false) // магазин сдаёт товары в аренду
+  orderAssistantEnabled Boolean @default(false) // голосовой / текстовый помощник заказов, включает только админ
   
   // Подписка: TRIAL (первый месяц бесплатно) → ACTIVE (оплачен) → SUSPENDED (приостановлен админом)
   status         StoreStatus         @default(TRIAL)
@@ -156,6 +158,7 @@ model Store {
   attributes    AttributeOnStore[]
   cashboxes     Cashbox[]
   customerDebts CustomerDebt[]
+  voiceAliases  VoiceAlias[]
 }
 ```
 
@@ -168,6 +171,7 @@ model Store {
 - `salesEnabled` — продажи (заказы, оплаты, возвраты продаж); при `false` продажа отклоняется
 - `rentalEnabled` — модуль аренды; при `false` все `/rental` эндпоинты отвечают 400 `RENTAL_DISABLED`
 - Хотя бы один флаг всегда `true` (проверяется в `PUT /store/:id` и `PATCH /admin/stores/:id`)
+- `orderAssistantEnabled` (миграция `20261122191509_store_order_assistant_flag`, default `false`) — помощник заказов (`/order-assistant/*`); включает и выключает **только платформенный ADMIN** (`POST` / `PATCH /admin/stores`), владелец через `PUT /store/:id` не меняет; при `false` → 403 `ORDER_ASSISTANT_DISABLED`
 
 **Статус подписки** (миграция `20261110120000_store_subscription`; существующие магазины получили `ACTIVE`):
 - `status` (`StoreStatus`): `TRIAL` — новый магазин из `POST /admin/stores`, `trialEndsAt = now + 1 месяц`; `ACTIVE` — оплачен (`paidUntil` вводит админ); `SUSPENDED` — приостановлен админом (`POST /admin/stores/:id/suspend`: `suspendedAt`, `suspendedById`, `suspendReason`, `suspendComment`)
@@ -1273,6 +1277,40 @@ model ProductTagValue {
   @@id([productId, tagValueId])
 }
 ```
+
+---
+
+## Order Assistant
+
+Голосовой / текстовый помощник заказов (`billing/docs/voice-order/DESIGN.md`), миграция `20261122191124_voice_alias`.
+
+### VoiceAlias
+
+Выученный алиас: продавец исправил помощника (выбрал другой вариант — `CHANGED`, или нашёл вручную — `MANUAL`), значит эта нормализованная фраза в этом магазине означает этот вариант.
+
+```prisma
+model VoiceAlias {
+  id          String   @id @default(uuid())
+  storeId     String
+  phrase      String   // ключ фразы: phraseKey() из src/order-assistant/engine/normalize.ts (основы слов, размеры 4x6, числа)
+  variantId   String
+  hits        Int      @default(1)      // сколько раз подтверждён; побеждает самый частый
+  lastUsedAt  DateTime @default(now())
+  createdById String   // Staff, кто научил первым
+  createdAt   DateTime @default(now())
+
+  store     Store          @relation(...)
+  variant   ProductVariant @relation(..., onDelete: Cascade)
+  createdBy Staff          @relation(...)
+
+  @@unique([storeId, phrase, variantId])
+  @@map("voice_aliases")
+}
+```
+
+- Пишется только `POST /order-assistant/feedback`: `CHANGED` / `MANUAL` → upsert, `PICKED` / `ACCEPTED` → только `hits + 1` у существующего.
+- Читается `POST /order-assistant/match`: алиас варианта, который больше не продаётся на этом складе (архив, `canSell = false`, другой склад), игнорируется.
+- Один алиас на фразу → MATCHED; несколько → AMBIGUOUS, самые частые первыми.
 
 ---
 

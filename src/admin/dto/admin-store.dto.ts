@@ -206,6 +206,11 @@ export class CreateAdminStoreDto {
 
   @IsBoolean()
   rentalEnabled!: boolean;
+
+  /** Voice / text order assistant; off when omitted */
+  @IsOptional()
+  @IsBoolean()
+  orderAssistantEnabled?: boolean;
 }
 
 /** PATCH /admin/stores/:id — only the fields sent are changed */
@@ -224,6 +229,11 @@ export class UpdateAdminStoreDto {
   @IsOptional()
   @IsBoolean()
   rentalEnabled?: boolean;
+
+  /** Voice / text order assistant (only an admin can switch it) */
+  @IsOptional()
+  @IsBoolean()
+  orderAssistantEnabled?: boolean;
 }
 
 /** POST /admin/stores/:id/suspend */

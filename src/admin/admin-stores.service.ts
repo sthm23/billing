@@ -84,6 +84,8 @@ export type AdminStoreListItem = {
   createdAt: Date;
   salesEnabled: boolean;
   rentalEnabled: boolean;
+  /** Voice / text order assistant — admin only */
+  orderAssistantEnabled: boolean;
   owner: AdminStoreOwner | null;
   warehousesCount: number;
   staffCount: number;
@@ -189,6 +191,7 @@ function toListItem(row: ListRow, now: Date): AdminStoreListItem {
     createdAt: row.createdAt,
     salesEnabled: row.salesEnabled,
     rentalEnabled: row.rentalEnabled,
+    orderAssistantEnabled: row.orderAssistantEnabled,
     owner: toOwner(row.staff[0]),
     warehousesCount: row._count.warehouse,
     staffCount: row._count.staff,
@@ -436,6 +439,7 @@ export class AdminStoresService {
             trialEndsAt: addMonths(now, TRIAL_MONTHS),
             salesEnabled: dto.salesEnabled,
             rentalEnabled: dto.rentalEnabled,
+            orderAssistantEnabled: dto.orderAssistantEnabled ?? false,
             address: dto.address ?? null,
             inn: dto.inn ?? null,
             note: dto.note ?? null,
@@ -509,6 +513,9 @@ export class AdminStoresService {
         ...(dto.name ? { name: dto.name } : {}),
         salesEnabled,
         rentalEnabled,
+        ...(dto.orderAssistantEnabled === undefined
+          ? {}
+          : { orderAssistantEnabled: dto.orderAssistantEnabled }),
       },
     });
     this.logger.info({ storeId: id, dto }, 'Store updated by admin');

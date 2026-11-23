@@ -1,6 +1,7 @@
 # Voice order assistant — design
 
-> Created 2026-11-17. Status: **planned, not implemented**. Decisions below were agreed with the user
+> Created 2026-11-17. Status: **backend stage 1 implemented 2026-11-23** (`billing/src/order-assistant/`,
+> text matching + aliases + per-store flag); mobile and voice not started. Decisions below were agreed with the user
 > in conversation (2026-11-09 … 2026-11-17); items marked **(proposed)** still need confirmation.
 > Implementation stages: [PLAN.md](PLAN.md).
 > UI design: claude.ai artifact `LBqDuZU3wDgKNJXJBfrAYb`, page «Голосовой заказ» (artboards `Voice*`,
@@ -38,6 +39,7 @@ Cart → 🎤 / ✍ → [transcribe] → text → [match] → review screen → 
 | 9 | Speech-to-text is a **self-hosted Uzbek fine-tuned Whisper** (faster-whisper, int8, CPU) on the same VPS, as a separate local service (§6). Final model chosen after the recording bake-off (PLAN stage 0). |
 | 10 | Recordings may be stored **only with the store's consent** to improve the STT model later (§7). Seller corrections always train the aliases (no audio needed). |
 | 11 | Text input ships first (PLAN stages 1–2) — it needs no new infrastructure; voice is added on top. |
+| 12 | **Not on by default** (user, 2026-11-23): a store asks for the assistant and a **platform admin** switches `Store.orderAssistantEnabled` (default `false`) in the store card (`POST` / `PATCH /admin/stores`). The owner cannot switch it. Off → `/order-assistant/*` answer 403 `ORDER_ASSISTANT_DISABLED`; the mobile app hides «Голос» (from `user.staff.store` of `/auth/me`). Name chosen over `hasAIAccess`: v1 has no AI, and each future AI feature gets its own flag. |
 
 ## 3. Scale and catalogue facts
 
@@ -66,8 +68,9 @@ Input: free text (typed or transcribed) + `warehouseId`. Output: lines with cand
      `nol to'rt`=0.4; `один…`, `полтора`=1.5, …), plus STT spellings (`turt`, `tort`, `тўрт`);
    - dimension patterns → canonical form: `4 ga 2`, `to'rtga ikki`, `4 на 2`, `4×2`, `4*2` → `4x2`;
      `6 metr(li)`, `6 m`, `6 м` → length `6`.
-3. **Candidate search** in the warehouse catalogue (cached per warehouse, invalidated on product/variant
-   change):
+3. **Candidate search** in the warehouse catalogue (loaded per request — ~500 variants in one query, so price
+   and stock are always fresh and no cache invalidation is needed; add a cache only if latency demands it.
+   Measured locally 2026-11-23: 30–100 ms for 21 variants):
    - exact hits first: SKU, barcode, **learned alias** (normalized phrase → variant);
    - product name: fuzzy (trigram similarity on normalized names, threshold tuned on the bake-off data);
    - attributes: **numbers and sizes match strictly** — a phrase with `4x6` never matches `4x8`;
@@ -83,12 +86,32 @@ Input: free text (typed or transcribed) + `warehouseId`. Output: lines with cand
 5. **Aliases (learning without AI).** When the seller confirms the review, the client reports what was chosen
    for each phrase (picked candidate, switched variant, found manually). The backend upserts
    `phrase → variantId` for the store; confirmed aliases win over fuzzy search next time.
-   Only explicit confirmations are learned; aliases pointing to archived/foreign variants are ignored.
+   Only **corrections** create an alias: `CHANGED` (switched the MATCHED variant) and `MANUAL` (found by
+   search). `PICKED` (chose among AMBIGUOUS) and `ACCEPTED` only add `hits` to an existing alias — picking a
+   size for a vague «strapela» is a one-off choice, not a synonym. One alias for a phrase → MATCHED, several →
+   AMBIGUOUS (most used first). Aliases pointing to archived / not sellable / other-warehouse variants are
+   ignored.
 
-## 5. API (proposed contract)
+   Implementation (2026-11-23): `src/order-assistant/engine/` — `text.ts` (Cyrillic → Latin, folding
+   q→k, x/kh→h, apostrophes, doubled letters, leading ye→e; similarity = max(edit-distance ratio, trigram),
+   typed prefix ≥ 4 letters = 0.75), `normalize.ts` (tokens, number words incl. `nol to'rt`, `bir butun
+   besh`, `o'n ikki`, `полтора`; sizes `4 ga 6`, `4 на 6`, `4×6`; quantities `-ta`, `dona`, `шт` and a
+   number before the first word are dropped), `segment.ts`, `matcher.ts` (thresholds: name word ≥ 0.72,
+   MATCHED needs score ≥ 0.75 and a lead ≥ 0.15). Two numbers in a row without `ga` may be a size
+   (`besh to'rt` = 5x4); any other number must equal a numeric attribute.
+
+## 5. API
+
+`match` and `feedback` are implemented (2026-11-23); the exact contract is in `docs/api-map.md` →
+«Order Assistant Module». Differences from the first draft below: candidates also carry `productId`,
+`barCode` and `attributes` as `{ name, nameUz, nameEn, value }` (same as `GET /product/search`, so the
+client builds the cart line as usual); each line has `totalCandidates`; `feedback` has no `sampleId` /
+`transcriptFinal` yet (stage 4) and returns `{ learned, reinforced }`; store without the flag → 403
+`ORDER_ASSISTANT_DISABLED`.
 
 All endpoints: JWT, any staff role allowed to create orders, store from the token, warehouse checked via
-`StaffOnWarehouse`, rate-limited per staff (throttler). Module: `billing/src/order-assistant/`.
+`StaffOnWarehouse`, store flag `orderAssistantEnabled`, rate-limited 30 / min per user (throttler).
+Module: `billing/src/order-assistant/`.
 
 ### `POST /order-assistant/match` — text → lines (read-only)
 
@@ -184,6 +207,18 @@ Fire-and-forget on the client (a failure never blocks adding to the cart).
 - LLM re-ranker: only if the stage 0/2 match rate is too low — the LLM gets the phrase and **our** top
   candidates (never the whole catalogue) and its answer is accepted only if the id is one of them.
 - Streaming (live) transcription while speaking.
+
+### Known limitations of the v1 matcher (2026-11-23)
+
+- A product the catalogue does not know does not open a new phrase: «foner nol olti strapela» without
+  strapela in the warehouse stays one phrase (fanera found, `strapela` counted as an unmatched word → the
+  line becomes AMBIGUOUS with a low score, not a separate NOT_FOUND). The seller sees the transcript and
+  can edit it; voice hotwords (stage 3) and catalogue cleanup reduce it. Possible fix: split trailing
+  unmatched words into their own NOT_FOUND line.
+- A number said **before** the product name is taken as a quantity (`nol to'rt foner` loses 0.4) — sellers
+  normally say the name first.
+- An attribute word that looks like another product's name may split a phrase (no such case in the
+  current catalogue).
 
 ### Rejected alternatives (2026-11-22)
 

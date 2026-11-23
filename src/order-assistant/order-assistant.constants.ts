@@ -1,0 +1,55 @@
+/** Request limits of the order assistant (docs/voice-order/DESIGN.md §5). */
+export const ORDER_ASSISTANT_LIMITS = {
+  /** Characters of typed / transcribed text in one `match` */
+  TEXT_LENGTH: 2000,
+  /** Products (phrases) in one `match` */
+  PHRASES: 30,
+  /** Characters of one phrase sent back in `feedback` */
+  PHRASE_LENGTH: 200,
+} as const;
+
+/** What the seller did with a review line; only corrections teach a new alias. */
+export const FEEDBACK_SOURCE = {
+  /** Picked one of the AMBIGUOUS candidates */
+  PICKED: 'PICKED',
+  /** Replaced the MATCHED variant with another candidate */
+  CHANGED: 'CHANGED',
+  /** Found the product with «Найти вручную» */
+  MANUAL: 'MANUAL',
+  /** Kept the MATCHED variant */
+  ACCEPTED: 'ACCEPTED',
+} as const;
+export type FeedbackSource =
+  (typeof FEEDBACK_SOURCE)[keyof typeof FEEDBACK_SOURCE];
+
+/**
+ * CHANGED / MANUAL create or reinforce an alias. PICKED / ACCEPTED only
+ * reinforce an existing one: picking a size for a vague «strapela» is a
+ * one-off choice, not a synonym.
+ */
+export const LEARNING_SOURCES: ReadonlySet<FeedbackSource> = new Set([
+  FEEDBACK_SOURCE.CHANGED,
+  FEEDBACK_SOURCE.MANUAL,
+]);
+
+const MINUTE_MS = 60_000;
+
+/**
+ * Per-user rate limit for both routes (throttler name `ip` from
+ * `authThrottleOptions`, overridden here; `login` is skipped). Counted per
+ * user id — sellers of one shop share an IP.
+ */
+export const ORDER_ASSISTANT_THROTTLE = {
+  ip: {
+    limit: 30,
+    ttl: MINUTE_MS,
+    getTracker: (req: Record<string, unknown>): string => {
+      const user = req.user as { id?: string } | undefined;
+
+      return user?.id ?? String(req.ip);
+    },
+  },
+};
+
+/** 403 error code: `Store.orderAssistantEnabled` is off (switched on by a platform admin). */
+export const ORDER_ASSISTANT_DISABLED = 'ORDER_ASSISTANT_DISABLED';

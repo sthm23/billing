@@ -1,6 +1,7 @@
 # Voice order assistant — implementation plan
 
-> Created 2026-11-17. Design and decisions: [DESIGN.md](DESIGN.md). Status: **not started**.
+> Created 2026-11-17. Design and decisions: [DESIGN.md](DESIGN.md). Status: **stage 1 done 2026-11-23**
+> (backend, + admin flag `Store.orderAssistantEnabled`); stage 0 waits for recordings; stage 2 next.
 > Priority (user, 2026-11-17): launch the app and onboard ~10 stores first; stages 1–2 (text input) need no
 > infrastructure and can ship any time; voice (stage 3+) after that.
 
@@ -23,7 +24,13 @@ Goal: pick the STT model with real data before writing the service.
 
 Output: chosen model + settings, numbers recorded in DESIGN.md §6.
 
-## Stage 1 — Backend: text matching (`billing`)
+## Stage 1 — Backend: text matching (`billing`) — ✅ done 2026-11-23
+
+Done as planned, with these changes: catalogue loaded per request instead of a cache (item 4); added the
+per-store flag `Store.orderAssistantEnabled` set by a platform admin in `POST` / `PATCH /admin/stores`
+(DESIGN decision 12; migrations `20261122191124_voice_alias`, `20261122191509_store_order_assistant_flag`);
+throttler 30 / min per user. Tests: `src/order-assistant/**/*.spec.ts` (engine on the real `yogoch`
+catalogue + synthetic strapela sizes, service access / flag / feedback rules). Smoke-tested on the local DB.
 
 1. Module `src/order-assistant/` (controller, service, DTOs), registered in `app.module.ts`.
 2. `normalize.ts` — pure functions: translit (uz-Cyrl/ru → Latin), apostrophes, suffix stripping, number
@@ -43,6 +50,8 @@ Output: chosen model + settings, numbers recorded in DESIGN.md §6.
 
 ## Stage 2 — Mobile: text assistant (`billing-mobile`)
 
+0. Admin: «Голосовой помощник» switch in the admin store card (`AdminShopScreen`, `useUpdateAdminStore`
+   with `orderAssistantEnabled`); show «Голос» in the cart only when `user.staff.store.orderAssistantEnabled`.
 1. Service + React Query hooks: `services/order-assistant/` (`match`, `feedback`).
 2. Cart entry points: «Голос» button in the search row, third action in the empty state
    (design `VoiceCartFull`, `VoiceCartEmpty`). In this stage the sheet opens on the **text** tab; the voice

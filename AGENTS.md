@@ -49,6 +49,7 @@ src/
 ├── cashbox/           # Cashbox (cash register) operations
 ├── debt/              # Manual debt tracking (CustomerDebt)
 ├── category-attributes/ # Categories, brands, attributes, tags
+├── order-assistant/   # Voice / text order assistant: text → candidate variants, learned aliases (docs/voice-order/); engine/ is pure TS
 ├── file/              # File upload (S3)
 ├── prisma/            # PrismaService, S3Service
 └── shared/            # Guards, decorators, helpers
@@ -201,7 +202,7 @@ type CurrentUser = User & {
 
 **JwtStrategy** (`src/auth/strategy/jwt-access.strategy.ts`) reloads the user on every request **and** requires the token's `sid` session to be active (not revoked, not expired); otherwise 401. Logout and refresh rotation therefore invalidate the old access token at once.
 
-**ThrottlerGuard** (`@nestjs/throttler`, config `src/auth/auth-throttle.ts`, `ThrottlerModule.forRoot` in `AuthModule`) — **not global**, only on `POST /login` (`ip` 30/min + `login` 5/min per IP+login) and `GET /refresh` (`@SkipThrottle({ login: true })`, `ip` only). 429 `Too many attempts, try again later`. In-memory counters (single PM2 instance); `main.ts` sets `trust proxy: 'loopback'` so `req.ip` is the client behind local nginx. Do not add it to other routes without a decision.
+**ThrottlerGuard** (`@nestjs/throttler`, config `src/auth/auth-throttle.ts`, `ThrottlerModule.forRoot` in `AuthModule`) — **not global**, only on `POST /login` (`ip` 30/min + `login` 5/min per IP+login), `GET /refresh` (`@SkipThrottle({ login: true })`, `ip` only) and `/order-assistant/*` (`ip` overridden to 30/min per user id, 2026-11-23). 429 `Too many attempts, try again later`. In-memory counters (single PM2 instance); `main.ts` sets `trust proxy: 'loopback'` so `req.ip` is the client behind local nginx. Do not add it to other routes without a decision.
 
 **Public Routes**: a route without `@UseGuards(AuthJWTGuard)` is public (the guard is not global). `@Public()` is only a marker — no guard reads it. There is no `POST /signup` (removed 2026-11-13).
 
