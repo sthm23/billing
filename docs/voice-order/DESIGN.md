@@ -164,10 +164,10 @@ adding to the cart).
 
 - Python venv + `faster-whisper` (CTranslate2, `compute_type=int8`) + small FastAPI app, run as a
   **systemd service** on the existing VPS (the backend itself is not in Docker), bound to `127.0.0.1` only.
-- Limits in the unit: `MemoryMax=1.8G`, `CPUQuota=150%`, `Nice=10` — STT must never starve NestJS / PostgreSQL
+- Limits in the unit: `MemoryMax=2.4G`, `CPUQuota=150%`, `Nice=10` — STT must never starve NestJS / PostgreSQL
   (same 4 GB / 2 vCPU VPS). One job at a time (queue length ~3, then `429`).
-- Model: **medium-uz** `AlexAnoshka/fast-whisper-uz-rubaistt-v2-medium-ct2` (int8, ~1 GB RAM; chosen
-  2026-11-23 after the bake-off below). Needs the planned +2–4 GB RAM.
+- Model: **medium-uz** `AlexAnoshka/fast-whisper-uz-rubaistt-v2-medium-ct2` (int8: ~1.6 GB RAM loaded, ~2.1 GB
+  peak on Linux; chosen 2026-11-23 after the bake-off below). Needs the planned +2–4 GB RAM.
   Candidates verified on Hugging Face (Apache-2.0): `OvozifyLabs/whisper-small-uz-v1`,
   `navai-uz/whisper-small-uzbek`, `navai-uz/whisper-medium-uzbek`, CTranslate2 builds such as
   `yuldashev222/whisper-small-uz-v1-ct2`. Choice after stage 0.
@@ -189,7 +189,7 @@ adding to the cart).
   **Decision (user, 2026-11-23): medium-uz (`rubaistt-v2-medium-ct2`), no hotwords** — hotwords make small and
   turbo return empty text and do not help medium. Target: ≥ 70 % of products found from speech, the seller
   adds the rest by hand; sellers are taught to name products one after another. Re-run the bake-off on real
-  shop recordings after the first store (stage 6). Medium needs ~1 GB RAM → the planned VPS RAM upgrade.
+  shop recordings after the first store (stage 6). Medium needs ~2.1 GB RAM peak → the planned VPS RAM upgrade.
   Script: `billing/tools/stt-bench/` (recordings stay outside git in `voice-samples/`).
 - Before installing: check real free memory on the VPS (`free -h`); the cloud panel's "RAM 100%" is quota
   allocation, not usage.

@@ -70,7 +70,13 @@ products or bring one back. The UI also calls archiving «Удалить тов�
     same transaction.
 - Specs for each.
 
-### Stage 3 — mobile: archive list
+### Stage 3 — mobile: archive list — DONE 2026-11-24 (device QA pending)
+> `ProductParams.archived`, `counts.archived`; `productService.restoreProduct`; `useRestoreProduct` (sets the
+> card cache, invalidates lists + order search). List: «Архив · N» chip (`canManageProducts`), «Все» clears
+> category + archive, «Мало» / «Архив» exclude each other, archive empty state; an archived draft opens the
+> card, not step 2. `ProductCard`: neutral «В архиве» badge. i18n ru/uz/en: `filters.archive`,
+> `archivedEmpty`, `archivedBadge`, `restore.*`, `archive.*` and `deleteProduct` reworded to «В архив».
+> `tsc --noEmit` clean; the project has no ESLint setup.
 - `product.service.ts`: `archived` param in the list call, `restoreProduct(id)` (`PATCH /product/:id/restore`).
 - `product.queries.ts`: `useRestoreProduct()`: invalidates the product list (both active and archived) and sets
   the card cache from the response. `useArchiveProduct()` also invalidates the archived list.
@@ -79,7 +85,13 @@ products or bring one back. The UI also calls archiving «Удалить тов�
 - i18n ru / uz / en: `product.filters.archive`, empty state, restore texts; rename `product.archive.*`
   («Удалить» → «В архив», «Товар удалён» → «Товар перемещён в архив») and `product.deleteProduct`.
 
-### Stage 4 — mobile: archived card
+### Stage 4 — mobile: archived card — DONE 2026-11-24 (device QA pending)
+> `ProductDetailScreen` (`archived = product.isArchived`): warn banner «В архиве» + `archivedHint` + «Вернуть из
+> архива» (owner / manager, confirm Alert → `useRestoreProduct`, toast; the returned card replaces the cache so
+> the screen switches in place). Hidden when archived: edit pencil, sale block, «+ вариант», archive button,
+> «Приход / Списание» (`ProductVariantCard` shows it only with `onMovement`), rental row. Hero badge «В архиве».
+> Archive icon `Trash2` → `Archive`. Route `(products)/[id].tsx`: an archived product opens the sale card even in
+> rental mode (no booking from the rental card). `tsc --noEmit` clean.
 - `ProductDetailScreen` when `product.isArchived`:
   - «В архиве» banner at the top;
   - hide the sale block («В заказ», stepper), «+ вариант», the archive button, edit, receipt / write-off and

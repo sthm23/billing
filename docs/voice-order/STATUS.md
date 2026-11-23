@@ -85,6 +85,9 @@ when this was written (check `git status` in `billing/` and `billing-mobile/`).
   is `temperature=0`, `condition_on_previous_text=False` and a token cap in `stt-service/app.py`. Do not remove
   them without timing short clips again.
 - **expo-image-picker:** `microphonePermission: false` blocks RECORD_AUDIO on Android. It must be the text.
+- **Memory:** medium takes ~1.6 GB loaded and ~2.1 GB while recognizing on Linux. The first install with
+  `MemoryMax=1.8G` was OOM-killed on the first dictation, so the backend answered 503 (2026-11-24).
+  The limit is now 2.4G, plus swap. The real fix is the planned RAM upgrade.
 - **Recognition speed:** with 2 threads a recording takes about 11 s at minimum (Whisper always processes a
   30 s window); 24 s of speech takes about 20 s.
 
