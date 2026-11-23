@@ -1,7 +1,8 @@
 # Voice order assistant — design
 
 > Created 2026-11-17. Status: **backend stage 1 implemented 2026-11-23** (`billing/src/order-assistant/`,
-> text matching + aliases + per-store flag); mobile and voice not started. Decisions below were agreed with the user
+> text matching + aliases + per-store flag); **mobile stage 2 (text assistant) implemented 2026-11-23**
+> (`billing-mobile/src/screens/order/voice/`, device QA pending); voice (stage 3+) not started. Decisions below were agreed with the user
 > in conversation (2026-11-09 … 2026-11-17); items marked **(proposed)** still need confirmation.
 > Implementation stages: [PLAN.md](PLAN.md).
 > UI design: claude.ai artifact `LBqDuZU3wDgKNJXJBfrAYb`, page «Голосовой заказ» (artboards `Voice*`,

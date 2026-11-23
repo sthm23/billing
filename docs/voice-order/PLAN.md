@@ -1,7 +1,8 @@
 # Voice order assistant — implementation plan
 
 > Created 2026-11-17. Design and decisions: [DESIGN.md](DESIGN.md). Status: **stage 1 done 2026-11-23**
-> (backend, + admin flag `Store.orderAssistantEnabled`); stage 0 waits for recordings; stage 2 next.
+> (backend, + admin flag `Store.orderAssistantEnabled`); **stage 2 built 2026-11-23** (mobile text assistant,
+> device QA pending); stage 0 waits for recordings.
 > Priority (user, 2026-11-17): launch the app and onboard ~10 stores first; stages 1–2 (text input) need no
 > infrastructure and can ship any time; voice (stage 3+) after that.
 
@@ -48,7 +49,21 @@ catalogue + synthetic strapela sizes, service access / flag / feedback rules). S
 9. Tests: normalization, matcher (fixtures), controller access (foreign warehouse → 403, foreign variant in
    feedback → rejected).
 
-## Stage 2 — Mobile: text assistant (`billing-mobile`)
+## Stage 2 — Mobile: text assistant (`billing-mobile`) — ✅ built 2026-11-23, device QA pending
+
+Done as planned (items 0–7). Code: `src/services/order-assistant/`, `src/screens/order/voice/`
+(`voice-store.ts`, `VoiceInputSheet.tsx`, `VoiceReviewScreen.tsx`, `VoiceRowCard.tsx`), route
+`(orders)/voice`, picker mode of `OrderSearchScreen` (`search?pick=<row>&q=<phrase>`), admin switch in
+`AdminShopScreen` («Дополнительные функции» → «Голосовой помощник»). Notes:
+- The sheet has no «Голос / Написать текстом» tabs yet — text only until stage 3.
+- «Искать заново» replaces all rows (earlier picks are dropped); «Ещё» appends the new text to the transcript
+  and matches only the new text.
+- Out-of-stock candidates can't be picked; a picked variant that the cart would reject (stock 0, or all units
+  already in the cart / in rows above) is marked «не попадёт в корзину» and not counted.
+- The cart line has no «голос» badge (design `OrderVoiceAdded`) — not built.
+- The seller sees «Голос» after the profile reloads (`GET /auth/me` on app start) once the admin switched the
+  flag on; a stale button gets 403 → «Помощник выключен».
+- `tsc` clean, `expo export --platform android` bundles; no test runner in the mobile app.
 
 0. Admin: «Голосовой помощник» switch in the admin store card (`AdminShopScreen`, `useUpdateAdminStore`
    with `orderAssistantEnabled`); show «Голос» in the cart only when `user.staff.store.orderAssistantEnabled`.
