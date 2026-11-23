@@ -521,8 +521,14 @@ export class ProductService {
     if (params.warehouseId) {
       await assertWarehouseAccess(this.prisma, user, params.warehouseId);
     }
+    const canManage = canManageProducts(user);
+    // The archive is for those who archive / restore products: owner / manager
+    if (params.archived && !canManage) {
+      throw new ForbiddenException('No access to archived products');
+    }
     try {
-      const and: Prisma.ProductWhereInput[] = [{ isArchived: false }];
+      // Store / warehouse scope + search + category, without the archive flag
+      const and: Prisma.ProductWhereInput[] = [];
       if (params.warehouseId) and.push({ warehouseId: params.warehouseId });
       if (user.role !== UserRole.ADMIN) {
         if (!user.staff) throw new ForbiddenException('Staff only');
@@ -538,7 +544,7 @@ export class ProductService {
           });
         }
         // Drafts (cards without variants) are for those who finish them: owner / manager
-        if (!canManageProducts(user)) and.push({ variants: { some: {} } });
+        if (!canManage) and.push({ variants: { some: {} } });
       }
       const search = params.search?.trim();
       if (search) {
@@ -568,12 +574,35 @@ export class ProductService {
         });
       }
 
-      // Counts for the «Все» / «Мало» chips: same search and category, without lowStock.
-      const { all, lowIds } = await this.findLowStockProductIds({ AND: and });
-      const where: Prisma.ProductWhereInput = params.lowStock
-        ? { AND: [...and, { id: { in: lowIds } }] }
-        : { AND: and };
-      const count = params.lowStock ? lowIds.length : all;
+      const active: Prisma.ProductWhereInput[] = [
+        { isArchived: false },
+        ...and,
+      ];
+      const archivedScope: Prisma.ProductWhereInput[] = [
+        { isArchived: true },
+        ...and,
+      ];
+
+      // Counts for the «Все» / «Мало» / «Архив» chips: same search and category, without lowStock.
+      const { all, lowIds } = await this.findLowStockProductIds({
+        AND: active,
+      });
+      const archivedCount = canManage
+        ? await this.prisma.product.count({ where: { AND: archivedScope } })
+        : 0;
+
+      let where: Prisma.ProductWhereInput;
+      let count: number;
+      if (params.archived) {
+        where = { AND: archivedScope };
+        count = archivedCount;
+      } else if (params.lowStock) {
+        where = { AND: [...active, { id: { in: lowIds } }] };
+        count = lowIds.length;
+      } else {
+        where = { AND: active };
+        count = all;
+      }
 
       const result = await this.prisma.product.findMany({
         skip: skip,
@@ -615,7 +644,7 @@ export class ProductService {
         currentPage,
         pageSize,
         total: count,
-        counts: { all, lowStock: lowIds.length },
+        counts: { all, lowStock: lowIds.length, archived: archivedCount },
         lowStockThreshold: LOW_STOCK_THRESHOLD,
         data: result.map((product) => {
           let minPrice: Prisma.Decimal | null = null;
@@ -1148,5 +1177,25 @@ export class ProductService {
       if (error instanceof ForbiddenException) throw error;
       throw new BadRequestException(error.response || error.message);
     }
+  }
+
+  /**
+   * Bring an archived product back: it is listed, searchable and sellable again
+   * with the same variants and stock (archiving never touched stock, so no
+   * StockMovement). Returns the product card (`findOne`).
+   */
+  async restore(id: string, user: CurrentUser) {
+    const product = await this.prisma.product.findUnique({ where: { id } });
+    if (!product) throw new NotFoundException('Product not found');
+    this.assertWarehouseAccess(product.storeId, product.warehouseId, user);
+    if (!product.isArchived) {
+      throw new BadRequestException('Product is not archived');
+    }
+    await this.prisma.product.update({
+      where: { id },
+      data: { isArchived: false },
+    });
+    this.logger.info({ productId: id }, 'Product restored');
+    return this.findOne(id, user);
   }
 }

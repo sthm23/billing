@@ -27,6 +27,12 @@ export class ProductListParams extends PaginationParams {
   @IsBoolean()
   lowStock?: boolean;
 
+  /** Only archived products (owner / manager / admin, else 403); `lowStock` is ignored */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  archived?: boolean;
+
   /** Only products of this warehouse (the app's working warehouse) */
   @IsOptional()
   @IsUUID('4')

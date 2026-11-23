@@ -74,8 +74,8 @@ systemctl daemon-reload
 systemctl enable "$SERVICE"
 systemctl restart "$SERVICE"
 
-echo "⏳ Waiting for the model (first start downloads ~800 MB)..."
-for _ in $(seq 1 120); do
+echo "⏳ Waiting for the model (first start downloads ~1.5 GB)..."
+for _ in $(seq 1 720); do
   if curl -fsS "http://127.0.0.1:$PORT/health" 2>/dev/null | grep -q '"ok"'; then
     echo "✅ STT service is up: $(curl -s "http://127.0.0.1:$PORT/health")"
     exit 0
@@ -83,6 +83,6 @@ for _ in $(seq 1 120); do
   sleep 5
 done
 
-echo "❌ STT service did not become ready in 10 min. Logs:" >&2
+echo "❌ STT service did not become ready in 60 min. Logs:" >&2
 journalctl -u "$SERVICE" -n 50 --no-pager >&2
 exit 1

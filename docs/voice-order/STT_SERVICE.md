@@ -29,7 +29,7 @@ On the 4 GB VPS with NestJS + PostgreSQL + Docker, check the `available` column,
 Run once as the user that owns `/var/www/billing` (the GitHub Actions deploy user):
 
 ```bash
-sudo bash /var/www/billing/stt-service/install.sh     # waits until /health is ok (first start ~800 MB download)
+sudo bash /var/www/billing/stt-service/install.sh     # waits until /health is ok (first start ~1.5 GB download)
 ```
 
 By hand:
@@ -41,7 +41,7 @@ python3 -m venv /opt/sthm-stt/venv
 /opt/sthm-stt/venv/bin/pip install -r requirements.txt
 ```
 
-First start downloads the model (~800 MB) from Hugging Face into `HF_HOME`. To keep the cache with the service:
+First start downloads the model (~1.5 GB `model.bin`; ~30–60 min on the VPS line) from Hugging Face into `HF_HOME`. To keep the cache with the service:
 `/opt/sthm-stt/hf` (see the unit below).
 
 ## 3. systemd unit
