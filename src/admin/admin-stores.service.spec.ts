@@ -18,6 +18,7 @@ import type { CurrentUser } from '@auth/models/auth.model';
 import { AdminStoresService, isTrialExpired } from './admin-stores.service';
 import { CreateAdminStoreDto } from './dto/admin-store.dto';
 import { VoiceSampleService } from '../order-assistant/voice-sample.service';
+import { AdminCatalogService } from './admin-catalog.service';
 
 const STORE = '11111111-1111-4111-8111-111111111111';
 const CATEGORY = '22222222-2222-4222-8222-222222222222';
@@ -110,9 +111,14 @@ describe('AdminStoresService', () => {
   };
   const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
   const voiceSamples = { deleteStore: jest.fn() };
+  const catalog = { usage: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    catalog.usage.mockResolvedValue({
+      brands: new Map<string, number>(),
+      attributes: new Map<string, number>(),
+    });
     prisma.store.findUnique.mockResolvedValue(storeRow());
     prisma.staff.findMany.mockResolvedValue([]);
     prisma.staff.count.mockResolvedValue(0);
@@ -144,6 +150,7 @@ describe('AdminStoresService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: getLoggerToken(AdminStoresService.name), useValue: logger },
         { provide: VoiceSampleService, useValue: voiceSamples },
+        { provide: AdminCatalogService, useValue: catalog },
       ],
     }).compile();
 
@@ -185,6 +192,48 @@ describe('AdminStoresService', () => {
         staffCount: 6,
         trialExpired: false,
       });
+    });
+  });
+
+  describe('findOne', () => {
+    it('adds productCount to connected brands and attributes', async () => {
+      prisma.store.findUnique.mockResolvedValue(
+        storeRow({
+          brands: [
+            { brand: { id: 'b-knauf', name: 'Knauf' } },
+            { brand: { id: 'b-bosch', name: 'Bosch' } },
+          ],
+          attributes: [
+            {
+              attribute: {
+                id: ATTR,
+                name: 'Длина',
+                nameUz: null,
+                nameEn: null,
+                type: AttributeType.NUMBER,
+                unit: 'м',
+              },
+            },
+          ],
+        }),
+      );
+      catalog.usage.mockResolvedValue({
+        brands: new Map([['b-knauf', 12]]),
+        attributes: new Map([[ATTR, 24]]),
+      });
+
+      const store = await service.findOne(STORE);
+
+      expect(catalog.usage).toHaveBeenCalledWith(
+        STORE,
+        ['b-knauf', 'b-bosch'],
+        [ATTR],
+      );
+      expect(store.brands).toEqual([
+        { id: 'b-bosch', name: 'Bosch', productCount: 0 },
+        { id: 'b-knauf', name: 'Knauf', productCount: 12 },
+      ]);
+      expect(store.attributes[0]).toMatchObject({ id: ATTR, productCount: 24 });
     });
   });
 

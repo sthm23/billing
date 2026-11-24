@@ -102,7 +102,11 @@ products or bring one back. The UI also calls archiving «Удалить тов�
 - `npm run type-check` + device QA: archive → see it in «Архив» → open → restore → it is back in «Все», in
   order search and the scanner.
 
-### Stage 5 — docs
+### Stage 5 — docs — DONE 2026-11-24
+> Updated: `docs/features/products.md` (Archiving, filters), `docs/api-map.md` (`?archived`, `counts.archived`,
+> `PATCH /product/:id/restore`, new 400s), `docs/security.md` (matrix), `billing-mobile/AGENTS.md` (hooks, list,
+> archived card), legacy `billing/docs/API_MODULES.md` / `BUSINESS_LOGIC.md` (contradictions only).
+> **Remaining: device QA** (see Stage 4 checklist; also a seller sees no «Архив» chip).
 - `docs-updater`: `docs/features/products.md` (Archiving: restore, read-only, who), `docs/api-map.md`
   (`GET /product?archived`, `counts.archived`, `PATCH /product/:id/restore`, new 400s), `docs/security.md`
   (endpoint table), `billing-mobile/AGENTS.md` (`useRestoreProduct`, archive chip).

@@ -29,6 +29,11 @@ import {
   SuspendStoreDto,
   UpdateAdminStoreDto,
 } from './dto/admin-store.dto';
+import {
+  AdminCatalogService,
+  findAttributeByName,
+  findOrCreateBrand,
+} from './admin-catalog.service';
 
 /** Free trial of a new store */
 export const TRIAL_MONTHS = 1;
@@ -142,7 +147,8 @@ export type AdminStoreDetails = AdminStoreListItem & {
   /** Owner first, then active, then by name; at most STAFF_PREVIEW */
   staff: AdminStoreStaffItem[];
   categories: { id: string; name: string }[];
-  brands: { id: string; name: string }[];
+  /** `productCount` — store products using it, archived included (can't disconnect if > 0) */
+  brands: { id: string; name: string; productCount: number }[];
   attributes: {
     id: string;
     name: string;
@@ -150,6 +156,7 @@ export type AdminStoreDetails = AdminStoreListItem & {
     nameEn: string | null;
     type: AttributeType;
     unit: string | null;
+    productCount: number;
   }[];
 };
 
@@ -246,6 +253,7 @@ export class AdminStoresService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly voiceSamples: VoiceSampleService,
+    private readonly catalog: AdminCatalogService,
     @InjectPinoLogger(AdminStoresService.name)
     private readonly logger: PinoLogger,
   ) {}
@@ -328,7 +336,9 @@ export class AdminStoresService {
       throw new NotFoundException('Store not found');
     }
 
-    const [staff, activeStaffCount, suspendedBy] = await Promise.all([
+    const brands = store.brands.map((b) => b.brand);
+    const attributes = store.attributes.map((a) => a.attribute);
+    const [staff, activeStaffCount, suspendedBy, usage] = await Promise.all([
       this.staffOf(id),
       this.prisma.staff.count({ where: { storeId: id, isActive: true } }),
       store.suspendedById
@@ -337,6 +347,11 @@ export class AdminStoresService {
             select: { id: true, fullName: true },
           })
         : Promise.resolve(null),
+      this.catalog.usage(
+        id,
+        brands.map((b) => b.id),
+        attributes.map((a) => a.id),
+      ),
     ]);
 
     return {
@@ -356,10 +371,13 @@ export class AdminStoresService {
       })),
       staff: staff.slice(0, STAFF_PREVIEW),
       categories: store.categories.map((c) => c.category),
-      brands: store.brands
-        .map((b) => b.brand)
+      brands: brands
+        .map((b) => ({ ...b, productCount: usage.brands.get(b.id) ?? 0 }))
         .sort((a, b) => a.name.localeCompare(b.name, 'ru')),
-      attributes: store.attributes.map((a) => a.attribute),
+      attributes: attributes.map((a) => ({
+        ...a,
+        productCount: usage.attributes.get(a.id) ?? 0,
+      })),
     };
   }
 
@@ -675,13 +693,7 @@ export class AdminStoresService {
   ): Promise<string[]> {
     const ids: string[] = [];
     for (const name of uniqueNames(names)) {
-      const existing = await tx.brand.findFirst({
-        where: { name: { equals: name, mode: 'insensitive' } },
-        select: { id: true },
-      });
-      const brand =
-        existing ??
-        (await tx.brand.create({ data: { name }, select: { id: true } }));
+      const brand = await findOrCreateBrand(tx, name);
       ids.push(brand.id);
     }
 
@@ -709,14 +721,7 @@ export class AdminStoresService {
       if (seen.has(key)) continue;
       seen.add(key);
 
-      const existing = await tx.attribute.findFirst({
-        where: {
-          OR: (['name', 'nameUz', 'nameEn'] as const).map((field) => ({
-            [field]: { equals: attr.name, mode: 'insensitive' as const },
-          })),
-        },
-        select: { id: true, type: true },
-      });
+      const existing = await findAttributeByName(tx, attr.name);
       if (existing) {
         if (existing.type !== attr.type) {
           throw new BadRequestException(
