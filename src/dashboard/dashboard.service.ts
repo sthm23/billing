@@ -8,24 +8,90 @@ import {
   CashTransactionCategory,
   CashTransactionType,
   PaymentType,
+  ReturnReason,
   StaffRole,
   UserRole,
 } from '@generated/enums';
 import { PrismaService } from '@prisma/prisma.service';
 import { CurrentUser } from '@auth/models/auth.model';
 import { assertWarehouseAccess } from '@shared/helper/warehouse-access.helper';
+import {
+  addLocalDays,
+  rentalBoundary,
+  todayLocalDate,
+} from '../rental/rental-days';
 import { DashboardParams } from './dto/dashboard-params.dto';
 import {
   DAY_MS,
   HOUR_MS,
+  HOURS_IN_DAY,
   MAX_PERIOD_DAYS,
+  MIN_WAREHOUSES_FOR_SPLIT,
   PAYMENT_TYPES_ORDER,
   PURCHASE_CATEGORY,
+  RENTAL_OUT_STATUSES,
   REPORT_TIME_ZONE,
   REPORT_UTC_OFFSET_MS,
+  RETURN_REASONS_ORDER,
 } from './dashboard.constants';
 
 export type Granularity = 'hour' | 'day';
+
+export interface DashboardPeriod {
+  from: Date;
+  to: Date;
+  granularity: Granularity;
+}
+
+/** `GET /dashboard/team`: sales by staff and by warehouse. */
+export interface DashboardTeam {
+  period: DashboardPeriod;
+  warehouseId: string | null;
+  /** Everyone who sold in the period (by `cashierId`), largest first */
+  staff: { staffId: string; name: string; sales: number; orders: number }[];
+  /** null with a warehouse filter or when the store has one warehouse */
+  warehouses:
+    | {
+        warehouseId: string;
+        name: string;
+        sales: number;
+        orders: number;
+        /** sales / store sales (0..1) */
+        share: number;
+      }[]
+    | null;
+}
+
+/** `GET /dashboard/activity`: hours, returns, rental. */
+export interface DashboardActivity {
+  period: DashboardPeriod;
+  warehouseId: string | null;
+  hours: {
+    /** Days the average is taken over */
+    days: number;
+    /** Local hours 0–23: average sales per day, total orders */
+    points: { hour: number; avgSales: number; orders: number }[];
+    peakHour: number | null;
+    /** Quietest hour that still sold something; null with fewer than 2 such hours */
+    quietHour: number | null;
+  };
+  returns: {
+    amount: number;
+    count: number;
+    /** returns / sales of the period (0..); null without sales */
+    share: number | null;
+    byReason: { reason: ReturnReason; count: number; amount: number }[];
+  };
+  /** null when rental is off for the store */
+  rental: {
+    /** Rental cash in − prepayments paid back, in the period */
+    income: number;
+    /** Units out now (issued, not returned) */
+    out: number;
+    dueToday: number;
+    overdue: number;
+  } | null;
+}
 
 /** Resolved request: the owner's store, optional warehouse, period. */
 interface Scope {
@@ -40,7 +106,7 @@ interface Scope {
 type RawNumber = Prisma.Decimal | bigint | number | string | null;
 
 export interface DashboardSummary {
-  period: { from: Date; to: Date; granularity: Granularity };
+  period: DashboardPeriod;
   warehouseId: string | null;
   kpi: {
     /** Σ `totalAmount` of the orders sold in the period (debt orders included, rental excluded) */
@@ -117,38 +183,8 @@ export class DashboardService {
       cash,
       outstanding,
     ] = await Promise.all([
-      this.prisma.$queryRaw<
-        {
-          orders: number;
-          sales: RawNumber;
-          items: RawNumber;
-          cost: RawNumber;
-        }[]
-      >`/* dashboard:sales */
-          SELECT COUNT(*)::int AS orders,
-                 COALESCE(SUM(o."totalAmount"), 0) AS sales,
-                 COALESCE(SUM(i.qty), 0) AS items,
-                 COALESCE(SUM(i.cost), 0) AS cost
-          FROM orders o
-          LEFT JOIN LATERAL (
-            SELECT SUM(oi.quantity) AS qty, SUM(oi."costAtSale" * oi.quantity) AS cost
-            FROM order_items oi WHERE oi."orderId" = o.id
-          ) i ON true
-          WHERE ${sold}`,
-      this.prisma.$queryRaw<
-        { count: number; amount: RawNumber; cost: RawNumber }[]
-      >`/* dashboard:returns */
-          SELECT COUNT(*)::int AS count,
-                 COALESCE(SUM(ro."totalAmount"), 0) AS amount,
-                 COALESCE(SUM(rc.cost), 0) AS cost
-          FROM "ReturnedOrder" ro
-          JOIN orders o ON o.id = ro."orderId"
-          LEFT JOIN LATERAL (
-            SELECT SUM(ri.quantity * oi."costAtSale") AS cost
-            FROM "ReturnItem" ri JOIN order_items oi ON oi.id = ri."itemId"
-            WHERE ri."returnId" = ro.id
-          ) rc ON true
-          WHERE ${this.returnsInPeriod(scope)}`,
+      this.salesTotals(scope),
+      this.returnsTotals(scope),
       this.prisma.$queryRaw<
         { key: string; sales: RawNumber; orders: number }[]
       >`/* dashboard:chart */
@@ -210,13 +246,11 @@ export class DashboardService {
                    FROM "CustomerDebt" d WHERE d."storeId" = ${scope.storeId} AND d.status = 'ACTIVE') AS manual`,
     ]);
 
-    const t = totals[0];
-    const r = returns[0];
-    const sales = money(t?.sales);
-    const orders = t?.orders ?? 0;
-    const returnsAmount = money(r?.amount);
+    const sales = totals.sales;
+    const orders = totals.orders;
+    const returnsAmount = returns.amount;
     const revenue = sales - returnsAmount;
-    const cost = money(t?.cost) - money(r?.cost);
+    const cost = totals.cost - returns.cost;
     const profit = revenue - cost;
 
     const paidByType = new Map(
@@ -240,11 +274,7 @@ export class DashboardService {
     const o = outstanding?.[0];
 
     return {
-      period: {
-        from: scope.from,
-        to: scope.to,
-        granularity: scope.granularity,
-      },
+      period: this.period(scope),
       warehouseId: scope.warehouseId,
       kpi: {
         sales,
@@ -254,7 +284,7 @@ export class DashboardService {
         profit,
         margin: revenue > 0 ? profit / revenue : null,
         orders,
-        items: num(t?.items),
+        items: totals.items,
         avgCheck: orders > 0 ? Math.round(sales / orders) : 0,
       },
       chart: this.chart(scope, chartRows),
@@ -271,6 +301,304 @@ export class DashboardService {
         repaid,
         outstandingNow: o ? money(o.orders) + money(o.manual) : null,
       },
+    };
+  }
+
+  async getTeam(
+    params: DashboardParams,
+    user: CurrentUser,
+  ): Promise<DashboardTeam> {
+    const scope = await this.resolveScope(params, user);
+    const sold = this.soldOrders(scope);
+    // The warehouse split only makes sense for the whole store
+    const byWarehouse = !scope.warehouseId;
+
+    const [staffRows, warehouseRows, warehouses] = await Promise.all([
+      this.prisma.$queryRaw<
+        { staffId: string; name: string; sales: RawNumber; orders: number }[]
+      >`/* dashboard:staff */
+          SELECT o."cashierId" AS "staffId", u."fullName" AS name,
+                 SUM(o."totalAmount") AS sales, COUNT(*)::int AS orders
+          FROM orders o
+          JOIN staff s ON s.id = o."cashierId"
+          JOIN users u ON u.id = s."userId"
+          WHERE ${sold}
+          GROUP BY 1, 2
+          ORDER BY sales DESC`,
+      byWarehouse
+        ? this.prisma.$queryRaw<
+            { warehouseId: string; sales: RawNumber; orders: number }[]
+          >`/* dashboard:warehouses */
+              SELECT o."warehouseId" AS "warehouseId",
+                     SUM(o."totalAmount") AS sales, COUNT(*)::int AS orders
+              FROM orders o
+              WHERE ${sold}
+              GROUP BY 1`
+        : Promise.resolve(
+            [] as { warehouseId: string; sales: RawNumber; orders: number }[],
+          ),
+      byWarehouse
+        ? this.prisma.warehouse.findMany({
+            where: { storeId: scope.storeId },
+            select: { id: true, name: true, isActive: true },
+            orderBy: { createdAt: 'asc' },
+          })
+        : Promise.resolve(
+            [] as { id: string; name: string; isActive: boolean }[],
+          ),
+    ]);
+
+    const staff = staffRows.map((row) => ({
+      staffId: row.staffId,
+      name: row.name,
+      sales: money(row.sales),
+      orders: row.orders,
+    }));
+
+    const salesBy = new Map(warehouseRows.map((row) => [row.warehouseId, row]));
+    // An inactive warehouse is listed only when it sold something
+    const rows = warehouses
+      .filter((w) => w.isActive || salesBy.has(w.id))
+      .map((w) => ({
+        warehouseId: w.id,
+        name: w.name,
+        sales: money(salesBy.get(w.id)?.sales),
+        orders: salesBy.get(w.id)?.orders ?? 0,
+      }));
+    const total = rows.reduce((sum, w) => sum + w.sales, 0);
+
+    return {
+      period: this.period(scope),
+      warehouseId: scope.warehouseId,
+      staff,
+      warehouses:
+        rows.length >= MIN_WAREHOUSES_FOR_SPLIT
+          ? rows
+              .map((w) => ({ ...w, share: total > 0 ? w.sales / total : 0 }))
+              .sort((a, b) => b.sales - a.sales)
+          : null,
+    };
+  }
+
+  async getActivity(
+    params: DashboardParams,
+    user: CurrentUser,
+  ): Promise<DashboardActivity> {
+    const scope = await this.resolveScope(params, user);
+    const sold = this.soldOrders(scope);
+
+    const [hourRows, totals, returns, reasonRows, store] = await Promise.all([
+      this.prisma.$queryRaw<
+        { hour: number; sales: RawNumber; orders: number }[]
+      >`/* dashboard:hours */
+          SELECT EXTRACT(HOUR FROM ${this.localTime(Prisma.sql`o."soldAt"`)})::int AS hour,
+                 SUM(o."totalAmount") AS sales, COUNT(*)::int AS orders
+          FROM orders o
+          WHERE ${sold}
+          GROUP BY 1`,
+      this.salesTotals(scope),
+      this.returnsTotals(scope),
+      this.prisma.$queryRaw<
+        { reason: ReturnReason; count: number; amount: RawNumber }[]
+      >`/* dashboard:reasons */
+          SELECT ro.reason::text AS reason, COUNT(*)::int AS count,
+                 COALESCE(SUM(ro."totalAmount"), 0) AS amount
+          FROM "ReturnedOrder" ro
+          JOIN orders o ON o.id = ro."orderId"
+          WHERE ${this.returnsInPeriod(scope)}
+          GROUP BY 1`,
+      this.prisma.store.findUnique({
+        where: { id: scope.storeId },
+        select: { rentalEnabled: true },
+      }),
+    ]);
+
+    const reasonsBy = new Map(reasonRows.map((row) => [row.reason, row]));
+
+    return {
+      period: this.period(scope),
+      warehouseId: scope.warehouseId,
+      hours: this.hours(scope, hourRows),
+      returns: {
+        amount: returns.amount,
+        count: returns.count,
+        share: totals.sales > 0 ? returns.amount / totals.sales : null,
+        byReason: RETURN_REASONS_ORDER.map((reason) => ({
+          reason,
+          count: reasonsBy.get(reason)?.count ?? 0,
+          amount: money(reasonsBy.get(reason)?.amount),
+        })),
+      },
+      rental: store?.rentalEnabled ? await this.rental(scope) : null,
+    };
+  }
+
+  /** Orders sold in the period: count, sales, sold units, their cost. */
+  private async salesTotals(
+    scope: Scope,
+  ): Promise<{ orders: number; sales: number; items: number; cost: number }> {
+    const rows = await this.prisma.$queryRaw<
+      { orders: number; sales: RawNumber; items: RawNumber; cost: RawNumber }[]
+    >`/* dashboard:sales */
+        SELECT COUNT(*)::int AS orders,
+               COALESCE(SUM(o."totalAmount"), 0) AS sales,
+               COALESCE(SUM(i.qty), 0) AS items,
+               COALESCE(SUM(i.cost), 0) AS cost
+        FROM orders o
+        LEFT JOIN LATERAL (
+          SELECT SUM(oi.quantity) AS qty, SUM(oi."costAtSale" * oi.quantity) AS cost
+          FROM order_items oi WHERE oi."orderId" = o.id
+        ) i ON true
+        WHERE ${this.soldOrders(scope)}`;
+    const row = rows[0];
+
+    return {
+      orders: row?.orders ?? 0,
+      sales: money(row?.sales),
+      items: num(row?.items),
+      cost: money(row?.cost),
+    };
+  }
+
+  /** Returns made in the period: count, value of the goods, their cost. */
+  private async returnsTotals(
+    scope: Scope,
+  ): Promise<{ count: number; amount: number; cost: number }> {
+    const rows = await this.prisma.$queryRaw<
+      { count: number; amount: RawNumber; cost: RawNumber }[]
+    >`/* dashboard:returns */
+        SELECT COUNT(*)::int AS count,
+               COALESCE(SUM(ro."totalAmount"), 0) AS amount,
+               COALESCE(SUM(rc.cost), 0) AS cost
+        FROM "ReturnedOrder" ro
+        JOIN orders o ON o.id = ro."orderId"
+        LEFT JOIN LATERAL (
+          SELECT SUM(ri.quantity * oi."costAtSale") AS cost
+          FROM "ReturnItem" ri JOIN order_items oi ON oi.id = ri."itemId"
+          WHERE ri."returnId" = ro.id
+        ) rc ON true
+        WHERE ${this.returnsInPeriod(scope)}`;
+    const row = rows[0];
+
+    return {
+      count: row?.count ?? 0,
+      amount: money(row?.amount),
+      cost: money(row?.cost),
+    };
+  }
+
+  /**
+   * Rental card: income of the period (rental cash in − prepayments paid back)
+   * and the units out **now**, with the same «return today» / «overdue» rules
+   * as the rental lists.
+   */
+  private async rental(
+    scope: Scope,
+  ): Promise<NonNullable<DashboardActivity['rental']>> {
+    const warehouse = scope.warehouseId
+      ? { warehouseId: scope.warehouseId }
+      : {};
+    const [cash, active] = await Promise.all([
+      this.prisma.cashTransaction.groupBy({
+        by: ['type'],
+        where: {
+          createdAt: { gte: scope.from, lt: scope.to },
+          cashbox: { storeId: scope.storeId, ...warehouse },
+          order: { rental: { isNot: null } },
+          OR: [
+            {
+              type: CashTransactionType.INCOME,
+              category: CashTransactionCategory.RENTAL,
+            },
+            {
+              type: CashTransactionType.EXPENSE,
+              category: CashTransactionCategory.RETURN,
+            },
+          ],
+        },
+        _sum: { amount: true },
+      }),
+      this.prisma.rental.findMany({
+        where: {
+          storeId: scope.storeId,
+          ...warehouse,
+          status: { in: RENTAL_OUT_STATUSES },
+        },
+        select: {
+          endDate: true,
+          order: { select: { items: { select: { quantity: true } } } },
+          returns: { select: { items: { select: { quantity: true } } } },
+        },
+      }),
+    ]);
+
+    const sumBy = (type: CashTransactionType) =>
+      money(cash.find((row) => row.type === type)?._sum.amount);
+    const now = new Date();
+    const today = todayLocalDate(now);
+    const todayNoon = rentalBoundary(today);
+    const tomorrowNoon = rentalBoundary(addLocalDays(today, 1));
+    let out = 0;
+    let dueToday = 0;
+    let overdue = 0;
+    for (const r of active) {
+      const taken = r.order.items.reduce((sum, i) => sum + i.quantity, 0);
+      const back = r.returns
+        .flatMap((ret) => ret.items)
+        .reduce((sum, i) => sum + i.quantity, 0);
+      const units = Math.max(0, taken - back);
+      out += units;
+      if (r.endDate >= todayNoon && r.endDate < tomorrowNoon) dueToday += units;
+      if (r.endDate < now) overdue += units;
+    }
+
+    return {
+      income:
+        sumBy(CashTransactionType.INCOME) - sumBy(CashTransactionType.EXPENSE),
+      out,
+      dueToday,
+      overdue,
+    };
+  }
+
+  /** 24 local hours: average sales per day of the period, peak and quietest hour. */
+  private hours(
+    scope: Scope,
+    rows: { hour: number; sales: RawNumber; orders: number }[],
+  ): DashboardActivity['hours'] {
+    const days = Math.max(
+      1,
+      Math.ceil((scope.to.getTime() - scope.from.getTime()) / DAY_MS),
+    );
+    const byHour = new Map(rows.map((row) => [Number(row.hour), row]));
+    const points = Array.from({ length: HOURS_IN_DAY }, (_, hour) => ({
+      hour,
+      avgSales: Math.round(num(byHour.get(hour)?.sales) / days),
+      orders: byHour.get(hour)?.orders ?? 0,
+    }));
+    const selling = points.filter((p) => p.orders > 0);
+    const peak = selling.reduce<(typeof points)[number] | null>(
+      (best, p) => (!best || p.avgSales > best.avgSales ? p : best),
+      null,
+    );
+    const quiet =
+      selling.length >= 2
+        ? selling.reduce((low, p) => (p.avgSales < low.avgSales ? p : low))
+        : null;
+
+    return {
+      days,
+      points,
+      peakHour: peak?.hour ?? null,
+      quietHour: quiet?.hour ?? null,
+    };
+  }
+
+  private period(scope: Scope): DashboardPeriod {
+    return {
+      from: scope.from,
+      to: scope.to,
+      granularity: scope.granularity,
     };
   }
 

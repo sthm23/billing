@@ -45,7 +45,9 @@ describe('DashboardService', () => {
   const prisma = {
     $queryRaw: jest.fn(),
     cashTransaction: { groupBy: jest.fn() },
-    warehouse: { findFirst: jest.fn() },
+    warehouse: { findFirst: jest.fn(), findMany: jest.fn() },
+    store: { findUnique: jest.fn() },
+    rental: { findMany: jest.fn() },
   };
 
   /** Routes each raw query by its `/* dashboard:<name> *\/` marker. */
@@ -67,6 +69,9 @@ describe('DashboardService', () => {
     );
     prisma.cashTransaction.groupBy.mockResolvedValue([]);
     prisma.warehouse.findFirst.mockResolvedValue({ id: WAREHOUSE });
+    prisma.warehouse.findMany.mockResolvedValue([]);
+    prisma.store.findUnique.mockResolvedValue({ rentalEnabled: false });
+    prisma.rental.findMany.mockResolvedValue([]);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -405,6 +410,234 @@ describe('DashboardService', () => {
       );
 
       expect(res.chart.map((p) => p.sales)).toEqual([0, 0, 1000]);
+    });
+  });
+
+  describe('getTeam', () => {
+    const W2 = '33333333-3333-4333-8333-333333333333';
+    const W3 = '44444444-4444-4444-8444-444444444444';
+
+    it('is owner only and checks the period', async () => {
+      await expect(
+        service.getTeam({ from: DAY_FROM, to: DAY_TO }, staffUser(StaffRole.MANAGER)),
+      ).rejects.toThrow(ForbiddenException);
+      await expect(
+        service.getTeam(
+          { from: '2026-10-01T00:00:00.000Z', to: '2026-11-02T00:00:00.000Z' },
+          owner,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('staff by sales; warehouses with shares, an idle inactive one hidden', async () => {
+      rows = {
+        staff: [
+          { staffId: 's1', name: 'Алиев К.', sales: '700000', orders: 3 },
+          { staffId: 's2', name: 'Каримова Н.', sales: '300000', orders: 1 },
+        ],
+        warehouses: [
+          { warehouseId: W2, sales: '750000', orders: 3 },
+          { warehouseId: WAREHOUSE, sales: '250000', orders: 1 },
+        ],
+      };
+      prisma.warehouse.findMany.mockResolvedValue([
+        { id: WAREHOUSE, name: 'Склад 1', isActive: true },
+        { id: W2, name: 'Склад 2', isActive: false },
+        { id: W3, name: 'Старый', isActive: false },
+      ]);
+      const res = await service.getTeam({ from: DAY_FROM, to: WEEK_TO }, owner);
+
+      expect(res.staff).toEqual([
+        { staffId: 's1', name: 'Алиев К.', sales: 700000, orders: 3 },
+        { staffId: 's2', name: 'Каримова Н.', sales: 300000, orders: 1 },
+      ]);
+      expect(res.warehouses).toEqual([
+        { warehouseId: W2, name: 'Склад 2', sales: 750000, orders: 3, share: 0.75 },
+        { warehouseId: WAREHOUSE, name: 'Склад 1', sales: 250000, orders: 1, share: 0.25 },
+      ]);
+      expect(prisma.warehouse.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { storeId: STORE } }),
+      );
+      expect(query('staff').sql).toContain('NOT EXISTS (SELECT 1 FROM rentals');
+    });
+
+    it('a store with one warehouse has no warehouse card; shares are 0 without sales', async () => {
+      prisma.warehouse.findMany.mockResolvedValue([
+        { id: WAREHOUSE, name: 'Склад 1', isActive: true },
+      ]);
+      expect(
+        (await service.getTeam({ from: DAY_FROM, to: WEEK_TO }, owner)).warehouses,
+      ).toBeNull();
+
+      prisma.warehouse.findMany.mockResolvedValue([
+        { id: WAREHOUSE, name: 'Склад 1', isActive: true },
+        { id: W2, name: 'Склад 2', isActive: true },
+      ]);
+      const res = await service.getTeam({ from: DAY_FROM, to: WEEK_TO }, owner);
+      expect(res.warehouses?.map((w) => w.share)).toEqual([0, 0]);
+    });
+
+    it('a warehouse filter: staff of that warehouse only, no warehouse card', async () => {
+      const res = await service.getTeam(
+        { from: DAY_FROM, to: WEEK_TO, warehouseId: WAREHOUSE },
+        owner,
+      );
+
+      expect(query('staff').values).toContain(WAREHOUSE);
+      expect(queries.some((q) => q.sql.includes('dashboard:warehouses'))).toBe(false);
+      expect(prisma.warehouse.findMany).not.toHaveBeenCalled();
+      expect(res.warehouses).toBeNull();
+    });
+  });
+
+  describe('getActivity', () => {
+    it('is owner only', async () => {
+      await expect(
+        service.getActivity({ from: DAY_FROM, to: DAY_TO }, staffUser(StaffRole.SELLER)),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('hours: average per day of the period, peak and quietest selling hour', async () => {
+      rows = {
+        hours: [
+          { hour: 10, sales: '700000', orders: 5 },
+          { hour: 15, sales: '1400000', orders: 7 },
+          { hour: 19, sales: '70000', orders: 1 },
+        ],
+      };
+      const res = await service.getActivity({ from: DAY_FROM, to: WEEK_TO }, owner);
+
+      expect(query('hours').sql).toContain('EXTRACT(HOUR FROM');
+      expect(res.hours.days).toBe(7);
+      expect(res.hours.points).toHaveLength(24);
+      expect(res.hours.points[15]).toEqual({ hour: 15, avgSales: 200000, orders: 7 });
+      expect(res.hours.points[10].avgSales).toBe(100000);
+      expect(res.hours.points[0]).toEqual({ hour: 0, avgSales: 0, orders: 0 });
+      expect(res.hours.peakHour).toBe(15);
+      expect(res.hours.quietHour).toBe(19);
+    });
+
+    it('hours: nothing sold → no peak; one selling hour → no quietest', async () => {
+      let res = await service.getActivity({ from: DAY_FROM, to: DAY_TO }, owner);
+      expect(res.hours.days).toBe(1);
+      expect(res.hours.peakHour).toBeNull();
+      expect(res.hours.quietHour).toBeNull();
+
+      rows = { hours: [{ hour: 12, sales: '1000', orders: 1 }] };
+      res = await service.getActivity({ from: DAY_FROM, to: DAY_TO }, owner);
+      expect(res.hours.peakHour).toBe(12);
+      expect(res.hours.quietHour).toBeNull();
+    });
+
+    it('returns: share of the period sales, every reason listed', async () => {
+      rows = {
+        sales: [{ orders: 10, sales: '2000000', items: 10, cost: '0' }],
+        returns: [{ count: 3, amount: '100000', cost: '50000' }],
+        reasons: [
+          { reason: 'NOT_FIT', count: 2, amount: '80000' },
+          { reason: 'DEFECT', count: 1, amount: '20000' },
+        ],
+      };
+      const res = await service.getActivity({ from: DAY_FROM, to: WEEK_TO }, owner);
+
+      expect(query('reasons').sql).toContain('ro."createdAt" >=');
+      expect(res.returns).toEqual({
+        amount: 100000,
+        count: 3,
+        share: 0.05,
+        byReason: [
+          { reason: 'DEFECT', count: 1, amount: 20000 },
+          { reason: 'NOT_FIT', count: 2, amount: 80000 },
+          { reason: 'EXTRA', count: 0, amount: 0 },
+          { reason: 'OTHER', count: 0, amount: 0 },
+        ],
+      });
+    });
+
+    it('returns: share is null without sales', async () => {
+      rows = { returns: [{ count: 1, amount: '100000', cost: '0' }] };
+      const res = await service.getActivity({ from: DAY_FROM, to: WEEK_TO }, owner);
+
+      expect(res.returns.share).toBeNull();
+    });
+
+    it('rental is null when the store has rental off', async () => {
+      const res = await service.getActivity({ from: DAY_FROM, to: WEEK_TO }, owner);
+
+      expect(res.rental).toBeNull();
+      expect(prisma.rental.findMany).not.toHaveBeenCalled();
+    });
+
+    describe('rental', () => {
+      beforeEach(() => {
+        jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+        // 2026-11-24 15:00 local
+        jest.setSystemTime(new Date('2026-11-24T10:00:00.000Z'));
+        prisma.store.findUnique.mockResolvedValue({ rentalEnabled: true });
+      });
+      afterEach(() => jest.useRealTimers());
+
+      const rentalRow = (endDate: string, taken: number[], back: number[]) => ({
+        endDate: new Date(endDate),
+        order: { items: taken.map((quantity) => ({ quantity })) },
+        returns: back.length
+          ? [{ items: back.map((quantity) => ({ quantity })) }]
+          : [],
+      });
+
+      it('income = rental cash in − paid back; units out now, due today, overdue', async () => {
+        prisma.cashTransaction.groupBy.mockResolvedValue([
+          { type: CashTransactionType.INCOME, _sum: { amount: new Prisma.Decimal(900000) } },
+          { type: CashTransactionType.EXPENSE, _sum: { amount: new Prisma.Decimal(150000) } },
+        ]);
+        prisma.rental.findMany.mockResolvedValue([
+          // ends today at noon local (07:00 UTC): due today and already overdue
+          rentalRow('2026-11-24T07:00:00.000Z', [2, 1], [1]),
+          // ends tomorrow noon
+          rentalRow('2026-11-25T07:00:00.000Z', [1], []),
+          // ended 3 days ago
+          rentalRow('2026-11-21T07:00:00.000Z', [4], []),
+        ]);
+        const res = await service.getActivity({ from: DAY_FROM, to: WEEK_TO }, owner);
+
+        expect(res.rental).toEqual({ income: 750000, out: 7, dueToday: 2, overdue: 6 });
+        expect(prisma.rental.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: {
+              storeId: STORE,
+              status: { in: ['ISSUED', 'PARTIALLY_RETURNED'] },
+            },
+          }),
+        );
+        expect(prisma.cashTransaction.groupBy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({
+              cashbox: { storeId: STORE },
+              order: { rental: { isNot: null } },
+            }),
+          }),
+        );
+      });
+
+      it('the warehouse filter narrows rentals and rental cash', async () => {
+        await service.getActivity(
+          { from: DAY_FROM, to: WEEK_TO, warehouseId: WAREHOUSE },
+          owner,
+        );
+
+        expect(prisma.rental.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({ warehouseId: WAREHOUSE }),
+          }),
+        );
+        expect(prisma.cashTransaction.groupBy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({
+              cashbox: { storeId: STORE, warehouseId: WAREHOUSE },
+            }),
+          }),
+        );
+      });
     });
   });
 });

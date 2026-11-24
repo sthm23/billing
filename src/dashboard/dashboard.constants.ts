@@ -1,4 +1,9 @@
-import { CashTransactionCategory, PaymentType } from '@generated/enums';
+import {
+  CashTransactionCategory,
+  PaymentType,
+  RentalStatus,
+  ReturnReason,
+} from '@generated/enums';
 
 /** Reports group days and hours in the store's time zone. */
 export const REPORT_TIME_ZONE = 'Asia/Tashkent';
@@ -16,6 +21,25 @@ export const PAYMENT_TYPES_ORDER: PaymentType[] = [
   PaymentType.CARD,
   PaymentType.ONLINE,
   PaymentType.TRANSFER,
+];
+
+export const HOURS_IN_DAY = 24;
+
+/** The «Продажи по складам» card needs at least two warehouses. */
+export const MIN_WAREHOUSES_FOR_SPLIT = 2;
+
+/** Return reasons in the order the dashboard shows them. */
+export const RETURN_REASONS_ORDER: ReturnReason[] = [
+  ReturnReason.DEFECT,
+  ReturnReason.NOT_FIT,
+  ReturnReason.EXTRA,
+  ReturnReason.OTHER,
+];
+
+/** Rentals whose items are with the customer (same as the rental lists' «out»). */
+export const RENTAL_OUT_STATUSES: RentalStatus[] = [
+  RentalStatus.ISSUED,
+  RentalStatus.PARTIALLY_RETURNED,
 ];
 
 /** Store purchases are a separate cash-flow line, not a store expense. */

@@ -118,7 +118,7 @@ Query DTO `DashboardParams`: `from`, `to` (ISO instants, required; the client se
 |---|---|
 | `GET /dashboard/summary` | `period`, `kpi` (sales, returns, revenue, cost, profit, margin, orders, items, avgCheck), `chart` (`granularity`, points `{ at, sales, orders }`, including empty days / hours), `payments` (by type + `debtGiven`), `cashflow` (income, expenses by category, purchase, net), `topProducts` (5), `debts` (given, repaid, outstandingNow) |
 | `GET /dashboard/team` | `staff` (name, sales, orders), `warehouses` (name, sales, share) |
-| `GET /dashboard/activity` | `hours` (avg sales per hour, peak, quietest), `returns` (sum, count, pct, by reason), `rental` (income, out, dueToday, overdue, `enabled`) |
+| `GET /dashboard/activity` | `hours` (`days`, 24 points `{ hour, avgSales, orders }`, `peakHour`, `quietHour`), `returns` (amount, count, `share` of sales, `byReason` — all 4 reasons), `rental` (income, out, dueToday, overdue; `null` when the store has rental off) |
 
 Amounts go out as numbers (UZS has no fractions), like other summary endpoints.
 
@@ -156,7 +156,17 @@ Amounts go out as numbers (UZS has no fractions), like other summary endpoints.
   - a one-day period → hourly chart with 24 points; a 7-day period → 7 day points.
 - Smoke on the local DB: `npm run build` + a node script on `dist/` (Prisma 7 does not run under jest / ts-node).
 
-### Stage 2 — backend: `GET /dashboard/team` + `GET /dashboard/activity`
+### Stage 2 — backend: `GET /dashboard/team` + `GET /dashboard/activity` — DONE 2026-11-24
+> `getTeam`: staff by `cashierId` (name from `users.fullName`), warehouses only for the whole store with 2+
+> warehouses (an inactive one only if it sold), `share` 0..1. `getActivity`: hours via
+> `EXTRACT(HOUR FROM local soldAt)`, average over `ceil(period / 1 day)` days; quietest = lowest hour that sold, null
+> with fewer than 2 such hours; returns reuse the summary's `returnsTotals` / `salesTotals`; rental only when
+> `Store.rentalEnabled` (else `null`), units = items of ISSUED / PARTIALLY_RETURNED rentals − returned items,
+> «Вернуть сегодня» / «Просрочено» with the rental lists' rules (`rentalBoundary` noon, `endDate < now`; a unit due
+> today after noon is in both). Collateral is never cash, so rental income = INCOME `RENTAL` − EXPENSE `RETURN` of
+> rental orders.
+> Specs: 31 passing (12 new). `tsc` clean. Smoke on the local DB: hours of October add up to the October sales
+> (1 398 000); the rental store shows rental income 3 030 000 in November and 0 sales (rental is not a sale).
 - Rules from the table; the rental figures reuse what `rental/` already has for overdue / due today where
   possible.
 - Specs: staff and warehouse split, warehouse card absent with one warehouse or a warehouse filter, hours average
