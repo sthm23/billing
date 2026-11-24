@@ -74,8 +74,16 @@ disconnect them later. The owner picks a product's brand and attributes only fro
 - Tap on a connected attribute → existing `AttributeEditSheet` (translations).
 - `StoreSettingsScreen` stops sending `brandIds` / `attributeIds`.
 - i18n ru/uz/en, dark theme, `tsc`.
+> DONE 2026-11-24: `screens/admin/shops/StoreCatalogScreen.tsx` (kind brands | attributes), routes
+> `(profile)/shops/[id]/{brands,attributes}`, «Изменить» in the shop card catalog (`CatalogGroupHeader`), hooks
+> `useCatalogDictionary` / `useConnectCatalogItem` / `useDisconnectCatalogItem`, `AttributeSheet` takes async
+> `onAdd` + `conflict` (409 ATTRIBUTE_EXISTS → «Подключить его»), `SearchField` takes `ref`, i18n block `storeCatalog`.
+> Deviations from the design: the error toast has no «Повторить» (Toast has no action) — the row returns to
+> «Подключить», tap again; with a search that has results but no exact match a dashed «Создать „…“» row is shown;
+> «+ Новый бренд по названию» focuses the search. Counts use neutral wording («Товаров: 12») — no plural keys.
+> tsc clean, android bundle builds; not device-tested.
 
 ### Stage 3 — finish
-- `docs-updater`: `docs/api-map.md`, `docs/security.md`, `docs/features/stores-warehouses.md`,
+- DONE 2026-11-24 — `docs-updater`: `docs/api-map.md`, `docs/security.md`, `docs/features/stores-warehouses.md`,
   `docs/features/products.md` (brand / attributes only from connected), `billing-mobile/AGENTS.md`.
-- Device QA (user).
+- Device QA (user) — OPEN.
