@@ -172,7 +172,20 @@ Amounts go out as numbers (UZS has no fractions), like other summary endpoints.
 - Specs: staff and warehouse split, warehouse card absent with one warehouse or a warehouse filter, hours average
   per day, return reasons, rental «now» figures.
 
-### Stage 3 — mobile: screen + main block
+### Stage 3 — mobile: screen + main block — DONE 2026-11-24 (device QA pending)
+> `services/dashboard/` (`dashboard.types.ts`, `getSummary`, `useDashboardSummary` — key with from / to /
+> warehouse, `placeholderData` keeps the old period while loading, 10 min `staleTime` for a period that ended).
+> `screens/dashboard/`: `DashboardScreen` (header «Дашборд · store · scope», warehouse pill → `DashboardWarehouseSheet`
+> when the owner has 2+ warehouses; period chips Сегодня / Вчера / 7 дней / Этот месяц (whole month, future days
+> empty) / Прошлый месяц / Свой период — two `DatePickerSheet`s, «По» limited to 31 days from «С» and today),
+> `dashboard-period.ts` (period → local day bounds, `shortAmount`, `barWidth`, store-local hour / day of chart
+> points by the fixed +5h), `BarChart` (views, tap selects; default = best bar), `DashboardParts` (`SectionCard`,
+> `StatTile`, `ShareBar`, `TotalRow`). Hero: revenue of the period, «Продажи − возвраты» line when there were
+> returns, tiles profit + margin / orders + units / average check. Empty period → one «операций нет» card.
+> New colour tokens `chart` / `chart-muted` (`global.css` + `tokens.ts`): light `#5E7A45` — the sage `accent` is too
+> pale for bars on a white card. Route `(profile)/dashboard`; Profile row «Дашборд» for `canSeeDashboard(user)`
+> (`libs/roles.ts`, owner only, UX). i18n `dashboard.*` ru / uz / en replaced the unused web leftover; labels reuse
+> `order.paymentMethod.*`, `payment.category.*`. `tsc --noEmit` clean; `expo export --platform web` builds.
 - `src/services/dashboard/`: `dashboard.service.ts` (3 calls), `dashboard.queries.ts`
   (`useDashboardSummary`, `useDashboardTeam`, `useDashboardActivity`; the key includes from / to / warehouse;
   `staleTime` long for periods that ended before today, short for a period that includes today), types in
@@ -190,7 +203,15 @@ Amounts go out as numbers (UZS has no fractions), like other summary endpoints.
 - i18n ru / uz / en (`dashboard.*`); money with the existing formatter, short form «млн / тыс».
 - `tsc --noEmit`.
 
-### Stage 4 — mobile: «Показать ещё отчёты»
+### Stage 4 — mobile: «Показать ещё отчёты» — DONE 2026-11-24 (device QA pending)
+> `services/dashboard`: `getTeam` / `getActivity`, `useDashboardTeam` / `useDashboardActivity` (enabled only once
+> the block is open; activity has no long cache — its rental figures are «now»). `screens/dashboard/DashboardMore.tsx`:
+> button «Показать ещё отчёты · 1 из 2» → block «Сотрудники и склады» (staff bars, «N заказов»; warehouses with the
+> backend share) → «2 из 2» → block «Время, возвраты, аренда»: hours chart (selling hours, at least 8:00–20:00,
+> tap a bar; peak / quietest line), returns (sum, count, share of sales, reasons with `orderReturn.reasons.*`),
+> rental (income of the period; out / due today / overdue «now», shown only when `rental` is not null) →
+> «Свернуть». Open blocks stay open on a period / warehouse change (state in `DashboardScreen`). Loading / error
+> with «Повторить» per block. i18n `dashboard.more.*` ru / uz / en. `tsc --noEmit` clean; web export builds.
 - Button «Показать ещё отчёты · 1 из 2» → block 1 «Сотрудники и склады» (`useDashboardTeam`, enabled only after
   the tap) → «2 из 2» → block 2 «Время, возвраты, аренда» (`useDashboardActivity`) → «Свернуть».
 - The opened blocks stay open when the period / warehouse changes (they refetch).

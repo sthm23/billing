@@ -1,7 +1,14 @@
 # Order set discount (общая скидка на заказ) — plan
 
-> Created 2026-11-24. **Draft — waiting for the user's review.** Affected: `billing-mobile` (main),
-> `billing_ui` (optional, see Q3). Backend: **no changes** — it already validates every `sale`.
+> Created 2026-11-24. Affected: `billing-mobile` (main), `billing_ui` (fix of the naive split).
+> Backend: **no changes** — it already validates every `sale`.
+
+## Decisions (user, 2026-11-24)
+
+1. **One-shot**: the entered total is applied once into the line `sale` values and not kept.
+2. **Rounding step 1 000 sum**, same algorithm as the rental.
+3. **Web too**: replace the naive split in `order-id.ts` with the shared algorithm (no new web UI).
+4. **OWNER/MANAGER only** (`canLowerPrice`), same as lowering a line price; the backend enforces it.
 
 ## Goal
 
@@ -45,6 +52,14 @@ set discount of a rental booking.
    opens the sheet again. This also matches what happens after save/reopen (only line `sale` survives).
 6. «Убрать скидку» sets every line and service `sale` to 0 (raised prices stay).
 7. The backend recalculates and validates on save — nothing new there.
+
+## Status (2026-11-24)
+
+Stages 1–4 done, `tsc` clean in mobile and web; algorithm sanity-checked on sample orders. Device/web QA pending.
+Mobile: `cartStore.applySetDiscount` / `clearDiscount` (`screens/order/cart/cart-store.ts`), `OrderDiscountSheet`
+(`components/order/`), pill «Скидка на заказ» next to «Скидка» in the cart totals; service `sale` now kept.
+Web: `order-id.ts` `handleSaleDialogChange` — the dialog still takes the discount amount; it is converted to a
+target and spread over the items (web has no service discounts); cancelling the dialog no longer wipes discounts.
 
 ## Stages
 
