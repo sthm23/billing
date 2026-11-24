@@ -143,9 +143,10 @@ export class ProductController {
     return this.productService.restore(id, user);
   }
 
+  /** Archive the product: owner, manager (own warehouses), admin */
   @Delete(':id')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OWNER, StaffRole.MANAGER)
+  @Roles(UserRole.OWNER, StaffRole.OWNER, StaffRole.MANAGER)
   remove(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: CurrentUserType,

@@ -1,12 +1,4 @@
-import {
-  IsArray,
-  IsBoolean,
-  IsNotEmpty,
-  IsOptional,
-  IsString,
-  IsUUID,
-  ValidateNested,
-} from 'class-validator';
+import { IsBoolean, IsOptional, IsString } from 'class-validator';
 
 export class UpdateStoreDto {
   @IsOptional()
@@ -35,13 +27,6 @@ export class UpdateStoreDto {
   @IsString()
   warehouseName?: string;
 
-  @IsNotEmpty()
-  @IsArray()
-  @IsUUID('4', { each: true })
-  attributeIds!: string[];
-
-  @IsNotEmpty()
-  @IsArray()
-  @IsUUID('4', { each: true })
-  brandIds!: string[];
+  // Brands / attributes of the store are changed by the platform ADMIN only:
+  // /admin/stores/:id/brands | attributes (billing/docs/store-catalog/PLAN.md)
 }

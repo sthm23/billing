@@ -164,8 +164,9 @@ describe('StoreService', () => {
     });
   });
   describe('updateStore sales/rental flags', () => {
-    const dto = (flags: Partial<UpdateStoreDto>) =>
-      ({ attributeIds: [], brandIds: [], ...flags }) as UpdateStoreDto;
+    const dto = (flags: Partial<UpdateStoreDto>): UpdateStoreDto => ({
+      ...flags,
+    });
 
     it('switches a store to rental only', async () => {
       await service.updateStore(
@@ -201,8 +202,6 @@ describe('StoreService', () => {
 
   describe('updateStore voice data consent', () => {
     const dto = (flags: Partial<UpdateStoreDto>): UpdateStoreDto => ({
-      attributeIds: [],
-      brandIds: [],
       ...flags,
     });
 

@@ -123,11 +123,7 @@ export class StoreService {
       }
       const store = await this.prisma.store.findUnique({
         where: { id },
-        include: {
-          brands: true,
-          attributes: true,
-          warehouse: true,
-        },
+        include: { warehouse: true },
       });
       if (!store) {
         throw new NotFoundException('Store not found');
@@ -144,34 +140,6 @@ export class StoreService {
         dto.voiceDataConsent,
         user.id,
       );
-      const nextAttributeIds = [...new Set(dto.attributeIds ?? [])];
-      const nextBrandIds = [...new Set(dto.brandIds ?? [])];
-
-      const currentAttributeIds = store.attributes.map(
-        (attr) => attr.attributeId,
-      );
-      const currentBrandIds = store.brands.map((brand) => brand.brandId);
-
-      const nextAttributeSet = new Set(nextAttributeIds);
-      const nextBrandSet = new Set(nextBrandIds);
-
-      const currentAttributeSet = new Set(currentAttributeIds);
-      const currentBrandSet = new Set(currentBrandIds);
-
-      const newAttributes = nextAttributeIds.filter(
-        (attrId) => !currentAttributeSet.has(attrId),
-      );
-      const removedAttributes = currentAttributeIds.filter(
-        (attrId) => !nextAttributeSet.has(attrId),
-      );
-
-      const newBrands = nextBrandIds.filter(
-        (brandId) => !currentBrandSet.has(brandId),
-      );
-      const removedBrands = currentBrandIds.filter(
-        (brandId) => !nextBrandSet.has(brandId),
-      );
-
       const updated = await this.prisma.$transaction(async (tx) => {
         await tx.store.update({
           where: { id },
@@ -187,41 +155,6 @@ export class StoreService {
           await tx.warehouse.update({
             where: { id: store.warehouse[0].id },
             data: { name: dto.warehouseName },
-          });
-        }
-
-        if (removedAttributes.length > 0) {
-          await tx.attributeOnStore.deleteMany({
-            where: {
-              storeId: id,
-              attributeId: { in: removedAttributes },
-            },
-          });
-        }
-
-        if (newAttributes.length > 0) {
-          await tx.attributeOnStore.createMany({
-            data: newAttributes.map((attrId) => ({
-              attributeId: attrId,
-              storeId: id,
-            })),
-            skipDuplicates: true,
-          });
-        }
-
-        if (removedBrands.length > 0) {
-          await tx.brandsOnStore.deleteMany({
-            where: {
-              storeId: id,
-              brandId: { in: removedBrands },
-            },
-          });
-        }
-
-        if (newBrands.length > 0) {
-          await tx.brandsOnStore.createMany({
-            data: newBrands.map((brandId) => ({ brandId, storeId: id })),
-            skipDuplicates: true,
           });
         }
 

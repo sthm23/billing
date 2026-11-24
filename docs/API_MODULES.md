@@ -1133,7 +1133,7 @@ Authorization: Bearer <access_token>
 }
 ```
 
-**Что происходит**: Product.isArchived → `true`; архивные товары не попадают в `GET /product`
+**Что происходит**: Product.isArchived → `true`; архивные товары не попадают в `GET /product` (кроме `?archived=true` для OWNER/MANAGER/ADMIN); вернуть — `PATCH /product/:id/restore`; архивный товар только для чтения (см. `docs/features/products.md`)
 
 **Errors**:
 - `403 Forbidden` — нет доступа к магазину/складу товара

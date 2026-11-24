@@ -40,7 +40,7 @@ This application is the **source of truth for business logic**.
 src/
 ├── auth/              # JWT authentication (login, refresh, logout)
 ├── user/              # User management (CUSTOMER, STAFF)
-├── admin/             # Admin operations (only ADMIN role); admin-stores.* — /admin/stores (store list/card, create with new owner, suspend/resume)
+├── admin/             # Admin operations (only ADMIN role); admin-stores.* — /admin/stores (store list/card, create with new owner, suspend/resume, connect/disconnect brands and attributes), admin-catalog.* — /admin/catalog (brand/attribute dictionary search; `findOrCreateBrand` / `findAttributeByName` shared with store create)
 ├── store/             # Store management
 ├── warehouse/         # Warehouse management, inventory movements
 ├── product/           # Products and variants (SKU)

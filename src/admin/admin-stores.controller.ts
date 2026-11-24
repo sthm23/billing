@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseUUIDPipe,
@@ -16,6 +17,11 @@ import type { CurrentUser as UserInfo } from '@auth/models/auth.model';
 import { CurrentUser } from '@shared/decorators/user.decorator';
 import { AdminGuard } from '@shared/guards/admin.guard';
 import { AdminStoresService } from './admin-stores.service';
+import { AdminCatalogService } from './admin-catalog.service';
+import {
+  ConnectStoreAttributeDto,
+  ConnectStoreBrandDto,
+} from './dto/admin-catalog.dto';
 import {
   AdminStoreListParams,
   CreateAdminStoreDto,
@@ -31,7 +37,10 @@ import {
 @UsePipes(new ValidationPipe({ transform: true }))
 @Controller('admin/stores')
 export class AdminStoresController {
-  constructor(private readonly storesService: AdminStoresService) {}
+  constructor(
+    private readonly storesService: AdminStoresService,
+    private readonly catalogService: AdminCatalogService,
+  ) {}
 
   @Get()
   list(@Query() params: AdminStoreListParams) {
@@ -78,5 +87,45 @@ export class AdminStoresController {
     @CurrentUser() admin: UserInfo,
   ) {
     return this.storesService.resume(id, dto, admin);
+  }
+
+  /** Connect a brand: by id, or by name (found or created) */
+  @Post(':id/brands')
+  connectBrand(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ConnectStoreBrandDto,
+    @CurrentUser() admin: UserInfo,
+  ) {
+    return this.catalogService.connectBrand(id, dto, admin);
+  }
+
+  /** 409 IN_USE when the store's products (archived included) use it */
+  @Delete(':id/brands/:brandId')
+  disconnectBrand(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('brandId', ParseUUIDPipe) brandId: string,
+    @CurrentUser() admin: UserInfo,
+  ) {
+    return this.catalogService.disconnectBrand(id, brandId, admin);
+  }
+
+  /** Connect an attribute: by id, or a new one (409 ATTRIBUTE_EXISTS if the name is taken) */
+  @Post(':id/attributes')
+  connectAttribute(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ConnectStoreAttributeDto,
+    @CurrentUser() admin: UserInfo,
+  ) {
+    return this.catalogService.connectAttribute(id, dto, admin);
+  }
+
+  /** 409 IN_USE when the store's products (archived included) use it */
+  @Delete(':id/attributes/:attributeId')
+  disconnectAttribute(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('attributeId', ParseUUIDPipe) attributeId: string,
+    @CurrentUser() admin: UserInfo,
+  ) {
+    return this.catalogService.disconnectAttribute(id, attributeId, admin);
   }
 }

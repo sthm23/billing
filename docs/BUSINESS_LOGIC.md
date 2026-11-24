@@ -1026,7 +1026,7 @@ if (!hasAccess) {
 
 **Что происходит**:
 - Product.isArchived → `true`
-- Товар остается в БД, но не показывается в списках (фильтр `where: { isArchived: false }`)
+- Товар остается в БД, но не показывается в списках (фильтр `where: { isArchived: false }`), кроме `GET /product?archived=true` (OWNER/MANAGER/ADMIN). Восстановление — `PATCH /product/:id/restore`; пока товар в архиве, он только для чтения (изменение → 400)
 
 ### Обновление цены варианта
 **Endpoint**: `PUT /product/variants/:id`
