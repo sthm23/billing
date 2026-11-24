@@ -218,7 +218,8 @@ Amounts go out as numbers (UZS has no fractions), like other summary endpoints.
 - Rental card hidden when `rental.enabled` is false.
 - `tsc --noEmit`; device QA on iOS / Android and Expo web (light + dark).
 
-### Stage 5 — docs
+### Stage 5 — docs — DONE 2026-11-24
+> Updated: new `docs/features/dashboard.md`; `docs/INDEX.md`, `docs/api-map.md` (Dashboard Module + summary table), `docs/security.md` (matrix rows, `canSeeDashboard`, 118 endpoints), `billing/AGENTS.md` (module list, two reporting rules), `billing-mobile/AGENTS.md` (route, services, colour tokens, libs, «Owner dashboard»).
 - `docs-updater`: new `docs/features/dashboard.md` (rules from «Definitions», event-dated accounting, owner only,
   31-day limit), `docs/api-map.md` (Dashboard module), `docs/security.md` (endpoint rows), `docs/INDEX.md`,
   `billing-mobile/AGENTS.md` (dashboard screen, hooks).

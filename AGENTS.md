@@ -50,6 +50,7 @@ src/
 ├── debt/              # Manual debt tracking (CustomerDebt)
 ├── category-attributes/ # Categories, brands, attributes, tags
 ├── order-assistant/   # Voice / text order assistant: audio → text (stt.client → local STT service), text → candidate variants, learned aliases, voice samples kept with store consent (voice-sample.service: private bucket, daily 12-month sweep) (docs/voice-order/); engine/ is pure TS
+├── dashboard/         # Owner dashboard (GET /dashboard/summary · team · activity): store owner only, read-only live aggregation, event-dated (docs/dashboard/PLAN.md, ../docs/features/dashboard.md)
 ├── file/              # File upload (S3)
 ├── prisma/            # PrismaService, S3Service
 └── shared/            # Guards, decorators, helpers
@@ -319,7 +320,12 @@ await this.prisma.$transaction(async (tx) => {
 
 ### Reporting
 
-1. ✅ **Sales are net of returns**: `SOLD_ORDER_FILTER` (`src/order/entities/sold-order.filter.ts`) includes REFUNDED, sums use `totalAmount − returnedAmount` (`GET /orders/summary`, staff card stats) — use it for any new sales report
+There are **two** reporting rules. Do not mix them in one report.
+
+1. ✅ **Sales are net of returns, in the sale period** (older rule): `SOLD_ORDER_FILTER` (`src/order/entities/sold-order.filter.ts`) includes REFUNDED, sums use `totalAmount − returnedAmount` (`GET /orders/summary`, staff card stats). A return reduces the period of the **sale**. Applies to `GET /orders/summary` and the staff stats, and to any new report that must match them (a «today's sales» figure beside an order list).
+2. ✅ **Event-dated** (owner dashboard, 2026-11-24, `src/dashboard/`, `../docs/features/dashboard.md`): a sale counts on `soldAt`, a return on its own date (`ReturnedOrder.createdAt`) as a minus in the **return's** period, cash on its `CashTransaction` date — so a closed period never changes. Revenue = sales − returns of the period; debt orders are in sales; rental orders are never sales (own card); collateral is never income. Sold orders = the same statuses as `SOLD_ORDER_FILTER` minus rentals (raw SQL in `dashboard.service.ts`), **without** netting `returnedAmount`. Applies to `/dashboard/*` and to any new period report that must not change after the period closes.
+
+Example: sale 10 Oct 1 000 000, return 5 Nov 300 000 → rule 1: October 700 000, November 0; rule 2: October 1 000 000, November −300 000. When unsure which one a new report needs, ask.
 
 ### CashBox
 
