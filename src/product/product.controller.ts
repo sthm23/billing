@@ -132,6 +132,17 @@ export class ProductController {
     return this.productService.updateProduct(id, dto, user);
   }
 
+  /** Restore an archived product: owner, manager (own warehouses), admin */
+  @Patch(':id/restore')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OWNER, StaffRole.OWNER, StaffRole.MANAGER)
+  restore(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: CurrentUserType,
+  ) {
+    return this.productService.restore(id, user);
+  }
+
   @Delete(':id')
   @UseGuards(RolesGuard)
   @Roles(UserRole.OWNER, StaffRole.MANAGER)

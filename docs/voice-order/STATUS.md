@@ -24,7 +24,7 @@ Sellers are taught to name products one after another.
 | 0 | STT bake-off on 3 real dictations | ✅ done: **medium-uz** (`AlexAnoshka/fast-whisper-uz-rubaistt-v2-medium-ct2`), **no hotwords** (they returned empty text). Score 10/11 products |
 | 1 | Backend text matching + aliases + admin flag `orderAssistantEnabled` | ✅ done |
 | 2 | Mobile text assistant (cart «Голос» → review screen → cart) | ✅ built, **device QA pending** |
-| 3 | Voice: STT service + `POST /order-assistant/transcribe` + voice tab | ✅ built, **web QA passed**, device QA and server install pending |
+| 3 | Voice: STT service + `POST /order-assistant/transcribe` + voice tab | ✅ built, **web QA passed**, **installed on the VPS 2026-11-24** (`install.sh`; model load 15.5 s), device QA pending |
 | 4 | Voice data with consent (`voiceDataConsent`, `VoiceSample`, private bucket, 12-month retention, export) | ✅ built, **not tested against a real bucket**, device QA pending |
 | 5 | Fine-tune on collected samples | ⏳ waiting for data |
 
@@ -85,6 +85,9 @@ when this was written (check `git status` in `billing/` and `billing-mobile/`).
   is `temperature=0`, `condition_on_previous_text=False` and a token cap in `stt-service/app.py`. Do not remove
   them without timing short clips again.
 - **expo-image-picker:** `microphonePermission: false` blocks RECORD_AUDIO on Android. It must be the text.
+- **Memory:** medium takes ~1.6 GB loaded and ~2.1 GB while recognizing on Linux. The first install with
+  `MemoryMax=1.8G` was OOM-killed on the first dictation, so the backend answered 503 (2026-11-24).
+  The limit is now 2.4G, plus swap. The real fix is the planned RAM upgrade.
 - **Recognition speed:** with 2 threads a recording takes about 11 s at minimum (Whisper always processes a
   30 s window); 24 s of speech takes about 20 s.
 

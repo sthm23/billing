@@ -23,11 +23,11 @@ if [[ "$RUN_USER" == "root" ]]; then
 fi
 echo "👤 Service user: $RUN_USER"
 
-echo "🧠 Memory (the model needs ~1.5 GB available):"
+echo "🧠 Memory (the model needs ~2.2 GB: 1.6 GB loaded + ~0.5 GB while recognizing):"
 free -h
 AVAILABLE_MB=$(free -m | awk '/^Mem:/ {print $7}')
-if (( AVAILABLE_MB < 1500 )); then
-  echo "⚠️  Only ${AVAILABLE_MB} MB available — the service may be killed (MemoryMax=1.8G). Add RAM first." >&2
+if (( AVAILABLE_MB < 2300 )); then
+  echo "⚠️  Only ${AVAILABLE_MB} MB available — the service may be killed (MemoryMax=2.4G). Add RAM first." >&2
 fi
 
 echo "📦 System packages..."
@@ -56,7 +56,7 @@ ExecStart=$STT_DIR/venv/bin/uvicorn app:app --host 127.0.0.1 --port $PORT --work
 Restart=always
 RestartSec=5
 # Never starve NestJS / PostgreSQL on the shared VPS
-MemoryMax=1.8G
+MemoryMax=2.4G
 CPUQuota=150%
 Nice=10
 
@@ -74,8 +74,8 @@ systemctl daemon-reload
 systemctl enable "$SERVICE"
 systemctl restart "$SERVICE"
 
-echo "⏳ Waiting for the model (first start downloads ~800 MB)..."
-for _ in $(seq 1 120); do
+echo "⏳ Waiting for the model (first start downloads ~1.5 GB)..."
+for _ in $(seq 1 720); do
   if curl -fsS "http://127.0.0.1:$PORT/health" 2>/dev/null | grep -q '"ok"'; then
     echo "✅ STT service is up: $(curl -s "http://127.0.0.1:$PORT/health")"
     exit 0
@@ -83,6 +83,6 @@ for _ in $(seq 1 120); do
   sleep 5
 done
 
-echo "❌ STT service did not become ready in 10 min. Logs:" >&2
+echo "❌ STT service did not become ready in 60 min. Logs:" >&2
 journalctl -u "$SERVICE" -n 50 --no-pager >&2
 exit 1

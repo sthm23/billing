@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  NotFoundException,
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getLoggerToken } from 'nestjs-pino';
@@ -44,6 +45,7 @@ describe('ProductService', () => {
       findUnique: jest.fn(),
       update: jest.fn(),
       create: jest.fn(),
+      count: jest.fn(),
     },
     category: { findFirst: jest.fn() },
     productVariant: {
@@ -210,6 +212,59 @@ describe('ProductService', () => {
       ).not.toContainEqual({ variants: { some: {} } });
     });
 
+    describe('archive', () => {
+      const manager = (): CurrentUser =>
+        makeUser({
+          staff: {
+            id: 'm',
+            storeId: STORE,
+            role: StaffRole.MANAGER,
+            warehouse: [{ warehouseId: WAREHOUSE }],
+          },
+        } as never);
+
+      beforeEach(() => prisma.product.count.mockResolvedValue(3));
+
+      it('lists only archived products of the manager warehouses', async () => {
+        const res = await service.findAll(
+          { archived: true, lowStock: true },
+          manager(),
+        );
+        const where = prisma.product.findMany.mock.calls[1][0].where;
+        expect(where.AND).toEqual(
+          expect.arrayContaining([
+            { isArchived: true },
+            { storeId: STORE },
+            { warehouseId: { in: [WAREHOUSE] } },
+          ]),
+        );
+        expect(where.AND).not.toContainEqual({ isArchived: false });
+        // lowStock is ignored inside the archive
+        expect(JSON.stringify(where.AND)).not.toContain('"in":["low"');
+        expect(res.total).toBe(3);
+        expect(res.counts).toEqual({ all: 4, lowStock: 2, archived: 3 });
+      });
+
+      it('counts archived products with the same scope for the active list', async () => {
+        await service.findAll({ search: 'брус' }, manager());
+        const countWhere = prisma.product.count.mock.calls[0][0].where;
+        expect(countWhere.AND).toContainEqual({ isArchived: true });
+        expect(JSON.stringify(countWhere.AND)).toContain('брус');
+        expect(
+          prisma.product.findMany.mock.calls[1][0].where.AND,
+        ).toContainEqual({ isArchived: false });
+      });
+
+      it('rejects the archive for a seller and never counts it for them', async () => {
+        await expect(
+          service.findAll({ archived: true }, makeUser()),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+        const res = await service.findAll({}, makeUser());
+        expect(res.counts.archived).toBe(0);
+        expect(prisma.product.count).not.toHaveBeenCalled();
+      });
+    });
+
     it('marks a product without variants as a draft', async () => {
       const row = {
         id: 'p',
@@ -322,6 +377,80 @@ describe('ProductService', () => {
         service.remove('product', makeUser()),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('restore', () => {
+    const manager = (warehouseId = WAREHOUSE): CurrentUser =>
+      makeUser({
+        staff: {
+          id: 'm',
+          storeId: STORE,
+          role: StaffRole.MANAGER,
+          warehouse: [{ warehouseId }],
+        },
+      } as never);
+
+    it('restores an archived product of the manager warehouse and returns the card', async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        id: 'product',
+        storeId: STORE,
+        warehouseId: WAREHOUSE,
+        isArchived: true,
+      });
+      const card = { id: 'product', isArchived: false };
+      const findOne = jest
+        .spyOn(service, 'findOne')
+        .mockResolvedValue(card as never);
+      const res = await service.restore('product', manager());
+      expect(prisma.product.update).toHaveBeenCalledWith({
+        where: { id: 'product' },
+        data: { isArchived: false },
+      });
+      expect(findOne).toHaveBeenCalledWith('product', expect.anything());
+      expect(res).toBe(card);
+    });
+
+    it('rejects a product that is not archived with 400', async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        id: 'product',
+        storeId: STORE,
+        warehouseId: WAREHOUSE,
+        isArchived: false,
+      });
+      await expect(
+        service.restore('product', manager()),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a product of another warehouse or another store with 403', async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        id: 'product',
+        storeId: STORE,
+        warehouseId: WAREHOUSE,
+        isArchived: true,
+      });
+      await expect(
+        service.restore('product', manager(FOREIGN_WAREHOUSE)),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      prisma.product.findUnique.mockResolvedValue({
+        id: 'product',
+        storeId: 'foreign-store',
+        warehouseId: WAREHOUSE,
+        isArchived: true,
+      });
+      await expect(
+        service.restore('product', manager()),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 for an unknown product', async () => {
+      prisma.product.findUnique.mockResolvedValue(null);
+      await expect(
+        service.restore('missing', manager()),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 
@@ -470,6 +599,7 @@ describe('ProductService', () => {
         canSell: true,
         canRent: false,
         rentPricePerDay: new Prisma.Decimal(150000),
+        product: { isArchived: false },
       });
       prisma.warehouse.findUnique.mockResolvedValue({ id: WAREHOUSE });
       await service.updateProductVariant(
@@ -490,6 +620,7 @@ describe('ProductService', () => {
         canSell: true,
         canRent: false,
         rentPricePerDay: null,
+        product: { isArchived: false },
       });
       prisma.warehouse.findUnique.mockResolvedValue({ id: WAREHOUSE });
       await expect(
@@ -499,6 +630,21 @@ describe('ProductService', () => {
           owner(),
         ),
       ).rejects.toThrow('rent price per day');
+      expect(prisma.productVariant.update).not.toHaveBeenCalled();
+    });
+    it('rejects a price / flag change of an archived product variant', async () => {
+      prisma.productVariant.findUnique.mockResolvedValue({
+        id: 'variant',
+        storeId: STORE,
+        warehouseId: WAREHOUSE,
+        canSell: true,
+        canRent: false,
+        rentPricePerDay: null,
+        product: { isArchived: true },
+      });
+      await expect(
+        service.updateProductVariant('variant', { price: 100000 }, owner()),
+      ).rejects.toThrow('archived');
       expect(prisma.productVariant.update).not.toHaveBeenCalled();
     });
   });
@@ -604,6 +750,25 @@ describe('ProductService', () => {
           owner(),
         ),
       ).rejects.toThrow('does not belong');
+      expect(prisma.productVariant.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects new variants for an archived product', async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        id: 'product',
+        name: 'Oxford',
+        storeId: STORE,
+        warehouseId: WAREHOUSE,
+        isArchived: true,
+        category: { name: 'Рубашки' },
+        attributes: [{ attributeId: SIZE }, { attributeId: COLOR }],
+      });
+      await expect(
+        service.createProductVariant(
+          dto([variant({ attributes: attrs('m', 'white') })]),
+          owner(),
+        ),
+      ).rejects.toThrow('archived');
       expect(prisma.productVariant.create).not.toHaveBeenCalled();
     });
 

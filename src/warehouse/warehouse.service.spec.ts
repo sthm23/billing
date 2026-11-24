@@ -72,6 +72,7 @@ describe('WarehouseService', () => {
     prisma.productVariant.findUnique.mockResolvedValue({
       id: VARIANT,
       warehouseId: WAREHOUSE,
+      product: { isArchived: false },
     });
     prisma.warehouse.findUnique.mockResolvedValue({
       id: WAREHOUSE,
@@ -201,6 +202,31 @@ describe('WarehouseService', () => {
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects receipt and write-off of an archived product', async () => {
+      prisma.productVariant.findUnique.mockResolvedValue({
+        id: VARIANT,
+        warehouseId: WAREHOUSE,
+        product: { isArchived: true },
+      });
+      await expect(
+        service.inventoryMovement(WAREHOUSE, movement({}), makeUser()),
+      ).rejects.toThrow('archived');
+      await expect(
+        service.inventoryMovement(
+          WAREHOUSE,
+          movement({
+            type: StockMovementType.OUT,
+            reason: StockMovementReason.ADJUSTMENT,
+            costPrice: undefined,
+          }),
+          makeUser(),
+        ),
+      ).rejects.toThrow('archived');
+      expect(prisma.inventory.upsert).not.toHaveBeenCalled();
+      expect(prisma.inventory.updateMany).not.toHaveBeenCalled();
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
     });
 
     it('rejects a warehouse of another store', async () => {

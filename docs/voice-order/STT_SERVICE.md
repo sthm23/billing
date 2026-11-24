@@ -18,10 +18,19 @@ mobile ──► NestJS POST /order-assistant/transcribe ──► http://127.0.
 free -h
 ```
 
-The model needs **~1 GB RAM** while it works (≈1.0 GB measured on 2 threads) plus ~300 MB for Python.
-On the 4 GB VPS with NestJS + PostgreSQL + Docker, check the `available` column, not the cloud panel's
-"RAM 100%" (that is quota allocation). If `available` is under ~1.5 GB — upgrade RAM first (DESIGN §6:
-+2–4 GB planned).
+The service needs **~1.6 GB RAM loaded and ~2.1 GB peak while recognizing** (measured on Linux,
+python:3.12, int8, 2 threads, 2026-11-24 — the earlier "~1 GB" was a Windows reading and the first
+`MemoryMax=1.8G` got the service OOM-killed on the first dictation → 503). `beam_size=1` or
+`MALLOC_ARENA_MAX=2` save only 50–70 MB. On the 4 GB VPS with NestJS + PostgreSQL + Docker (~1 GB without
+STT), check the `available` column, not the cloud panel's "RAM 100%" (that is quota allocation).
+`MemoryMax=2.4G` fits but is tight: add a swap file as a safety net, and plan the RAM upgrade (+2–4 GB,
+DESIGN §6). OOM kill shows in `sudo journalctl -u sthm-stt` (`Failed with result 'oom-kill'`).
+
+```bash
+# 2 GB swap file (once)
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
 
 ## 2. Install
 
@@ -29,7 +38,7 @@ On the 4 GB VPS with NestJS + PostgreSQL + Docker, check the `available` column,
 Run once as the user that owns `/var/www/billing` (the GitHub Actions deploy user):
 
 ```bash
-sudo bash /var/www/billing/stt-service/install.sh     # waits until /health is ok (first start ~800 MB download)
+sudo bash /var/www/billing/stt-service/install.sh     # waits until /health is ok (first start ~1.5 GB download)
 ```
 
 By hand:
@@ -41,7 +50,7 @@ python3 -m venv /opt/sthm-stt/venv
 /opt/sthm-stt/venv/bin/pip install -r requirements.txt
 ```
 
-First start downloads the model (~800 MB) from Hugging Face into `HF_HOME`. To keep the cache with the service:
+First start downloads the model (~1.5 GB `model.bin`; ~30–60 min on the VPS line) from Hugging Face into `HF_HOME`. To keep the cache with the service:
 `/opt/sthm-stt/hf` (see the unit below).
 
 ## 3. systemd unit
@@ -63,7 +72,7 @@ ExecStart=/opt/sthm-stt/venv/bin/uvicorn app:app --host 127.0.0.1 --port 8090 --
 Restart=always
 RestartSec=5
 # Never starve NestJS / PostgreSQL on the shared VPS
-MemoryMax=1.8G
+MemoryMax=2.4G
 CPUQuota=150%
 Nice=10
 
