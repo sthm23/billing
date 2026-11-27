@@ -51,6 +51,7 @@ src/
 ├── category-attributes/ # Categories, brands, attributes, tags
 ├── order-assistant/   # Voice / text order assistant: audio → text (stt.client → local STT service), text → candidate variants, learned aliases, voice samples kept with store consent (voice-sample.service: private bucket, daily 12-month sweep) (docs/voice-order/); engine/ is pure TS
 ├── dashboard/         # Owner dashboard (GET /dashboard/summary · team · activity): store owner only, read-only live aggregation, event-dated (docs/dashboard/PLAN.md, ../docs/features/dashboard.md)
+├── telegram/          # Telegram shop, stage 2 (bot connection only): /telegram-shop/bot (OWNER + ADMIN, JWT) and the PUBLIC webhook /telegram-shop/webhook/:slug (secret header, not JWT); bot tokens encrypted AES-256-GCM (token-crypto.service), Bot API client (telegram-bot.client) (docs/telegram-shop/PLAN.md, ../docs/api-map.md → Telegram Shop Module)
 ├── file/              # File upload (S3)
 ├── prisma/            # PrismaService, S3Service
 └── shared/            # Guards, decorators, helpers
@@ -563,7 +564,13 @@ S3_PUBLIC_URL=https://s3.uztelecom.uz/sthm-media-dev   # public base INCLUDING t
 PORT=4000
 STT_URL=http://127.0.0.1:8090              # order assistant speech-to-text (billing/stt-service, docs/voice-order/STT_SERVICE.md); default if unset
 VOICE_S3_BUCKET_NAME=sthm-voice             # PRIVATE bucket for voice samples (store consent); created by hand; unset → never kept
+TELEGRAM_TOKEN_KEY=<64 hex chars or base64 of 32 bytes>   # AES-256 key for stores' bot tokens; generate once and keep (lost → owners re-paste tokens)
+TELEGRAM_WEBHOOK_BASE_URL=https://sthm23.uz               # public HTTPS address of this API (Telegram calls <base>/api/telegram-shop/webhook/:slug)
+TELEGRAM_MINIAPP_URL=https://shop.sthm23.uz               # shared Mini App; a shop is <url>/<slug>
+TELEGRAM_API_URL=                                         # optional Bot API server; default https://api.telegram.org
 ```
+
+The three required `TELEGRAM_*` variables are optional for startup: when one is missing the API still starts and the Telegram shop answers 503 `TELEGRAM_NOT_CONFIGURED`.
 
 ---
 

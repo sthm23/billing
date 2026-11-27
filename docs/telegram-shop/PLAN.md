@@ -174,7 +174,7 @@ model OnlineOrderItem {
 | GET | `/public/tg/:slug/products` | список товаров (поиск, категория, пагинация) |
 | GET | `/public/tg/:slug/products/:id` | карточка: фото, варианты, цена, наличие |
 | POST | `/public/tg/:slug/orders` | создать заявку: `items[]`, `fullName`, `phone`, `region`, `district`, `comment` |
-| POST | `/telegram/webhook/:slug` | апдейты бота (`/start`, привязка уведомлений); проверка `X-Telegram-Bot-Api-Secret-Token` |
+| POST | `/telegram-shop/webhook/:slug` | апдейты бота (`/start`, привязка уведомлений); проверка `X-Telegram-Bot-Api-Secret-Token` |
 
 Все `/public/tg/*` проверяют: магазин найден по `slug`, услуга включена, магазин не `SUSPENDED`, подпись `initData`
 токеном **этого** магазина, `auth_date` не старше 24 ч. `storeId` берётся только из `slug`. DTO с `class-validator`,
@@ -184,8 +184,8 @@ model OnlineOrderItem {
 
 | Метод | Путь | Роли |
 |-------|------|------|
-| GET/PUT/DELETE | `/store/telegram-bot` | OWNER (+ ADMIN) — карточка / подключить / отключить |
-| POST | `/store/telegram-bot/notify-link` · `/test` | OWNER — код привязки, тест-сообщение |
+| GET/PUT/DELETE | `/telegram-shop/bot` | OWNER (+ ADMIN с `storeId`) — состояние / подключить / отключить |
+| POST | `/telegram-shop/bot/notify-link` · `/test` | OWNER (+ ADMIN) — ссылка привязки чата, тест-сообщение |
 | PATCH | `/admin/stores/:id` (поле `telegramShopEnabled`) | ADMIN — включить/выключить услугу (существующий маршрут, как `orderAssistantEnabled`) |
 | GET | `/online-orders` · `/online-orders/:id` | по правилу 6 |
 | POST | `/online-orders/:id/confirm` · `/reject` | по правилу 6 |
@@ -195,7 +195,8 @@ model OnlineOrderItem {
 | Этап | Состояние |
 |------|-----------|
 | 1. Схема и флаг | ✅ сделан 2026-11-27 (см. ниже) |
-| 2–8 | не начаты |
+| 2. Подключение бота | ✅ сделан 2026-11-27 (см. ниже) |
+| 3–8 | не начаты |
 
 **Этап 1 — что сделано:**
 - `prisma/schema.prisma`: `Store.telegramShopEnabled` (default `false`), модели `StoreTelegramBot`, `OnlineOrder`, `OnlineOrderItem`,
@@ -210,6 +211,28 @@ model OnlineOrderItem {
 - Проверки: `tsc` backend и mobile — 0 ошибок; `admin-stores.service.spec` — 18/18; весь jest бэкенда: 528 прошли,
   12 упали — старые заглушки `should be defined` (Nest не находит зависимости), к изменению не относятся.
 - Документацию (`DATABASE.md`, `api-map.md`, `features/stores-warehouses.md`) обновляет `docs-updater`.
+
+**Этап 2 — что сделано** (модуль `billing/src/telegram/`, только бэкенд; экранов в приложении ещё нет — это этап 5):
+- `TelegramConfig` (env), `TokenCryptoService` (AES-256-GCM для токена + подписанный код ссылки «получать заявки сюда»),
+  `TelegramBotClient` (`getMe`, `setWebhook`, `deleteWebhook`, `setChatMenuButton`, `sendMessage`; токен в URL, поэтому
+  в логи не попадает ни токен, ни текст сетевой ошибки), `StoreTelegramBotService`, `TelegramWebhookService`.
+- **Маршруты изменились относительно плана** (чтобы не пересекаться с `GET /store/:id`):
+  `GET|PUT|DELETE /telegram-shop/bot`, `POST /telegram-shop/bot/notify-link`, `POST /telegram-shop/bot/test`
+  (OWNER; ADMIN — с `storeId`; для владельца `storeId` из запроса игнорируется) и публичный
+  `POST /telegram-shop/webhook/:slug` (защита — заголовок `X-Telegram-Bot-Api-Secret-Token`).
+- Подключение: проверка токена (`getMe`) → webhook + кнопка меню → запись с зашифрованным токеном. Отказ Telegram
+  (например, адрес не HTTPS) → 400 с причиной Telegram; недоступность Telegram → 503. Тот же бот в другом магазине
+  и занятый адрес → 409; услуга выключена → 403 `TELEGRAM_SHOP_DISABLED`; нет настроек сервера → 503 `TELEGRAM_NOT_CONFIGURED`.
+  Смена бота снимает webhook и кнопку со старого. Отключение работает и при выключенной услуге.
+- Webhook: `/start` → приветствие с кнопкой «Открыть магазин» (в личке; ru/uz по языку Telegram);
+  `/start <код>` → запоминает чат для заявок (личка или группа). Код действует 15 минут, привязан к магазину, подписан
+  HMAC; одноразовым он не сделан (отдельной колонки нет) — повторное нажатие просто перепишет тот же чат.
+  После проверки секрета webhook всегда отвечает 200, чтобы Telegram не засыпал повторами.
+- Тесты: 59 новых (шифрование, клиент, сервис, webhook, сборка модуля). Весь jest: 587 прошли, те же 12 старых заглушек падают.
+- **Нужно на сервере до проверки с реальным ботом:** в `.env` — `TELEGRAM_TOKEN_KEY` (сгенерировать один раз и
+  хранить: потеряешь ключ — владельцам придётся вставлять токены заново), `TELEGRAM_WEBHOOK_BASE_URL`,
+  `TELEGRAM_MINIAPP_URL` (см. `.env.example`); webhook Telegram принимает только по HTTPS, локально `setWebhook` откажет.
+- Не проверено с реальным Telegram (нет тестового бота) — только на моках; первый живой прогон будет на этапе 8.
 
 ## Этапы
 

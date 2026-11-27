@@ -18,6 +18,7 @@ import { HealthModule } from './health/health.module';
 import { RentalModule } from './rental/rental.module';
 import { OrderAssistantModule } from './order-assistant/order-assistant.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { TelegramModule } from './telegram/telegram.module';
 import { LoggerModule } from 'nestjs-pino';
 @Module({
   imports: [
@@ -72,6 +73,7 @@ import { LoggerModule } from 'nestjs-pino';
     RentalModule,
     OrderAssistantModule,
     DashboardModule,
+    TelegramModule,
   ],
   providers: [ConfigService],
 })
