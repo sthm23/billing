@@ -180,7 +180,7 @@ model Store {
 - `rentalEnabled` — модуль аренды; при `false` все `/rental` эндпоинты отвечают 400 `RENTAL_DISABLED`
 - Хотя бы один флаг всегда `true` (проверяется в `PUT /store/:id` и `PATCH /admin/stores/:id`)
 - `orderAssistantEnabled` (миграция `20261122191509_store_order_assistant_flag`, default `false`) — помощник заказов (`/order-assistant/*`); включает и выключает **только платформенный ADMIN** (`POST` / `PATCH /admin/stores`), владелец через `PUT /store/:id` не меняет; при `false` → 403 `ORDER_ASSISTANT_DISABLED`
-- `telegramShopEnabled` (миграция `20261127120000_telegram_shop_schema`, default `false`) — платная услуга «Telegram-магазин» (`billing/docs/telegram-shop/PLAN.md`); включает и выключает **только платформенный ADMIN** (`POST` / `PATCH /admin/stores`), владелец через `PUT /store/:id` не меняет. Пока только флаг и схема (этап 1): поведения, зависящего от флага, ещё нет
+- `telegramShopEnabled` (миграция `20261127120000_telegram_shop_schema`, default `false`) — платная услуга «Telegram-магазин» (`billing/docs/telegram-shop/PLAN.md`); включает и выключает **только платформенный ADMIN** (`POST` / `PATCH /admin/stores`), владелец через `PUT /store/:id` не меняет. Флаг проверяют эндпоинты бота и публичное API магазина (этапы 2–3)
 - `voiceDataConsent` (миграция `20261123172700_voice_samples`, default `false`) — согласие магазина хранить записи голоса продавцов для обучения распознавания; переключают **владелец** (`PUT /store/:id`) и **ADMIN** (`PATCH /admin/stores/:id`), каждый раз пишутся `voiceDataConsentAt` / `voiceDataConsentById`. Выключение **сразу удаляет** все `VoiceSample` магазина и их аудио
 
 **Статус подписки** (миграция `20261110120000_store_subscription`; существующие магазины получили `ACTIVE`):
@@ -1362,7 +1362,7 @@ model VoiceSample {
 
 ## Telegram Shop
 
-Telegram-магазин (`billing/docs/telegram-shop/PLAN.md`), миграция `20261127120000_telegram_shop_schema` (только добавление; **на момент записи не применена**). Реализован **этап 1 — только схема и флаг** `Store.telegramShopEnabled`; сервисов, эндпоинтов и бота, работающих с этими таблицами, ещё нет (этапы 2–8 плана).
+Telegram-магазин (`billing/docs/telegram-shop/PLAN.md`), миграция `20261127120000_telegram_shop_schema` (только добавление; **на момент записи не применена**). Схема создана на **этапе 1**; таблицами работают сервисы `billing/src/telegram/` (этапы 2–4: бот, публичное API, заявки для сотрудников). Mini App и экраны приложения ещё нет (этапы 5–8 плана).
 
 ### StoreTelegramBot
 
@@ -1390,7 +1390,12 @@ model StoreTelegramBot {
 
 ### OnlineOrder
 
-Заявка клиента из Mini App — черновик для сотрудника. Пишется публичным API `POST /public/tg/:slug/orders` (этап 3): `storeId` из адреса, `telegramUserId` из проверенного `initData`, `number` = последний + 1 по магазину (при гонке повтор по `@@unique([storeId, number])`), `priceAtRequest` — серверная цена; `Customer` не создаётся, `orderId` / `customerId` / `handledBy*` / `rejectReason` остаются пустыми. Не трогает склад и кассу; при подтверждении создаётся обычный `Order` (`channel = ONLINE`, `HOLD`) — **эта логика ещё не реализована**.
+Заявка клиента из Mini App — черновик для сотрудника. Пишется публичным API `POST /public/tg/:slug/orders` (этап 3): `storeId` из адреса, `telegramUserId` из проверенного `initData`, `number` = последний + 1 по магазину (при гонке повтор по `@@unique([storeId, number])`), `priceAtRequest` — серверная цена; `Customer` не создаётся, `orderId` / `customerId` / `handledBy*` / `rejectReason` остаются пустыми. Не трогает склад и кассу.
+
+Обработка сотрудником (этап 4, `OnlineOrderService`, один раз: `NEW → CONFIRMED | REJECTED`; переход делается атомарно `updateMany … where status = NEW`, проигравший гонку получает 409):
+- **confirm** — сразу при захвате пишутся `status = CONFIRMED`, `handledById` (= `Staff.id` подтвердившего), `handledAt`, `customerId` (`UserService.ensureStoreCustomer`: найден по телефону или создан, подключён к магазину); затем создаётся обычный `Order` (`channel = ONLINE`, `HOLD`, склад выбирает сотрудник — на нём должно быть всё нужное) с позициями по текущим ценам и пишется `orderId`. Если заказ не создался — пустой `Order` удаляется, а `status → NEW`, `handledById` / `handledAt` / `customerId` обнуляются.
+- **reject** — `status = REJECTED`, `handledById`, `handledAt`, `rejectReason` (необязательный, ≤ 300, показывается клиенту); `orderId` и `customerId` остаются пустыми.
+- Склад и касса не затрагиваются ни при confirm, ни при reject: остаток списывается только при оплате созданного `Order`.
 
 ```prisma
 model OnlineOrder {
@@ -1837,5 +1842,5 @@ ORDER BY sm.created_at DESC;
 
 ---
 
-**Последнее обновление**: 2026-11-27 (Telegram-магазин, этап 1: `Store.telegramShopEnabled`, `StoreTelegramBot`, `OnlineOrder`, `OnlineOrderItem`, `OnlineOrderStatus`)  
+**Последнее обновление**: 2026-11-27 (Telegram-магазин, этап 4: как confirm / reject пишут `OnlineOrder`; этап 1: `Store.telegramShopEnabled`, `StoreTelegramBot`, `OnlineOrder`, `OnlineOrderItem`, `OnlineOrderStatus`)  
 **Версия схемы**: Prisma 6 / PostgreSQL 17

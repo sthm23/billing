@@ -44,14 +44,14 @@ src/
 ├── store/             # Store management
 ├── warehouse/         # Warehouse management, inventory movements
 ├── product/           # Products and variants (SKU)
-├── order/             # Order creation, payment, returns
+├── order/             # Order creation, payment, returns; `OrderModule` exports `OrderService` (used by `telegram/` to create orders from shop requests)
 ├── payment/           # Payment to DEBT orders
 ├── cashbox/           # Cashbox (cash register) operations
 ├── debt/              # Manual debt tracking (CustomerDebt)
 ├── category-attributes/ # Categories, brands, attributes, tags
 ├── order-assistant/   # Voice / text order assistant: audio → text (stt.client → local STT service), text → candidate variants, learned aliases, voice samples kept with store consent (voice-sample.service: private bucket, daily 12-month sweep) (docs/voice-order/); engine/ is pure TS
 ├── dashboard/         # Owner dashboard (GET /dashboard/summary · team · activity): store owner only, read-only live aggregation, event-dated (docs/dashboard/PLAN.md, ../docs/features/dashboard.md)
-├── telegram/          # Telegram shop, stages 2–3: /telegram-shop/bot (OWNER + ADMIN, JWT), the PUBLIC webhook /telegram-shop/webhook/:slug (secret header, not JWT) and the PUBLIC shop API /public/tg/:slug/* (catalog + create request; `Authorization: tma <initData>` verified by telegram-shop.guard with the shop's bot token, store from the slug only; public-shop.*, init-data.ts, uz-regions.ts); bot tokens encrypted AES-256-GCM (token-crypto.service), Bot API client (telegram-bot.client) (docs/telegram-shop/PLAN.md, ../docs/api-map.md → Telegram Shop Module)
+├── telegram/          # Telegram shop, stages 2–4: staff requests /online-orders (OWNER / MANAGER / SELLER, JWT; online-orders.controller + online-order.service: list, card with per-warehouse availability, confirm → normal HOLD sale order, channel ONLINE, via `OrderService` + `UserService.ensureStoreCustomer`, atomic NEW→CONFIRMED claim; reject; customer told through the shop's bot); /telegram-shop/bot (OWNER + ADMIN, JWT), the PUBLIC webhook /telegram-shop/webhook/:slug (secret header, not JWT) and the PUBLIC shop API /public/tg/:slug/* (catalog + create request; `Authorization: tma <initData>` verified by telegram-shop.guard with the shop's bot token, store from the slug only; public-shop.*, init-data.ts, uz-regions.ts); bot tokens encrypted AES-256-GCM (token-crypto.service), Bot API client (telegram-bot.client) (docs/telegram-shop/PLAN.md, ../docs/api-map.md → Telegram Shop Module)
 ├── file/              # File upload (S3)
 ├── prisma/            # PrismaService, S3Service
 └── shared/            # Guards, decorators, helpers
