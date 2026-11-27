@@ -15,9 +15,9 @@ import {
   ShopProductsQueryDto,
 } from './dto/public-shop.dto';
 import {
-  attributeValueText,
   formatAmount,
   normalizePhone,
+  variantLabel,
 } from './public-shop.helpers';
 import type { ShopContext } from './shop-context';
 import { TelegramBotClient } from './telegram-bot.client';
@@ -389,16 +389,12 @@ export class PublicShopService {
         ReturnType<typeof found.get>
       >;
       const quantity = Number(item.quantity);
-      const options = variant.attributes
-        .map((a) => attributeValueText(a.value))
-        .filter(Boolean)
-        .join(' ');
 
       return {
         variantId: item.variantId,
         quantity,
         priceAtRequest: variant.price,
-        label: [variant.product.name, options].filter(Boolean).join(' '),
+        label: variantLabel(variant.product.name, variant.attributes),
       };
     });
     const total = lines.reduce(

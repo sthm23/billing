@@ -15,6 +15,9 @@ import { authThrottleOptions } from '@auth/auth-throttle';
 import { Prisma } from '@generated/client';
 import { StoreStatus } from '@generated/enums';
 import { PrismaService } from '@prisma/prisma.service';
+import { OrderService } from '@order/order.service';
+import { UserService } from '@user/user.service';
+import { OnlineOrderService } from './online-order.service';
 import { PublicShopService } from './public-shop.service';
 import { StoreTelegramBotService } from './store-telegram-bot.service';
 import { TelegramBotClient } from './telegram-bot.client';
@@ -132,6 +135,9 @@ describe('Public shop API over HTTP', () => {
       TelegramWebhookService,
       TelegramShopGuard,
       PublicShopService,
+      OnlineOrderService,
+      OrderService,
+      UserService,
     ];
 
     @Global()

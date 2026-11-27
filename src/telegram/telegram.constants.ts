@@ -81,3 +81,28 @@ export const SHOP_UNAVAILABLE = 'SHOP_UNAVAILABLE';
 export const ITEMS_UNAVAILABLE = 'ITEMS_UNAVAILABLE';
 /** 429: the customer already has too many requests waiting. */
 export const TOO_MANY_PENDING_REQUESTS = 'TOO_MANY_PENDING_REQUESTS';
+
+/** Staff side: requests from the Telegram shop (`/online-orders`, stage 4). */
+export const ONLINE_ORDERS = {
+  DEFAULT_PAGE_SIZE: 20,
+  MAX_PAGE_SIZE: 50,
+  MAX_REJECT_REASON: 300,
+} as const;
+
+/** 409: the request was already confirmed or rejected (by this or another employee). */
+export const ONLINE_ORDER_ALREADY_HANDLED = 'ONLINE_ORDER_ALREADY_HANDLED';
+/** 400: the chosen warehouse does not hold all the goods; `lines` says what is missing. */
+export const INSUFFICIENT_STOCK = 'INSUFFICIENT_STOCK';
+
+/**
+ * What the shop's bot tells a customer after an employee handled the request. Both languages
+ * in one message: the request does not keep the customer's language.
+ */
+export const CUSTOMER_TEXTS = {
+  confirmed: (number: number, storeName: string): string =>
+    `✅ Заявка №${number} принята. «${storeName}» свяжется с вами.\n\n` +
+    `✅ №${number}-buyurtma qabul qilindi. «${storeName}» siz bilan bog‘lanadi.`,
+  rejected: (number: number, reason: string | null): string =>
+    `Заявка №${number} отклонена.${reason ? ` Причина: ${reason}` : ''}\n\n` +
+    `№${number}-buyurtma rad etildi.${reason ? ` Sabab: ${reason}` : ''}`,
+};

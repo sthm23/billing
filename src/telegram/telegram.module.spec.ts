@@ -5,6 +5,9 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { getLoggerToken } from 'nestjs-pino';
 import { authThrottleOptions } from '@auth/auth-throttle';
 import { PrismaService } from '@prisma/prisma.service';
+import { OrderService } from '@order/order.service';
+import { UserService } from '@user/user.service';
+import { OnlineOrderService } from './online-order.service';
 import { PublicShopController } from './public-shop.controller';
 import { PublicShopService } from './public-shop.service';
 import { StoreTelegramBotService } from './store-telegram-bot.service';
@@ -23,6 +26,9 @@ const LOGGED = [
   TelegramWebhookService,
   TelegramShopGuard,
   PublicShopService,
+  OnlineOrderService,
+  OrderService,
+  UserService,
 ];
 
 /** What the real app provides globally (PrismaModule, ConfigModule, LoggerModule). */

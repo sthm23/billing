@@ -27,3 +27,22 @@ export function attributeValueText(value: {
 
   return '';
 }
+
+/** «Strapela 6», «Футболка M Красный»: product name and the variant's attribute values. */
+export function variantLabel(
+  productName: string,
+  attributes: {
+    value: {
+      valueString: string | null;
+      valueNumber: { toString(): string } | null;
+      valueBool: boolean | null;
+    };
+  }[],
+): string {
+  const options = attributes
+    .map((a) => attributeValueText(a.value))
+    .filter(Boolean)
+    .join(' ');
+
+  return [productName, options].filter(Boolean).join(' ');
+}
