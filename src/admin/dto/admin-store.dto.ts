@@ -211,6 +211,11 @@ export class CreateAdminStoreDto {
   @IsOptional()
   @IsBoolean()
   orderAssistantEnabled?: boolean;
+
+  /** Paid service «Telegram-магазин»; off when omitted */
+  @IsOptional()
+  @IsBoolean()
+  telegramShopEnabled?: boolean;
 }
 
 /** PATCH /admin/stores/:id — only the fields sent are changed */
@@ -234,6 +239,11 @@ export class UpdateAdminStoreDto {
   @IsOptional()
   @IsBoolean()
   orderAssistantEnabled?: boolean;
+
+  /** Paid service «Telegram-магазин» (only an admin can switch it) */
+  @IsOptional()
+  @IsBoolean()
+  telegramShopEnabled?: boolean;
 
   /** Store's consent to keep voice recordings (also switched by the owner); off deletes them */
   @IsOptional()

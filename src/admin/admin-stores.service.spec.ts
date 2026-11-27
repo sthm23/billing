@@ -393,6 +393,25 @@ describe('AdminStoresService', () => {
       });
     });
 
+    it('switches the Telegram shop service only when the flag is sent', async () => {
+      await service.update(STORE, { telegramShopEnabled: true }, admin);
+
+      expect(prisma.store.update).toHaveBeenCalledWith({
+        where: { id: STORE },
+        data: expect.objectContaining({ telegramShopEnabled: true }) as unknown,
+      });
+
+      prisma.store.update.mockClear();
+      await service.update(STORE, { name: 'Ёғоч 3' }, admin);
+
+      const data = (
+        prisma.store.update.mock.calls[0][0] as {
+          data: Record<string, unknown>;
+        }
+      ).data;
+      expect(data).not.toHaveProperty('telegramShopEnabled');
+    });
+
     it('404 for an unknown store', async () => {
       prisma.store.findUnique.mockResolvedValue(null);
 

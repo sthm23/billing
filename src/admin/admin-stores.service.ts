@@ -95,6 +95,8 @@ export type AdminStoreListItem = {
   rentalEnabled: boolean;
   /** Voice / text order assistant — admin only */
   orderAssistantEnabled: boolean;
+  /** Paid service «Telegram-магазин» — admin only */
+  telegramShopEnabled: boolean;
   /** Voice recordings are kept for training (owner or admin) */
   voiceDataConsent: boolean;
   owner: AdminStoreOwner | null;
@@ -205,6 +207,7 @@ function toListItem(row: ListRow, now: Date): AdminStoreListItem {
     salesEnabled: row.salesEnabled,
     rentalEnabled: row.rentalEnabled,
     orderAssistantEnabled: row.orderAssistantEnabled,
+    telegramShopEnabled: row.telegramShopEnabled,
     voiceDataConsent: row.voiceDataConsent,
     owner: toOwner(row.staff[0]),
     warehousesCount: row._count.warehouse,
@@ -466,6 +469,7 @@ export class AdminStoresService {
             salesEnabled: dto.salesEnabled,
             rentalEnabled: dto.rentalEnabled,
             orderAssistantEnabled: dto.orderAssistantEnabled ?? false,
+            telegramShopEnabled: dto.telegramShopEnabled ?? false,
             address: dto.address ?? null,
             inn: dto.inn ?? null,
             note: dto.note ?? null,
@@ -548,6 +552,9 @@ export class AdminStoresService {
         ...(dto.orderAssistantEnabled === undefined
           ? {}
           : { orderAssistantEnabled: dto.orderAssistantEnabled }),
+        ...(dto.telegramShopEnabled === undefined
+          ? {}
+          : { telegramShopEnabled: dto.telegramShopEnabled }),
         ...consent.data,
       },
     });
