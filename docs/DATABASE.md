@@ -1390,7 +1390,7 @@ model StoreTelegramBot {
 
 ### OnlineOrder
 
-Заявка клиента из Mini App — черновик для сотрудника. Не трогает склад и кассу; при подтверждении создаётся обычный `Order` (`channel = ONLINE`, `HOLD`) — **эта логика ещё не реализована**.
+Заявка клиента из Mini App — черновик для сотрудника. Пишется публичным API `POST /public/tg/:slug/orders` (этап 3): `storeId` из адреса, `telegramUserId` из проверенного `initData`, `number` = последний + 1 по магазину (при гонке повтор по `@@unique([storeId, number])`), `priceAtRequest` — серверная цена; `Customer` не создаётся, `orderId` / `customerId` / `handledBy*` / `rejectReason` остаются пустыми. Не трогает склад и кассу; при подтверждении создаётся обычный `Order` (`channel = ONLINE`, `HOLD`) — **эта логика ещё не реализована**.
 
 ```prisma
 model OnlineOrder {

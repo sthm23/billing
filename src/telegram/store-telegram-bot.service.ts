@@ -102,7 +102,9 @@ export class StoreTelegramBotService {
       });
     }
 
-    const { token, slug } = dto;
+    // The global ValidationPipe does not apply @Transform to what the handler receives
+    const token = dto.token.trim();
+    const slug = dto.slug.trim().toLowerCase();
     const existing = await this.prisma.storeTelegramBot.findUnique({
       where: { storeId: store.id },
     });

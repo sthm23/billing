@@ -58,3 +58,26 @@ export const BOT_TEXTS: Record<
       `✅ sthm testi: bot «${storeName}» do‘koniga ulandi. Buyurtmalar shu yerga keladi.`,
   },
 };
+
+/** Public shop API (`/public/tg/:slug/*`, docs/telegram-shop/PLAN.md, stage 3). */
+export const PUBLIC_SHOP = {
+  /** `initData` older than this is refused (a Mini App session is short) */
+  INIT_DATA_MAX_AGE_SEC: 24 * 60 * 60,
+  DEFAULT_PAGE_SIZE: 20,
+  MAX_PAGE_SIZE: 30,
+  MAX_ORDER_LINES: 50,
+  MAX_ITEM_QUANTITY: 1000,
+  /** Requests of one customer waiting for the store; more → 429 */
+  MAX_PENDING_PER_USER: 5,
+  /** Lines of the new-request message to the store (Telegram allows 4096 characters) */
+  MAX_MESSAGE_LINES: 15,
+  /** A request number is `max + 1`; a parallel request may take it first */
+  NUMBER_RETRIES: 3,
+} as const;
+
+/** 403: the shop is switched off, suspended or its bot is paused. */
+export const SHOP_UNAVAILABLE = 'SHOP_UNAVAILABLE';
+/** 400: some lines are archived, not for sale or from another store. */
+export const ITEMS_UNAVAILABLE = 'ITEMS_UNAVAILABLE';
+/** 429: the customer already has too many requests waiting. */
+export const TOO_MANY_PENDING_REQUESTS = 'TOO_MANY_PENDING_REQUESTS';

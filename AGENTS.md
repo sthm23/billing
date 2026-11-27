@@ -10,7 +10,7 @@
 - **ORM**: Prisma 6
 - **Database**: PostgreSQL 17
 - **Auth**: JWT (access + refresh tokens) via Passport; access token bound to its `RefreshSession` (`sid`)
-- **Rate limiting**: `@nestjs/throttler` ^6.7.1 — auth routes only (`src/auth/auth-throttle.ts`)
+- **Rate limiting**: `@nestjs/throttler` ^6.7.1 — auth routes, order assistant and the public Telegram shop routes (`src/auth/auth-throttle.ts`)
 - **File Storage**: Uztelecom Object Storage (S3-compatible, `@aws-sdk/client-s3` with `S3_ENDPOINT`); product photos only, presigned PUT — see `docs/security.md` → File Uploads and S3
 - **Container**: Docker Compose for PostgreSQL
 
@@ -51,7 +51,7 @@ src/
 ├── category-attributes/ # Categories, brands, attributes, tags
 ├── order-assistant/   # Voice / text order assistant: audio → text (stt.client → local STT service), text → candidate variants, learned aliases, voice samples kept with store consent (voice-sample.service: private bucket, daily 12-month sweep) (docs/voice-order/); engine/ is pure TS
 ├── dashboard/         # Owner dashboard (GET /dashboard/summary · team · activity): store owner only, read-only live aggregation, event-dated (docs/dashboard/PLAN.md, ../docs/features/dashboard.md)
-├── telegram/          # Telegram shop, stage 2 (bot connection only): /telegram-shop/bot (OWNER + ADMIN, JWT) and the PUBLIC webhook /telegram-shop/webhook/:slug (secret header, not JWT); bot tokens encrypted AES-256-GCM (token-crypto.service), Bot API client (telegram-bot.client) (docs/telegram-shop/PLAN.md, ../docs/api-map.md → Telegram Shop Module)
+├── telegram/          # Telegram shop, stages 2–3: /telegram-shop/bot (OWNER + ADMIN, JWT), the PUBLIC webhook /telegram-shop/webhook/:slug (secret header, not JWT) and the PUBLIC shop API /public/tg/:slug/* (catalog + create request; `Authorization: tma <initData>` verified by telegram-shop.guard with the shop's bot token, store from the slug only; public-shop.*, init-data.ts, uz-regions.ts); bot tokens encrypted AES-256-GCM (token-crypto.service), Bot API client (telegram-bot.client) (docs/telegram-shop/PLAN.md, ../docs/api-map.md → Telegram Shop Module)
 ├── file/              # File upload (S3)
 ├── prisma/            # PrismaService, S3Service
 └── shared/            # Guards, decorators, helpers
@@ -204,7 +204,7 @@ type CurrentUser = User & {
 
 **JwtStrategy** (`src/auth/strategy/jwt-access.strategy.ts`) reloads the user on every request **and** requires the token's `sid` session to be active (not revoked, not expired); otherwise 401. Logout and refresh rotation therefore invalidate the old access token at once.
 
-**ThrottlerGuard** (`@nestjs/throttler`, config `src/auth/auth-throttle.ts`, `ThrottlerModule.forRoot` in `AuthModule`) — **not global**, only on `POST /login` (`ip` 30/min + `login` 5/min per IP+login), `GET /refresh` (`@SkipThrottle({ login: true })`, `ip` only) and `/order-assistant/*` (`ip` overridden to 30/min per user id, 2026-11-23). 429 `Too many attempts, try again later`. In-memory counters (single PM2 instance); `main.ts` sets `trust proxy: 'loopback'` so `req.ip` is the client behind local nginx. Do not add it to other routes without a decision.
+**ThrottlerGuard** (`@nestjs/throttler`, config `src/auth/auth-throttle.ts`, `ThrottlerModule.forRoot` in `AuthModule`) — **not global**, only on `POST /login` (`ip` 30/min + `login` 5/min per IP+login), `GET /refresh` (`@SkipThrottle({ login: true })`, `ip` only) and `/order-assistant/*` (`ip` overridden to 30/min per user id, 2026-11-23). 429 `Too many attempts, try again later`. In-memory counters (single PM2 instance); `main.ts` sets `trust proxy: 'loopback'` so `req.ip` is the client behind local nginx. Do not add it to other routes without a decision. **Approved exception (2026-11-27)**: the public shop routes `/public/tg/:slug/*` (`PublicShopController`) use it **per customer** — `TelegramShopGuard` runs first, then `ThrottlerGuard` with the `ip` throttler overridden by a tracker `slug:telegramUserId` (`src/telegram/public-shop.throttle.ts`; 120 / min reads, 10 / min `POST orders`; `login` skipped).
 
 **Public Routes**: a route without `@UseGuards(AuthJWTGuard)` is public (the guard is not global). `@Public()` is only a marker — no guard reads it. There is no `POST /signup` (removed 2026-11-13).
 
@@ -531,6 +531,8 @@ npm run test:cov                  # Coverage report
 **Current state**: most specs are generated "should be defined" stubs that don't provide their dependencies and fail. Working examples with mocked `PrismaService` and Pino logger (`getLoggerToken`): `src/store/store.service.spec.ts`, `src/order/order.service.spec.ts` (`$transaction` mocked as `cb => cb(prisma)`; store-scope tests), `src/product/product.service.spec.ts` (store / warehouse access tests), `src/user/user.service.spec.ts`, `src/auth/auth.service.spec.ts` (logout), `src/auth/strategy/jwt-access.strategy.spec.ts` (session check).
 
 **Error wrapping**: most services catch everything and rethrow `BadRequestException(error.response)`, which turns a 403 into a 400. Run access checks before the `try`, or rethrow `ForbiddenException` in the `catch` (see `OrderService.createOrderItems`, `ProductService.search`). Run a subset with `npx jest src/<module>`.
+
+**ValidationPipe pitfall**: the global `new ValidationPipe()` in `main.ts` has **no `transform: true`**, so handlers receive the **raw** request body / query — `@Transform` and `@Type` only affect validation, not the value the handler gets. Normalize explicitly in the service: trim, lower-case, phone, string → number for query params (they arrive as strings). See `PublicShopService` and the bot connection in `src/telegram/`.
 
 ---
 

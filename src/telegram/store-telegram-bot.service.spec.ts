@@ -109,13 +109,11 @@ describe('StoreTelegramBotService', () => {
   beforeEach(() => {
     prisma = {
       store: {
-        findUnique: jest
-          .fn()
-          .mockResolvedValue({
-            id: STORE,
-            name: 'Baraka',
-            telegramShopEnabled: true,
-          }),
+        findUnique: jest.fn().mockResolvedValue({
+          id: STORE,
+          name: 'Baraka',
+          telegramShopEnabled: true,
+        }),
       },
       storeTelegramBot: {
         findUnique: jest.fn().mockResolvedValue(null),
@@ -125,13 +123,11 @@ describe('StoreTelegramBotService', () => {
       },
     };
     client = {
-      getMe: jest
-        .fn()
-        .mockResolvedValue({
-          id: 123456789,
-          username: 'baraka_888_bot',
-          isBot: true,
-        }),
+      getMe: jest.fn().mockResolvedValue({
+        id: 123456789,
+        username: 'baraka_888_bot',
+        isBot: true,
+      }),
       setWebhook: jest.fn().mockResolvedValue(undefined),
       deleteWebhook: jest.fn().mockResolvedValue(undefined),
       setMenuButton: jest.fn().mockResolvedValue(undefined),
@@ -204,6 +200,21 @@ describe('StoreTelegramBotService', () => {
       expect(prisma.storeTelegramBot.upsert.mock.calls[0][0]).toMatchObject({
         where: { storeId: STORE },
       });
+    });
+
+    it('trims the token and lower-cases the address itself (the global pipe returns the raw body)', async () => {
+      await service.connect(
+        dto({ token: `  ${TOKEN}\n`, slug: ' Baraka_888 ' }),
+        owner,
+      );
+
+      expect(client.getMe).toHaveBeenCalledWith(TOKEN);
+      expect(prisma.storeTelegramBot.upsert.mock.calls[0][0]).toMatchObject({
+        create: { slug: 'baraka_888' },
+      });
+      expect(client.setWebhook.mock.calls[0][1]).toBe(
+        'https://sthm23.uz/api/telegram-shop/webhook/baraka_888',
+      );
     });
 
     it('lets a platform ADMIN connect a named store, and requires the storeId', async () => {
