@@ -10,7 +10,7 @@
 - **ORM**: Prisma 6
 - **Database**: PostgreSQL 17
 - **Auth**: JWT (access + refresh tokens) via Passport; access token bound to its `RefreshSession` (`sid`)
-- **Rate limiting**: `@nestjs/throttler` ^6.7.1 — auth routes only (`src/auth/auth-throttle.ts`)
+- **Rate limiting**: `@nestjs/throttler` ^6.7.1 — auth routes, order assistant and the public Telegram shop routes (`src/auth/auth-throttle.ts`)
 - **File Storage**: Uztelecom Object Storage (S3-compatible, `@aws-sdk/client-s3` with `S3_ENDPOINT`); product photos only, presigned PUT — see `docs/security.md` → File Uploads and S3
 - **Container**: Docker Compose for PostgreSQL
 
@@ -44,13 +44,14 @@ src/
 ├── store/             # Store management
 ├── warehouse/         # Warehouse management, inventory movements
 ├── product/           # Products and variants (SKU)
-├── order/             # Order creation, payment, returns
+├── order/             # Order creation, payment, returns; `OrderModule` exports `OrderService` (used by `telegram/` to create orders from shop requests)
 ├── payment/           # Payment to DEBT orders
 ├── cashbox/           # Cashbox (cash register) operations
 ├── debt/              # Manual debt tracking (CustomerDebt)
 ├── category-attributes/ # Categories, brands, attributes, tags
 ├── order-assistant/   # Voice / text order assistant: audio → text (stt.client → local STT service), text → candidate variants, learned aliases, voice samples kept with store consent (voice-sample.service: private bucket, daily 12-month sweep) (docs/voice-order/); engine/ is pure TS
 ├── dashboard/         # Owner dashboard (GET /dashboard/summary · team · activity): store owner only, read-only live aggregation, event-dated (docs/dashboard/PLAN.md, ../docs/features/dashboard.md)
+├── telegram/          # Telegram shop, stages 2–4: staff requests /online-orders (OWNER / MANAGER / SELLER, JWT; online-orders.controller + online-order.service: list, card with per-warehouse availability, confirm → normal HOLD sale order, channel ONLINE, via `OrderService` + `UserService.ensureStoreCustomer`, atomic NEW→CONFIRMED claim; reject; customer told through the shop's bot); /telegram-shop/bot (OWNER + ADMIN, JWT), the PUBLIC webhook /telegram-shop/webhook/:slug (secret header, not JWT) and the PUBLIC shop API /public/tg/:slug/* (catalog + create request; `Authorization: tma <initData>` verified by telegram-shop.guard with the shop's bot token, store from the slug only; public-shop.*, init-data.ts, uz-regions.ts); bot tokens encrypted AES-256-GCM (token-crypto.service), Bot API client (telegram-bot.client) (docs/telegram-shop/PLAN.md, ../docs/api-map.md → Telegram Shop Module)
 ├── file/              # File upload (S3)
 ├── prisma/            # PrismaService, S3Service
 └── shared/            # Guards, decorators, helpers
@@ -203,7 +204,7 @@ type CurrentUser = User & {
 
 **JwtStrategy** (`src/auth/strategy/jwt-access.strategy.ts`) reloads the user on every request **and** requires the token's `sid` session to be active (not revoked, not expired); otherwise 401. Logout and refresh rotation therefore invalidate the old access token at once.
 
-**ThrottlerGuard** (`@nestjs/throttler`, config `src/auth/auth-throttle.ts`, `ThrottlerModule.forRoot` in `AuthModule`) — **not global**, only on `POST /login` (`ip` 30/min + `login` 5/min per IP+login), `GET /refresh` (`@SkipThrottle({ login: true })`, `ip` only) and `/order-assistant/*` (`ip` overridden to 30/min per user id, 2026-11-23). 429 `Too many attempts, try again later`. In-memory counters (single PM2 instance); `main.ts` sets `trust proxy: 'loopback'` so `req.ip` is the client behind local nginx. Do not add it to other routes without a decision.
+**ThrottlerGuard** (`@nestjs/throttler`, config `src/auth/auth-throttle.ts`, `ThrottlerModule.forRoot` in `AuthModule`) — **not global**, only on `POST /login` (`ip` 30/min + `login` 5/min per IP+login), `GET /refresh` (`@SkipThrottle({ login: true })`, `ip` only) and `/order-assistant/*` (`ip` overridden to 30/min per user id, 2026-11-23). 429 `Too many attempts, try again later`. In-memory counters (single PM2 instance); `main.ts` sets `trust proxy: 'loopback'` so `req.ip` is the client behind local nginx. Do not add it to other routes without a decision. **Approved exception (2026-11-27)**: the public shop routes `/public/tg/:slug/*` (`PublicShopController`) use it **per customer** — `TelegramShopGuard` runs first, then `ThrottlerGuard` with the `ip` throttler overridden by a tracker `slug:telegramUserId` (`src/telegram/public-shop.throttle.ts`; 120 / min reads, 10 / min `POST orders`; `login` skipped).
 
 **Public Routes**: a route without `@UseGuards(AuthJWTGuard)` is public (the guard is not global). `@Public()` is only a marker — no guard reads it. There is no `POST /signup` (removed 2026-11-13).
 
@@ -531,6 +532,8 @@ npm run test:cov                  # Coverage report
 
 **Error wrapping**: most services catch everything and rethrow `BadRequestException(error.response)`, which turns a 403 into a 400. Run access checks before the `try`, or rethrow `ForbiddenException` in the `catch` (see `OrderService.createOrderItems`, `ProductService.search`). Run a subset with `npx jest src/<module>`.
 
+**ValidationPipe pitfall**: the global `new ValidationPipe()` in `main.ts` has **no `transform: true`**, so handlers receive the **raw** request body / query — `@Transform` and `@Type` only affect validation, not the value the handler gets. Normalize explicitly in the service: trim, lower-case, phone, string → number for query params (they arrive as strings). See `PublicShopService` and the bot connection in `src/telegram/`.
+
 ---
 
 ### E2E Tests
@@ -563,7 +566,13 @@ S3_PUBLIC_URL=https://s3.uztelecom.uz/sthm-media-dev   # public base INCLUDING t
 PORT=4000
 STT_URL=http://127.0.0.1:8090              # order assistant speech-to-text (billing/stt-service, docs/voice-order/STT_SERVICE.md); default if unset
 VOICE_S3_BUCKET_NAME=sthm-voice             # PRIVATE bucket for voice samples (store consent); created by hand; unset → never kept
+TELEGRAM_TOKEN_KEY=<64 hex chars or base64 of 32 bytes>   # AES-256 key for stores' bot tokens; generate once and keep (lost → owners re-paste tokens)
+TELEGRAM_WEBHOOK_BASE_URL=https://sthm23.uz               # public HTTPS address of this API (Telegram calls <base>/api/telegram-shop/webhook/:slug)
+TELEGRAM_MINIAPP_URL=https://shop.sthm23.uz               # shared Mini App; a shop is <url>/<slug>
+TELEGRAM_API_URL=                                         # optional Bot API server; default https://api.telegram.org
 ```
+
+The three required `TELEGRAM_*` variables are optional for startup: when one is missing the API still starts and the Telegram shop answers 503 `TELEGRAM_NOT_CONFIGURED`.
 
 ---
 

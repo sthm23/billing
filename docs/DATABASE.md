@@ -15,8 +15,9 @@
 12. [Debts](#debts)
 13. [Catalog (Categories, Brands, Attributes)](#catalog)
 14. [Order Assistant](#order-assistant)
-15. [Enums](#enums)
-16. [Индексы и ограничения](#индексы-и-ограничения)
+15. [Telegram Shop](#telegram-shop)
+16. [Enums](#enums)
+17. [Индексы и ограничения](#индексы-и-ограничения)
 
 ---
 
@@ -133,6 +134,7 @@ model Store {
   salesEnabled  Boolean @default(true)  // магазин продаёт товары
   rentalEnabled Boolean @default(false) // магазин сдаёт товары в аренду
   orderAssistantEnabled Boolean @default(false) // голосовой / текстовый помощник заказов, включает только админ
+  telegramShopEnabled   Boolean   @default(false) // платная услуга «Telegram-магазин», включает только админ
   voiceDataConsent      Boolean   @default(false) // согласие магазина хранить записи голоса (владелец или админ)
   voiceDataConsentAt    DateTime?                 // когда согласие последний раз переключили
   voiceDataConsentById  String?                   // User ID, кто переключил (без FK)
@@ -163,6 +165,8 @@ model Store {
   customerDebts CustomerDebt[]
   voiceAliases  VoiceAlias[]
   voiceSamples  VoiceSample[]
+  telegramBot   StoreTelegramBot?
+  onlineOrders  OnlineOrder[]
 }
 ```
 
@@ -176,6 +180,7 @@ model Store {
 - `rentalEnabled` — модуль аренды; при `false` все `/rental` эндпоинты отвечают 400 `RENTAL_DISABLED`
 - Хотя бы один флаг всегда `true` (проверяется в `PUT /store/:id` и `PATCH /admin/stores/:id`)
 - `orderAssistantEnabled` (миграция `20261122191509_store_order_assistant_flag`, default `false`) — помощник заказов (`/order-assistant/*`); включает и выключает **только платформенный ADMIN** (`POST` / `PATCH /admin/stores`), владелец через `PUT /store/:id` не меняет; при `false` → 403 `ORDER_ASSISTANT_DISABLED`
+- `telegramShopEnabled` (миграция `20261127120000_telegram_shop_schema`, default `false`) — платная услуга «Telegram-магазин» (`billing/docs/telegram-shop/PLAN.md`); включает и выключает **только платформенный ADMIN** (`POST` / `PATCH /admin/stores`), владелец через `PUT /store/:id` не меняет. Флаг проверяют эндпоинты бота и публичное API магазина (этапы 2–3)
 - `voiceDataConsent` (миграция `20261123172700_voice_samples`, default `false`) — согласие магазина хранить записи голоса продавцов для обучения распознавания; переключают **владелец** (`PUT /store/:id`) и **ADMIN** (`PATCH /admin/stores/:id`), каждый раз пишутся `voiceDataConsentAt` / `voiceDataConsentById`. Выключение **сразу удаляет** все `VoiceSample` магазина и их аудио
 
 **Статус подписки** (миграция `20261110120000_store_subscription`; существующие магазины получили `ACTIVE`):
@@ -1355,6 +1360,97 @@ model VoiceSample {
 
 ---
 
+## Telegram Shop
+
+Telegram-магазин (`billing/docs/telegram-shop/PLAN.md`), миграция `20261127120000_telegram_shop_schema` (только добавление; **на момент записи не применена**). Схема создана на **этапе 1**; таблицами работают сервисы `billing/src/telegram/` (этапы 2–4: бот, публичное API, заявки для сотрудников). Mini App и экраны приложения ещё нет (этапы 5–8 плана).
+
+### StoreTelegramBot
+
+Собственный Telegram-бот магазина (открывает общий Mini App). Один бот на магазин.
+
+```prisma
+model StoreTelegramBot {
+  id            String   @id @default(uuid())
+  storeId       String   @unique
+  slug          String   @unique  // адрес магазина в URL Mini App: [a-z0-9_-]{3,32}, уникален между магазинами
+  botTokenEnc   String            // AES-256-GCM токена бота (ключ TELEGRAM_TOKEN_KEY); наружу не отдаётся
+  botId         String            // Telegram id бота (из getMe)
+  botUsername   String
+  webhookSecret String            // secret_token вебхука — проверяется в каждом update
+  notifyChatId  String?           // чат/группа для новых заявок
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  store Store @relation(...)
+
+  @@map("store_telegram_bots")
+}
+```
+
+### OnlineOrder
+
+Заявка клиента из Mini App — черновик для сотрудника. Пишется публичным API `POST /public/tg/:slug/orders` (этап 3): `storeId` из адреса, `telegramUserId` из проверенного `initData`, `number` = последний + 1 по магазину (при гонке повтор по `@@unique([storeId, number])`), `priceAtRequest` — серверная цена; `Customer` не создаётся, `orderId` / `customerId` / `handledBy*` / `rejectReason` остаются пустыми. Не трогает склад и кассу.
+
+Обработка сотрудником (этап 4, `OnlineOrderService`, один раз: `NEW → CONFIRMED | REJECTED`; переход делается атомарно `updateMany … where status = NEW`, проигравший гонку получает 409):
+- **confirm** — сразу при захвате пишутся `status = CONFIRMED`, `handledById` (= `Staff.id` подтвердившего), `handledAt`, `customerId` (`UserService.ensureStoreCustomer`: найден по телефону или создан, подключён к магазину); затем создаётся обычный `Order` (`channel = ONLINE`, `HOLD`, склад выбирает сотрудник — на нём должно быть всё нужное) с позициями по текущим ценам и пишется `orderId`. Если заказ не создался — пустой `Order` удаляется, а `status → NEW`, `handledById` / `handledAt` / `customerId` обнуляются.
+- **reject** — `status = REJECTED`, `handledById`, `handledAt`, `rejectReason` (необязательный, ≤ 300, показывается клиенту); `orderId` и `customerId` остаются пустыми.
+- Склад и касса не затрагиваются ни при confirm, ни при reject: остаток списывается только при оплате созданного `Order`.
+
+```prisma
+model OnlineOrder {
+  id             String            @id @default(uuid())
+  storeId        String
+  number         Int               // номер заявки в магазине
+  telegramUserId String            // Telegram id клиента — кому слать уведомления
+  fullName       String
+  phone          String
+  region         String            // область из фиксированного списка (14), район — свободный текст
+  district       String
+  comment        String?
+  status         OnlineOrderStatus @default(NEW)
+  orderId        String?           @unique  // Order, созданный при подтверждении
+  customerId     String?                    // Customer, найденный / созданный при подтверждении
+  handledById    String?                    // Staff id (без FK, как Rental.issuedBy)
+  handledAt      DateTime?
+  rejectReason   String?
+  createdAt      DateTime          @default(now())
+
+  store    Store             @relation(...)
+  order    Order?            @relation(...)
+  customer Customer?         @relation(...)
+  items    OnlineOrderItem[]
+
+  @@unique([storeId, number])
+  @@index([storeId, status, createdAt])
+  @@map("online_orders")
+}
+```
+
+### OnlineOrderItem
+
+```prisma
+model OnlineOrderItem {
+  id             String   @id @default(uuid())
+  onlineOrderId  String
+  variantId      String
+  quantity       Int
+  priceAtRequest Decimal  // цена, которую видел клиент — информация; заказ берёт текущую цену варианта
+
+  onlineOrder OnlineOrder    @relation(..., onDelete: Cascade)
+  variant     ProductVariant @relation(...)
+
+  @@index([onlineOrderId])
+  @@index([variantId])
+  @@map("online_order_items")
+}
+```
+
+- Обратные связи без колонок: `Store.telegramBot` / `Store.onlineOrders`, `Customer.onlineOrders`, `Order.onlineOrder`, `ProductVariant.onlineOrderItems`.
+- Отдельная `OnlineOrder`, а не `Order` со статусом: отчёты (`SOLD_ORDER_FILTER`, дашборд) завязаны на статусы `Order`; в отчёты попадает только подтверждённый, уже обычный `Order`.
+
+---
+
 ## Enums
 
 ### UserRole
@@ -1559,6 +1655,16 @@ enum AttributeType {
 }
 ```
 
+### OnlineOrderStatus
+```prisma
+enum OnlineOrderStatus {
+  NEW       // Заявка отправлена, ждёт сотрудника
+  CONFIRMED // Подтверждена (создан Order)
+  REJECTED  // Отклонена
+}
+```
+Заявка обрабатывается один раз: `NEW → CONFIRMED | REJECTED`.
+
 ---
 
 ## Индексы и ограничения
@@ -1586,6 +1692,12 @@ UNIQUE (itemId)   -- Одна позиция возвращается один �
 
 -- Rental
 UNIQUE (orderId)  -- Один Rental на заказ
+
+-- StoreTelegramBot
+UNIQUE (storeId), UNIQUE (slug)  -- Один бот на магазин; slug уникален глобально
+
+-- OnlineOrder
+UNIQUE ([storeId, number]), UNIQUE (orderId)
 
 -- Brand, Category, Attribute, Tag
 UNIQUE (name)     -- Уникальные названия
@@ -1730,5 +1842,5 @@ ORDER BY sm.created_at DESC;
 
 ---
 
-**Последнее обновление**: 2026-11-15 (возврат: `ReturnedOrder.reason/comment`, `Order.debtDueAt`, `DEFECT_COMPENSATION`)  
+**Последнее обновление**: 2026-11-27 (Telegram-магазин, этап 4: как confirm / reject пишут `OnlineOrder`; этап 1: `Store.telegramShopEnabled`, `StoreTelegramBot`, `OnlineOrder`, `OnlineOrderItem`, `OnlineOrderStatus`)  
 **Версия схемы**: Prisma 6 / PostgreSQL 17

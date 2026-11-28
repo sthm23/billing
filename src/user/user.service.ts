@@ -7,7 +7,14 @@ import {
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { DebtStatus, OrderStatus, Prisma, User, UserRole, UserType } from '@generated/client';
+import {
+  DebtStatus,
+  OrderStatus,
+  Prisma,
+  User,
+  UserRole,
+  UserType,
+} from '@generated/client';
 import { CreateUserDto } from './dto/create-user.dto';
 import { CurrentUser } from '@auth/models/auth.model';
 import { UpdateCustomerDto } from './dto/update-user.dto';
@@ -125,6 +132,63 @@ export class UserService {
       );
       if (error instanceof ConflictException) throw error;
       throw new BadRequestException(error.response || error.message);
+    }
+  }
+
+  /**
+   * The customer with this phone, visible to the store (docs/telegram-shop/PLAN.md: confirming a
+   * request from the Telegram shop). An existing customer is reused and keeps their own name; an
+   * employee or a bare user with this phone becomes a customer too (same user); otherwise a user
+   * and a customer are created. Never throws «already exists» — that is the point of it.
+   */
+  async ensureStoreCustomer(input: {
+    fullName: string;
+    phone: string;
+    storeId: string;
+  }): Promise<{ customerId: string; created: boolean }> {
+    const connectStore = { stores: { connect: { id: input.storeId } } };
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.prismaService.$transaction(async (tx) => {
+          const existing = await tx.user.findUnique({
+            where: { phone: input.phone },
+            include: { customer: { select: { id: true } } },
+          });
+          if (existing?.customer) {
+            await tx.customer.update({
+              where: { id: existing.customer.id },
+              data: connectStore,
+            });
+
+            return { customerId: existing.customer.id, created: false };
+          }
+          const user =
+            existing ??
+            (await tx.user.create({
+              data: {
+                fullName: input.fullName,
+                phone: input.phone,
+                type: UserType.CUSTOMER,
+              },
+            }));
+          const customer = await tx.customer.create({
+            data: { userId: user.id, ...connectStore },
+            select: { id: true },
+          });
+
+          return { customerId: customer.id, created: true };
+        });
+      } catch (error) {
+        // A parallel request created the same phone first: read it again
+        if (
+          attempt < 2 &&
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002'
+        ) {
+          continue;
+        }
+        throw error;
+      }
     }
   }
 
@@ -345,7 +409,11 @@ export class UserService {
         // debtTotal — open debt in the user's store (null for an admin)
         data: data.map((u) => ({
           ...u,
-          debtTotal: debts ? (u.customer ? debts.get(u.customer.id) ?? 0 : 0) : null,
+          debtTotal: debts
+            ? u.customer
+              ? (debts.get(u.customer.id) ?? 0)
+              : 0
+            : null,
         })),
       };
     } catch (error: any) {
@@ -362,11 +430,24 @@ export class UserService {
     if (!customerIds.length) return sums;
     const [orders, debts] = await Promise.all([
       this.prismaService.order.findMany({
-        where: { storeId, customerId: { in: customerIds }, status: OrderStatus.DEBT },
-        select: { customerId: true, totalAmount: true, returnedAmount: true, paidAmount: true },
+        where: {
+          storeId,
+          customerId: { in: customerIds },
+          status: OrderStatus.DEBT,
+        },
+        select: {
+          customerId: true,
+          totalAmount: true,
+          returnedAmount: true,
+          paidAmount: true,
+        },
       }),
       this.prismaService.customerDebt.findMany({
-        where: { storeId, customerId: { in: customerIds }, status: DebtStatus.ACTIVE },
+        where: {
+          storeId,
+          customerId: { in: customerIds },
+          status: DebtStatus.ACTIVE,
+        },
         select: { customerId: true, totalAmount: true, paidAmount: true },
       }),
     ]);
@@ -374,7 +455,8 @@ export class UserService {
       if (!customerId || remaining <= 0) return;
       sums.set(customerId, (sums.get(customerId) ?? 0) + remaining);
     };
-    for (const o of orders) add(o.customerId, +o.totalAmount - +o.returnedAmount - +o.paidAmount);
+    for (const o of orders)
+      add(o.customerId, +o.totalAmount - +o.returnedAmount - +o.paidAmount);
     for (const d of debts) add(d.customerId, +d.totalAmount - +d.paidAmount);
     return sums;
   }
